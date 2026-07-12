@@ -1,5 +1,5 @@
 import IORedis, { Redis } from 'ioredis';
-import { env, isProduction } from './env.js';
+import { env } from './env.js';
 import pino from 'pino';
 
 const logger = pino({

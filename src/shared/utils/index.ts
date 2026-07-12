@@ -6,9 +6,8 @@
 export const formatCurrency = (
   value: number,
   currency: string = 'USD',
-  locale: string = 'en-US',
 ): string => {
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency,
   }).format(value);
@@ -17,7 +16,7 @@ export const formatCurrency = (
 /**
  * Format large numbers with abbreviation
  */
-export const formatNumber = (value: number, locale: string = 'en-US'): string => {
+export const formatNumber = (value: number): string => {
   if (value >= 1000000) {
     return `${(value / 1000000).toFixed(1)}M`;
   }
@@ -152,7 +151,7 @@ export const deepMerge = <T extends Record<string, any>>(
   const output = { ...target };
 
   for (const key in source) {
-    if (source.hasOwnProperty(key)) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
       if (
         typeof source[key] === 'object' &&
         source[key] !== null &&

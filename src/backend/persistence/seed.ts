@@ -1,4 +1,4 @@
-import { createPool, closePool, withTransaction } from '../config/database.js';
+import { closePool, withTransaction } from '../config/database.js';
 import pino from 'pino';
 
 const logger = pino();
