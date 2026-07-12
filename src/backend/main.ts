@@ -119,8 +119,14 @@ const startServer = async () => {
     const frontendDir = path.resolve(process.cwd(), 'dist/frontend');
     const indexHtml = path.join(frontendDir, 'index.html');
     if (fs.existsSync(indexHtml)) {
+      // Rate limit SPA fallback to prevent file system exhaustion
+      const spaLimiter = rateLimit({
+        windowMs: 60 * 1000,
+        max: 60,
+        skip: () => isTest,
+      });
       app.use(express.static(frontendDir));
-      app.get('*', (req, res, next) => {
+      app.get('*', spaLimiter, (req, res, next) => {
         if (
           req.path.startsWith('/api') ||
           req.path === '/health' ||

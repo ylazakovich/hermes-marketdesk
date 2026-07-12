@@ -70,6 +70,7 @@ export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
       'CORS origin must be an explicit non-wildcard value in production (set CORS_ORIGIN)',
     );
   }
+
   app.use(
     cors({
       origin: corsOrigin,
@@ -77,6 +78,7 @@ export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
       maxAge: 3600,
+      exposedHeaders: ['X-Total-Count', 'X-Page-Count'],
     }),
   );
   app.use(express.json({ limit: '10mb' }));
