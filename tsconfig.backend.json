@@ -16,6 +16,10 @@
   ],
   "exclude": [
     "node_modules",
-    "src/frontend/**/*"
+    "src/frontend/**/*",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "**/*.spec.tsx",
+    "**/*.test.tsx"
   ]
 }
