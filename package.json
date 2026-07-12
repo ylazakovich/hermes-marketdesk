@@ -82,7 +82,7 @@
     "@types/ws": "8.18.1",
     "@typescript-eslint/eslint-plugin": "8.63.0",
     "@typescript-eslint/parser": "8.63.0",
-    "@vitejs/plugin-react": "5.2.0",
+    "@vitejs/plugin-react": "6.0.3",
     "allure-jest": "3.10.2",
     "concurrently": "10.0.3",
     "docker-compose": "1.4.2",
