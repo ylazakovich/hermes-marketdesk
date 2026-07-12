@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query } from '../../../config/database';
 import type { IWorkspaceRepository } from '../../../domain/repositories/interfaces/IWorkspaceRepository';
 import type { Workspace } from '../../../domain/entities/Workspace';
@@ -12,13 +12,17 @@ const WORKSPACE_SELECT = `
 `;
 
 export class WorkspaceRepository implements IWorkspaceRepository {
-  constructor(private readonly client?: PoolClient) {}
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.queryClient = client || pool;
+  }
 
   async findById(id: string): Promise<Workspace | null> {
     const { rows } = await query<WorkspaceRow>(
       `${WORKSPACE_SELECT} WHERE id = $1`,
       [id],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? WorkspaceMapper.toDomain(row) : null;
@@ -28,7 +32,7 @@ export class WorkspaceRepository implements IWorkspaceRepository {
     const { rows } = await query<WorkspaceRow>(
       `${WORKSPACE_SELECT} ORDER BY created_at ASC`,
       [],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => WorkspaceMapper.toDomain(row));
   }
@@ -57,7 +61,7 @@ export class WorkspaceRepository implements IWorkspaceRepository {
         workspace.createdAt,
         workspace.updatedAt,
       ],
-      this.client,
+      this.queryClient,
     );
   }
 }

@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query } from '../../../config/database';
 import type {
   ActivityLogEntry,
@@ -14,7 +14,11 @@ const ACTIVITY_SELECT = `
 `;
 
 export class ActivityLogRepository implements IActivityLogRepository {
-  constructor(private readonly client?: PoolClient) {}
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.queryClient = client || pool;
+  }
 
   // Append-only: entries are recorded once and never updated.
   async record(entry: ActivityLogEntry): Promise<void> {
@@ -34,7 +38,7 @@ export class ActivityLogRepository implements IActivityLogRepository {
         entry.metadata ? JSON.stringify(entry.metadata) : null,
         entry.createdAt,
       ],
-      this.client,
+      this.queryClient,
     );
   }
 
@@ -42,7 +46,7 @@ export class ActivityLogRepository implements IActivityLogRepository {
     const { rows } = await query<ActivityLogRow>(
       `${ACTIVITY_SELECT} WHERE workspace_id = $1 ORDER BY created_at DESC`,
       [workspaceId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => ActivityLogMapper.toDomain(row));
   }
@@ -54,7 +58,7 @@ export class ActivityLogRepository implements IActivityLogRepository {
     const { rows } = await query<ActivityLogRow>(
       `${ACTIVITY_SELECT} WHERE entity_type = $1 AND entity_id = $2 ORDER BY created_at DESC`,
       [entityType, entityId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => ActivityLogMapper.toDomain(row));
   }

@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query, withTransaction } from '../../../config/database';
 import type { IListingRepository } from '../../../domain/repositories/interfaces/IListingRepository';
 import type { Listing } from '../../../domain/entities/Listing';
@@ -16,13 +16,21 @@ const LISTING_SELECT = `
 `;
 
 export class ListingRepository implements IListingRepository {
-  constructor(private readonly client?: PoolClient) {}
+  private readonly pool?: Pool;
+  private readonly client?: PoolClient;
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.pool = pool;
+    this.client = client;
+    this.queryClient = client || pool;
+  }
 
   async findById(id: string): Promise<Listing | null> {
     const { rows } = await query<ListingRow>(
       `${LISTING_SELECT} WHERE l.id = $1`,
       [id],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? ListingMapper.toDomain(row) : null;
@@ -35,7 +43,7 @@ export class ListingRepository implements IListingRepository {
     const { rows } = await query<ListingRow>(
       `${LISTING_SELECT} WHERE l.id = $1 AND p.workspace_id = $2`,
       [id, workspaceId],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? ListingMapper.toDomain(row) : null;
@@ -45,7 +53,7 @@ export class ListingRepository implements IListingRepository {
     const { rows } = await query<ListingRow>(
       `${LISTING_SELECT} WHERE l.product_id = $1 ORDER BY l.created_at DESC`,
       [productId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => ListingMapper.toDomain(row));
   }
@@ -54,7 +62,7 @@ export class ListingRepository implements IListingRepository {
     const { rows } = await query<ListingRow>(
       `${LISTING_SELECT} WHERE l.marketplace_id = $1 ORDER BY l.created_at DESC`,
       [marketplaceId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => ListingMapper.toDomain(row));
   }
@@ -63,7 +71,7 @@ export class ListingRepository implements IListingRepository {
     const { rows } = await query<ListingRow>(
       `${LISTING_SELECT} WHERE p.workspace_id = $1 ORDER BY l.created_at DESC`,
       [workspaceId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => ListingMapper.toDomain(row));
   }
@@ -76,7 +84,7 @@ export class ListingRepository implements IListingRepository {
          AND l.expires_at < $1
        ORDER BY l.expires_at ASC`,
       [before],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => ListingMapper.toDomain(row));
   }

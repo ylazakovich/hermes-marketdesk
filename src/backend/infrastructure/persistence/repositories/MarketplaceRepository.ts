@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query } from '../../../config/database';
 import type { IMarketplaceRepository } from '../../../domain/repositories/interfaces/IMarketplaceRepository';
 import type { Marketplace } from '../../../domain/entities/Marketplace';
@@ -13,13 +13,17 @@ const MARKETPLACE_SELECT = `
 `;
 
 export class MarketplaceRepository implements IMarketplaceRepository {
-  constructor(private readonly client?: PoolClient) {}
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.queryClient = client || pool;
+  }
 
   async findById(id: string): Promise<Marketplace | null> {
     const { rows } = await query<MarketplaceRow>(
       `${MARKETPLACE_SELECT} WHERE id = $1`,
       [id],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? MarketplaceMapper.toDomain(row) : null;
@@ -32,7 +36,7 @@ export class MarketplaceRepository implements IMarketplaceRepository {
     const { rows } = await query<MarketplaceRow>(
       `${MARKETPLACE_SELECT} WHERE id = $1 AND workspace_id = $2`,
       [id, workspaceId],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? MarketplaceMapper.toDomain(row) : null;
@@ -42,7 +46,7 @@ export class MarketplaceRepository implements IMarketplaceRepository {
     const { rows } = await query<MarketplaceRow>(
       `${MARKETPLACE_SELECT} WHERE workspace_id = $1 ORDER BY created_at ASC`,
       [workspaceId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => MarketplaceMapper.toDomain(row));
   }
@@ -51,7 +55,7 @@ export class MarketplaceRepository implements IMarketplaceRepository {
     const { rows } = await query<MarketplaceRow>(
       `${MARKETPLACE_SELECT} WHERE workspace_id = $1 AND connected = TRUE ORDER BY created_at ASC`,
       [workspaceId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => MarketplaceMapper.toDomain(row));
   }
@@ -63,7 +67,7 @@ export class MarketplaceRepository implements IMarketplaceRepository {
     const { rows } = await query<MarketplaceRow>(
       `${MARKETPLACE_SELECT} WHERE workspace_id = $1 AND key = $2`,
       [workspaceId, key],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? MarketplaceMapper.toDomain(row) : null;
@@ -94,11 +98,11 @@ export class MarketplaceRepository implements IMarketplaceRepository {
         marketplace.capacity,
         marketplace.createdAt,
       ],
-      this.client,
+      this.queryClient,
     );
   }
 
   async delete(id: string): Promise<void> {
-    await query(`DELETE FROM marketplaces WHERE id = $1`, [id], this.client);
+    await query(`DELETE FROM marketplaces WHERE id = $1`, [id], this.queryClient);
   }
 }

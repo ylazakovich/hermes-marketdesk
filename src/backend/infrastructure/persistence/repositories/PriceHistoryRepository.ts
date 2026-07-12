@@ -6,7 +6,7 @@
 // repository satisfies both. The row<->view mapping is a pure static for
 // database-free unit testing.
 
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query } from '../../../config/database';
 import type { IPriceHistoryReader } from '../../../application/ports/IPriceHistoryReader';
 import type {
@@ -52,14 +52,18 @@ export const PriceHistoryMapper = {
 export class PriceHistoryRepository
   implements IPriceHistoryReader, IPriceHistoryRecorder
 {
-  constructor(private readonly client?: PoolClient) {}
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.queryClient = client || pool;
+  }
 
   // Read path — most recent first (matches idx_price_history_listing_date).
   async findByListing(listingId: string): Promise<PriceHistory[]> {
     const { rows } = await query<PriceHistoryRow>(
       `${PRICE_HISTORY_SELECT} WHERE listing_id = $1 ORDER BY created_at DESC`,
       [listingId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => PriceHistoryMapper.toView(row));
   }
@@ -79,7 +83,7 @@ export class PriceHistoryRepository
         entry.reason ?? null,
         entry.createdAt,
       ],
-      this.client,
+      this.queryClient,
     );
   }
 }

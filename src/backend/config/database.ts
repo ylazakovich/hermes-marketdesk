@@ -46,7 +46,7 @@ export async function getPool(): Promise<Pool> {
 export async function query<T = any>(
   text: string,
   values?: any[],
-  client?: PoolClient,
+  client?: PoolClient | Pool,
 ): Promise<{ rows: T[]; rowCount: number }> {
   const currentPool = client || (await getPool());
 

@@ -30,7 +30,7 @@ const listQuerySchema = z
         }),
       )
       .optional(),
-    limit: z.number().int().positive().optional(),
+    limit: z.number().int().positive().max(100).optional(),
     offset: z.number().int().nonnegative().optional(),
   })
   .refine(

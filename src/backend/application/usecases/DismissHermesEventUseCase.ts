@@ -53,7 +53,12 @@ export class DismissHermesEventUseCase {
       createdAt: event.resolvedAt ?? new Date(),
     });
 
-    await this.eventPublisher.publish(this.dismissedEvent(event));
+    try {
+      await this.eventPublisher.publish(this.dismissedEvent(event));
+    } catch {
+      // Dismissal already persisted; don't fail the request over a
+      // best-effort notification failure. Consider logging/metrics here.
+    }
 
     return Ok(event);
   }

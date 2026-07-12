@@ -53,7 +53,7 @@ export class UpdateProductUseCase {
     }
 
     if (dto.tags !== undefined) {
-      for (const tag of product.tags) product.removeTag(tag);
+      for (const tag of [...product.tags]) product.removeTag(tag);
       for (const tag of dto.tags) {
         const r = product.addTag(tag);
         if (r.isErr()) return r;
@@ -61,6 +61,7 @@ export class UpdateProductUseCase {
     }
 
     if (dto.images !== undefined) {
+      product.clearImages();
       for (const url of dto.images) {
         const r = product.addImage(url);
         if (r.isErr()) return r;
@@ -74,7 +75,13 @@ export class UpdateProductUseCase {
     }
 
     await this.productRepo.save(product);
-    await this.eventPublisher.publish(this.updatedEvent(product));
+
+    try {
+      await this.eventPublisher.publish(this.updatedEvent(product));
+    } catch {
+      // Product already persisted; don't fail the request over a best-effort
+      // event publication failure. Consider logging/metrics here.
+    }
 
     return Ok(product);
   }

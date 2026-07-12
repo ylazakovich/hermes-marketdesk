@@ -62,16 +62,16 @@ services:
       APP_NAME: ${APP_NAME:-hermes-marketdesk}
       APP_PORT: ${APP_PORT:-3000}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-      DATABASE_URL: postgresql://${DB_USER:-marketdesk}:${DB_PASSWORD:-marketdesk}@postgres:5432/${DB_NAME:-marketdesk}
+      DATABASE_URL: postgresql://${DB_USER:-marketdesk}:${DB_PASSWORD:?DB_PASSWORD must be set}@postgres:5432/${DB_NAME:-marketdesk}
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-marketdesk}
-      DB_PASSWORD: ${DB_PASSWORD:-marketdesk}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
       DB_NAME: ${DB_NAME:-marketdesk}
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_key_change_in_production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-24h}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       HERMES_API_URL: ${HERMES_API_URL:-}

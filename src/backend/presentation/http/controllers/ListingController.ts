@@ -65,7 +65,7 @@ export class ListingController {
     if (!listing) return next(new NotFoundError(`Listing not found: ${req.params.id}`));
     const result = await this.listings.publishListing({
       listingId: listing.id,
-      actorId: req.body?.actorId ?? req.user?.userId,
+      actorId: req.user!.userId,
     });
     if (result.isErr()) return next(result.error);
     ok(res, result.value);
@@ -115,7 +115,7 @@ export class ListingController {
     if (!listing) return next(new NotFoundError(`Listing not found: ${req.params.id}`));
     const result = await this.listings.relistListing({
       listingId: listing.id,
-      actorId: req.body?.actorId ?? req.user?.userId,
+      actorId: req.user!.userId,
     });
     if (result.isErr()) return next(result.error);
     ok(res, result.value, 202);

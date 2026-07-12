@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query, withTransaction } from '../../../config/database';
 import type { IProductRepository } from '../../../domain/repositories/interfaces/IProductRepository';
 import type { Product } from '../../../domain/entities/Product';
@@ -15,15 +15,23 @@ const PRODUCT_SELECT = `
 `;
 
 export class ProductRepository implements IProductRepository {
-  // An optional client allows enlisting this repository in an outer
-  // unit-of-work / transaction; otherwise the shared pool is used.
-  constructor(private readonly client?: PoolClient) {}
+  // An optional pool for test injection, or client for enlisting in a
+  // transaction; if neither provided, the module-level pool is used.
+  private readonly pool?: Pool;
+  private readonly client?: PoolClient;
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.pool = pool;
+    this.client = client;
+    this.queryClient = client || pool;
+  }
 
   async findById(id: string): Promise<Product | null> {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.id = $1`,
       [id],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? this.hydrate(row) : null;
@@ -36,7 +44,7 @@ export class ProductRepository implements IProductRepository {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.id = $1 AND p.workspace_id = $2`,
       [id, workspaceId],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? this.hydrate(row) : null;
@@ -46,7 +54,7 @@ export class ProductRepository implements IProductRepository {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.workspace_id = $1 ORDER BY p.created_at DESC`,
       [workspaceId],
-      this.client,
+      this.queryClient,
     );
     return Promise.all(rows.map((row) => this.hydrate(row)));
   }
@@ -55,7 +63,7 @@ export class ProductRepository implements IProductRepository {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.workspace_id = $1 AND p.sku = $2`,
       [workspaceId, sku],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? this.hydrate(row) : null;
@@ -79,7 +87,7 @@ export class ProductRepository implements IProductRepository {
     await query(
       `DELETE FROM products WHERE id = $1 AND workspace_id = $2`,
       [id, workspaceId],
-      this.client,
+      this.queryClient,
     );
   }
 
@@ -88,12 +96,12 @@ export class ProductRepository implements IProductRepository {
       query<ProductTagRow>(
         `SELECT tag FROM product_tags WHERE product_id = $1`,
         [row.id],
-        this.client,
+        this.queryClient,
       ),
       query<ProductImageRow>(
         `SELECT url, position FROM product_images WHERE product_id = $1 ORDER BY position ASC`,
         [row.id],
-        this.client,
+        this.queryClient,
       ),
     ]);
     return ProductMapper.toDomain(row, tags.rows, images.rows);

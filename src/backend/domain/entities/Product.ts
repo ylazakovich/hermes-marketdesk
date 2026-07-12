@@ -275,6 +275,11 @@ export class Product {
     return Ok(undefined);
   }
 
+  clearImages(): void {
+    this._images = [];
+    this.touch();
+  }
+
   private touch(): void {
     this._updatedAt = new Date();
   }

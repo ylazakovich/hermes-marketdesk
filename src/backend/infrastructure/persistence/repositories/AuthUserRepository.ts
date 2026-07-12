@@ -4,7 +4,7 @@
 // row<->record mapping is exposed as a pure static so it can be unit-tested
 // without a database, matching the other repositories in this package.
 
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query } from '../../../config/database';
 import type {
   IAuthUserStore,
@@ -41,13 +41,17 @@ export const AuthUserMapper = {
 export class AuthUserRepository implements IAuthUserStore {
   // An optional client allows enlisting in an outer unit-of-work; otherwise the
   // shared pool is used (consistent with the other repositories).
-  constructor(private readonly client?: PoolClient) {}
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.queryClient = client || pool;
+  }
 
   async findByEmail(email: string): Promise<AuthUserRecord | null> {
     const { rows } = await query<AuthUserRow>(
       `${USER_SELECT} WHERE LOWER(email) = LOWER($1)`,
       [email],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? AuthUserMapper.toRecord(row) : null;
@@ -57,7 +61,7 @@ export class AuthUserRepository implements IAuthUserStore {
     const { rows } = await query<AuthUserRow>(
       `${USER_SELECT} WHERE id = $1`,
       [id],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? AuthUserMapper.toRecord(row) : null;
@@ -69,7 +73,7 @@ export class AuthUserRepository implements IAuthUserStore {
        VALUES ($1, $2, $3)
        RETURNING id, email, password_hash, workspace_id, created_at`,
       [input.email, input.passwordHash, input.workspaceId ?? null],
-      this.client,
+      this.queryClient,
     );
     return AuthUserMapper.toRecord(rows[0]);
   }

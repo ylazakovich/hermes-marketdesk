@@ -64,10 +64,12 @@ const updateProductSchema = z
       dto.name !== undefined ||
       dto.description !== undefined ||
       dto.sellingPrice !== undefined ||
+      dto.currency !== undefined ||
       dto.condition !== undefined ||
       dto.status !== undefined ||
       dto.tags !== undefined ||
-      dto.images !== undefined,
+      dto.images !== undefined ||
+      dto.allowBelowCost !== undefined,
     { message: 'at least one field must be provided to update' },
   );
 

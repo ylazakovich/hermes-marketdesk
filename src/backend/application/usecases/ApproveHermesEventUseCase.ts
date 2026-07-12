@@ -162,6 +162,7 @@ export class ApproveHermesEventUseCase {
   }
 
   private async applyRelist(listingIds: string[]): Promise<Result<void>> {
+    let enqueued = 0;
     for (const listingId of listingIds) {
       const listing = await this.listingRepo.findById(listingId);
       if (!listing) continue;
@@ -182,6 +183,14 @@ export class ApproveHermesEventUseCase {
           imageUrls: [...product.images],
         },
       });
+      enqueued++;
+    }
+    if (enqueued === 0 && listingIds.length > 0) {
+      return Err(
+        new InvalidStateError(
+          'relist event references no valid listings to publish',
+        ),
+      );
     }
     return Ok(undefined);
   }

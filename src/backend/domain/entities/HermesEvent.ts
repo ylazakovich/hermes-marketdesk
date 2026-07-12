@@ -94,7 +94,14 @@ export class HermesEvent {
   ): Result<true> {
     if (change === null) {
       // Only non-actionable/informational events may omit a proposed change.
-      if (PRICE_EVENT_TYPES.includes(type) || type === 'suggested_better_title') {
+      const requiresChange =
+        PRICE_EVENT_TYPES.includes(type) ||
+        type === 'suggested_better_title' ||
+        type === 'update_description' ||
+        type === 'relist' ||
+        type === 'needs_relisting' ||
+        type === 'create_listing';
+      if (requiresChange) {
         return Err(
           new ValidationError(`Event type ${type} requires a proposed change`),
         );
@@ -192,6 +199,9 @@ export class HermesEvent {
 
   // Mark an auto-applied event as resolved (used by the decision engine).
   markApplied(at: Date = new Date()): void {
+    if (this._status !== 'pending_review') {
+      return;
+    }
     this._status = 'applied';
     this._resolvedAt = at;
   }

@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { query, withTransaction } from '../../../config/database';
 import type { IEventRepository } from '../../../domain/repositories/interfaces/IEventRepository';
 import type { HermesEvent } from '../../../domain/entities/HermesEvent';
@@ -13,13 +13,21 @@ const EVENT_SELECT = `
 `;
 
 export class EventRepository implements IEventRepository {
-  constructor(private readonly client?: PoolClient) {}
+  private readonly pool?: Pool;
+  private readonly client?: PoolClient;
+  private readonly queryClient?: PoolClient | Pool;
+
+  constructor(pool?: Pool, client?: PoolClient) {
+    this.pool = pool;
+    this.client = client;
+    this.queryClient = client || pool;
+  }
 
   async findById(id: string): Promise<HermesEvent | null> {
     const { rows } = await query<HermesEventRow>(
       `${EVENT_SELECT} WHERE id = $1`,
       [id],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? EventMapper.toDomain(row) : null;
@@ -32,7 +40,7 @@ export class EventRepository implements IEventRepository {
     const { rows } = await query<HermesEventRow>(
       `${EVENT_SELECT} WHERE id = $1 AND workspace_id = $2`,
       [id, workspaceId],
-      this.client,
+      this.queryClient,
     );
     const row = rows[0];
     return row ? EventMapper.toDomain(row) : null;
@@ -42,7 +50,7 @@ export class EventRepository implements IEventRepository {
     const { rows } = await query<HermesEventRow>(
       `${EVENT_SELECT} WHERE workspace_id = $1 ORDER BY created_at DESC`,
       [workspaceId],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => EventMapper.toDomain(row));
   }
@@ -54,7 +62,7 @@ export class EventRepository implements IEventRepository {
     const { rows } = await query<HermesEventRow>(
       `${EVENT_SELECT} WHERE workspace_id = $1 AND status = $2 ORDER BY created_at DESC`,
       [workspaceId, status],
-      this.client,
+      this.queryClient,
     );
     return rows.map((row) => EventMapper.toDomain(row));
   }
@@ -64,7 +72,7 @@ export class EventRepository implements IEventRepository {
   }
 
   async save(event: HermesEvent): Promise<void> {
-    await this.persist(event, this.client);
+    await this.persist(event, this.queryClient as PoolClient);
   }
 
   async saveAll(events: HermesEvent[]): Promise<void> {
@@ -84,7 +92,7 @@ export class EventRepository implements IEventRepository {
     await query(
       `DELETE FROM hermes_events WHERE created_at < $1`,
       [cutoff],
-      this.client,
+      this.queryClient,
     );
   }
 

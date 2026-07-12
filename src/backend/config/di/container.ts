@@ -161,16 +161,16 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
   const createQueue =
     overrides.createQueue ?? (<T>(name: string) => new BullManagedQueue<T>(name));
 
-  // 4. Repositories. They use the shared pool via the module-level query()
-  //    helper (an optional PoolClient enlists them in an outer transaction).
-  const productRepo = new ProductRepository();
-  const listingRepo = new ListingRepository();
-  const marketplaceRepo = new MarketplaceRepository();
-  const eventRepo = new EventRepository();
-  const workspaceRepo = new WorkspaceRepository();
-  const activityLogRepo = new ActivityLogRepository();
-  const authUserStore = new AuthUserRepository();
-  const priceHistoryRepo = new PriceHistoryRepository();
+  // 4. Repositories. They use the injected pool (or the module-level default if
+  //    not overridden). An optional PoolClient can enlist them in an outer transaction.
+  const productRepo = new ProductRepository(pool);
+  const listingRepo = new ListingRepository(pool);
+  const marketplaceRepo = new MarketplaceRepository(pool);
+  const eventRepo = new EventRepository(pool);
+  const workspaceRepo = new WorkspaceRepository(pool);
+  const activityLogRepo = new ActivityLogRepository(pool);
+  const authUserStore = new AuthUserRepository(pool);
+  const priceHistoryRepo = new PriceHistoryRepository(pool);
 
   // 5. Job queues (application IJobQueue ports). Handlers are registered below,
   //    once the services they depend on exist.
