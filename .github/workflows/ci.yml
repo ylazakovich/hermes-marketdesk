@@ -117,7 +117,7 @@ jobs:
           path: allure-results
 
       - name: Build Allure report (with history)
-        uses: simple-elf/allure-report-action@master
+        uses: simple-elf/allure-report-action@e463a472d3b1d750f9544369d60589ff1964c820 # master
         with:
           allure_results: allure-results
           gh_pages: gh-pages
@@ -125,7 +125,7 @@ jobs:
           keep_reports: 20
 
       - name: Publish Allure report to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: allure-history
