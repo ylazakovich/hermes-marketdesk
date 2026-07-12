@@ -35,7 +35,7 @@
     "@emotion/styled": "^11.11.0",
     "@mui/icons-material": "^5.14.16",
     "@mui/material": "^5.14.16",
-    "@reduxjs/toolkit": "^1.9.7",
+    "@reduxjs/toolkit": "^2.0.0",
     "axios": "^1.6.5",
     "bcryptjs": "^3.0.0",
     "bull": "^4.11.5",
