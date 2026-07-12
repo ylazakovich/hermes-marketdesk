@@ -23,7 +23,7 @@ jobs:
     # require these, but they are provisioned so DB-backed tests can run in CI.
     services:
       postgres:
-        image: postgres:15-alpine
+        image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
         env:
           POSTGRES_USER: marketdesk
           POSTGRES_PASSWORD: marketdesk
@@ -36,7 +36,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: redis:8-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
         ports:
           - 6379:6379
         options: >-
@@ -64,6 +64,8 @@ jobs:
 
       - name: Setup Node.js & install dependencies
         uses: ./.github/actions/setup-node
+        with:
+          node-version: '22'
 
       # Lint is reported but non-blocking: the repo has a small number of
       # pre-existing lint errors in files outside this change set. New code is
@@ -89,7 +91,7 @@ jobs:
 
       - name: Upload allure-results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: allure-results
           path: allure-results
@@ -109,7 +111,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Download allure-results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: allure-results
           path: allure-results
