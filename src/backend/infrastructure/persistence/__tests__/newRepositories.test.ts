@@ -97,20 +97,48 @@ describeDb('AuthUserRepository / PriceHistoryRepository (integration)', () => {
   beforeAll(async () => {
     try {
       const db = await import('../../../config/database');
+      const pool = db.createPool();
       closePool = db.closePool;
-      await db.createPool().query('SELECT 1');
+      await pool.query('SELECT 1');
+
+      const tablesCheck = await pool.query(
+        `SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_name = 'users'
+        ) AND EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_name = 'price_history'
+        )`
+      );
+      const tablesExist = tablesCheck.rows[0]?.exists ?? false;
+
+      if (!tablesExist) {
+        // eslint-disable-next-line no-console
+        console.warn('[newRepositories.integration] Database missing required tables — skipping integration tests');
+        ready = false;
+        return;
+      }
+
       ({ AuthUserRepository } = await import('../repositories/AuthUserRepository'));
       ({ PriceHistoryRepository } = await import('../repositories/PriceHistoryRepository'));
       ready = true;
-    } catch {
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[newRepositories.integration] Database unreachable — skipping integration tests. ${(err as Error).message}`
+      );
       ready = false;
     }
   });
 
   afterAll(async () => {
     if (ready) {
-      const db = await import('../../../config/database');
-      await db.query('DELETE FROM users WHERE email = $1', [email]);
+      try {
+        const db = await import('../../../config/database');
+        await db.query('DELETE FROM users WHERE email = $1', [email]);
+      } catch {
+        // Ignore cleanup errors
+      }
       await closePool();
     }
   });
