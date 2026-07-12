@@ -61,15 +61,30 @@ export class HermesCompletionClient implements AITextCompletionClient {
         }),
       });
 
-      const body = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
+      const body = await this.parseResponseBody(response);
       if (!response.ok) {
         const message = body.error?.message || `Hermes API request failed with ${response.status}`;
         throw new Error(message);
       }
 
-      return body.choices?.[0]?.message?.content?.trim() ?? '';
+      const content = body.choices?.[0]?.message?.content?.trim();
+      if (!content) {
+        throw new Error('Hermes API response did not include assistant content');
+      }
+      return content;
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private async parseResponseBody(response: Response): Promise<ChatCompletionResponse> {
+    try {
+      return (await response.json()) as ChatCompletionResponse;
+    } catch {
+      if (response.ok) {
+        throw new Error('Hermes API returned a non-JSON success response');
+      }
+      return {};
     }
   }
 

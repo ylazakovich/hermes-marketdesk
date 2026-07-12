@@ -125,12 +125,12 @@ Add the matching server-side key to `~/.hermes/.env` and restart Hermes gateway:
 
 ```bash
 API_SERVER_ENABLED=true
-API_SERVER_HOST=127.0.0.1
+API_SERVER_HOST=0.0.0.0
 API_SERVER_PORT=8642
 API_SERVER_KEY=<same value as HERMES_API_KEY in this project's .env>
 ```
 
-The Docker app reaches the host Hermes server through `host.docker.internal:8642`.
+The Docker app reaches the host Hermes server through `host.docker.internal:8642`. Because this binds Hermes on a host-reachable interface for Docker, restrict port `8642` at the firewall/security-group level to local Docker traffic and trusted admin IPs only; authentication still requires the bearer `API_SERVER_KEY`.
 
 ### 4. Start with Docker Compose
 

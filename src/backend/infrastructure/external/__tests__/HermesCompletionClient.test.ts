@@ -71,4 +71,46 @@ describe('HermesCompletionClient', () => {
       'Hermes unavailable',
     );
   });
+
+  it('throws when a successful Hermes response has no assistant content', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as typeof fetch;
+
+    const client = new HermesCompletionClient({
+      apiUrl: 'http://127.0.0.1:8642/v1',
+      apiKey: '',
+      model: 'hermes-agent',
+      maxTokens: 123,
+      timeoutMs: 5000,
+    });
+
+    await expect(client.complete({ system: 's', prompt: 'p' })).rejects.toThrow(
+      'Hermes API response did not include assistant content',
+    );
+  });
+
+  it('throws when a successful Hermes response is not JSON', async () => {
+    globalThis.fetch = jest.fn(async () =>
+      new Response('not json', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    ) as typeof fetch;
+
+    const client = new HermesCompletionClient({
+      apiUrl: 'http://127.0.0.1:8642/v1',
+      apiKey: '',
+      model: 'hermes-agent',
+      maxTokens: 123,
+      timeoutMs: 5000,
+    });
+
+    await expect(client.complete({ system: 's', prompt: 'p' })).rejects.toThrow(
+      'Hermes API returned a non-JSON success response',
+    );
+  });
 });

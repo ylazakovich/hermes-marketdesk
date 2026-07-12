@@ -248,6 +248,7 @@ src/backend/
 │   │   └── BaseMarketplaceAdapter.ts (abstract)
 │   ├── external/
 │   │   ├── HermesAI.ts
+│   │   ├── HermesCompletionClient.ts
 │   │   ├── EmailProvider.ts
 │   │   └── TelegramBot.ts
 │   ├── eventBroker/
@@ -1298,26 +1299,30 @@ export class HermesDecisionEngine {
 ```typescript
 // infrastructure/external/HermesAI.ts
 export class HermesAI implements IAIProvider {
-  constructor(private readonly client: HermesCompletionClient) {}
+  constructor(private readonly client: AITextCompletionClient) {}
 
-  async generatePriceSuggestion(product: Product): Promise<{
-    suggestedPrice: number;
-    reasoning: string;
-  }> {
+  async suggestPrice(context: PriceSuggestionContext): Promise<PriceSuggestion> {
+    const currentPrice = context.listing.price.amount;
     const raw = await this.client.complete({
       system: 'You output concise marketplace pricing recommendations as strict JSON.',
-      prompt: `Product: ${product.name}\nDescription: ${product.description}\nCurrent price: ${product.price} PLN`,
+      prompt: `Current price: ${currentPrice} ${context.listing.price.currency}.`,
       jsonSchema: {
         type: 'object',
         properties: {
           suggestedPrice: { type: 'number' },
           reasoning: { type: 'string' },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
-        required: ['suggestedPrice', 'reasoning'],
+        required: ['suggestedPrice', 'reasoning', 'confidence'],
       },
     });
 
-    return JSON.parse(raw);
+    const parsed = this.parseJson(raw);
+    return {
+      suggestedPrice: this.asFiniteNumber(parsed?.suggestedPrice, currentPrice),
+      reasoning: typeof parsed?.reasoning === 'string' ? parsed.reasoning : 'No reasoning provided by Hermes.',
+      confidence: this.asConfidence(parsed?.confidence),
+    };
   }
 }
 ```

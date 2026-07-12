@@ -103,7 +103,7 @@ export class HermesDecisionEngine {
 ```typescript
 export class HermesAI implements IAIProvider {
   constructor(
-    private readonly client: HermesCompletionClient,
+    private readonly client: AITextCompletionClient,
     private readonly maxTokens = Number(process.env.HERMES_MAX_TOKENS ?? 2048),
   ) {}
 
@@ -113,6 +113,7 @@ export class HermesAI implements IAIProvider {
     conversionRate: number;
     competitorPrice?: number;
   }): Promise<{ suggestedPrice: number; reasoning: string; confidence: 'high' | 'medium' | 'low' }> {
+    const currentPrice = context.listing.price.amount;
     const raw = await this.client.complete({
       system: 'You output strict JSON for marketplace pricing recommendations.',
       prompt: `Suggest a new price for this listing...`,
@@ -128,7 +129,18 @@ export class HermesAI implements IAIProvider {
       },
     });
 
-    return JSON.parse(raw);
+    // parseJson tolerates fenced JSON and returns null for malformed output.
+    // Invalid/missing fields fall back safely instead of throwing from the adapter.
+    const parsed = this.parseJson(raw);
+    return {
+      suggestedPrice: this.asFiniteNumber(parsed?.suggestedPrice, currentPrice),
+      reasoning: typeof parsed?.reasoning === 'string' && parsed.reasoning.trim()
+        ? parsed.reasoning.trim()
+        : 'No reasoning provided by Hermes.',
+      confidence: parsed?.confidence === 'high' || parsed?.confidence === 'medium'
+        ? parsed.confidence
+        : 'low',
+    };
   }
 
   // ... other methods ...
