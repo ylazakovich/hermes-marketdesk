@@ -20,10 +20,15 @@ type AdapterConstructor = new (
   options?: MarketplaceAdapterOptions,
 ) => IMarketplaceAdapter;
 
+export interface MarketplaceAdapterFactoryConfig {
+  httpClients?: Partial<Record<MarketplaceKey, MarketplaceHttpClient>>;
+  options?: Partial<Record<MarketplaceKey, MarketplaceAdapterOptions>>;
+}
+
 export class MarketplaceAdapterFactory {
   private readonly registry = new Map<MarketplaceKey, AdapterConstructor>();
 
-  constructor() {
+  constructor(private readonly config: MarketplaceAdapterFactoryConfig = {}) {
     this.register('olx', OLXAdapter);
     this.register('allegro', AllegroAdapter);
     this.register('vinted', VintedAdapter);
@@ -54,6 +59,9 @@ export class MarketplaceAdapterFactory {
         `No marketplace adapter registered for key: ${key}`,
       );
     }
-    return new ctor(http, options);
+    return new ctor(
+      http ?? this.config.httpClients?.[key],
+      options ?? this.config.options?.[key],
+    );
   }
 }
