@@ -18,18 +18,24 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
-    "baseUrl": "./src",
+    "types": [
+      "node",
+      "jest"
+    ],
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
     "paths": {
       "@backend/*": [
-        "backend/*"
+        "./src/backend/*"
       ],
       "@frontend/*": [
-        "frontend/*"
+        "./src/frontend/*"
       ],
       "@shared/*": [
-        "shared/*"
+        "./src/shared/*"
       ]
     },
     "incremental": true,

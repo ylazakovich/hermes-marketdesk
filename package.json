@@ -20,7 +20,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:ci": "jest --ci"
+    "test:ci": "jest --ci --forceExit"
   },
   "keywords": [
     "marketplace",
@@ -84,6 +84,8 @@
     "@typescript-eslint/parser": "8.63.0",
     "@vitejs/plugin-react": "6.0.3",
     "allure-jest": "3.10.2",
+    "@swc/core": "^1.15.5",
+    "@swc/jest": "^0.2.39",
     "concurrently": "10.0.3",
     "docker-compose": "1.4.2",
     "eslint": "10.7.0",
@@ -91,10 +93,9 @@
     "prettier": "3.9.5",
     "supertest": "7.2.2",
     "terser": "5.49.0",
-    "ts-jest": "29.4.11",
     "ts-node": "10.9.2",
     "tsx": "4.23.0",
-    "typescript": "5.9.3",
+    "typescript": "7.0.2",
     "vite": "^8.0.0",
     "@babel/plugin-transform-runtime": "^7.29.0"
   },
