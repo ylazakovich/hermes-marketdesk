@@ -9,7 +9,9 @@ import type { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import type { IAuthUserStore } from '../ports/IAuthUserStore';
 import type { IWorkspaceRepository } from '../../../domain/repositories/interfaces/IWorkspaceRepository';
+import type { IMarketplaceRepository } from '../../../domain/repositories/interfaces/IMarketplaceRepository';
 import { Workspace } from '../../../domain/entities/Workspace';
+import { Marketplace } from '../../../domain/entities/Marketplace';
 import { ConflictError } from '../../../domain/shared/DomainError';
 import { ERROR_CODES } from '../../../../shared/constants';
 import { ok, created, fail } from '../formatters/ResponseFormatter';
@@ -46,6 +48,7 @@ export class AuthController {
   constructor(
     private readonly users: IAuthUserStore,
     private readonly workspaceRepo?: IWorkspaceRepository,
+    private readonly marketplaceRepo?: IMarketplaceRepository,
   ) {}
 
   login = async (req: Request, res: Response): Promise<void> => {
@@ -83,17 +86,43 @@ export class AuthController {
     }
 
     let workspaceId: string | undefined;
-    if (workspaceName && this.workspaceRepo) {
-      const ws = Workspace.create({ id: randomUUID(), name: workspaceName });
-      if (ws.isErr()) return next(ws.error);
-      await this.workspaceRepo.save(ws.value);
-      workspaceId = ws.value.id;
-    }
+    let marketplaceId: string | undefined;
+    try {
+      if (workspaceName && this.workspaceRepo) {
+        const ws = Workspace.create({ id: randomUUID(), name: workspaceName });
+        if (ws.isErr()) return next(ws.error);
+        await this.workspaceRepo.save(ws.value);
+        workspaceId = ws.value.id;
+        if (this.marketplaceRepo) {
+          const olx = Marketplace.create({
+            id: randomUUID(),
+            workspaceId,
+            key: 'olx',
+            name: 'OLX',
+            connected: true,
+            syncMode: 'manual',
+          });
+          if (olx.isErr()) return next(olx.error);
+          marketplaceId = olx.value.id;
+          await this.marketplaceRepo.save(olx.value);
+        }
+      }
 
-    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-    const user = await this.users.create({ email, passwordHash, workspaceId });
-    const token = signToken({ userId: user.id, workspaceId: user.workspaceId ?? undefined });
-    created(res, { token, user: toUserView(user) });
+      const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+      const user = await this.users.create({ email, passwordHash, workspaceId });
+      const token = signToken({ userId: user.id, workspaceId: user.workspaceId ?? undefined });
+      created(res, { token, user: toUserView(user) });
+    } catch (err) {
+      // Best-effort compensating cleanup keeps workspace/bootstrap artifacts from
+      // being orphaned if marketplace provisioning or user creation fails.
+      if (marketplaceId && this.marketplaceRepo) {
+        await this.marketplaceRepo.delete(marketplaceId).catch(() => undefined);
+      }
+      if (workspaceId && this.workspaceRepo) {
+        await this.workspaceRepo.delete(workspaceId).catch(() => undefined);
+      }
+      return next(err);
+    }
   };
 
   me = async (req: Request, res: Response): Promise<void> => {
