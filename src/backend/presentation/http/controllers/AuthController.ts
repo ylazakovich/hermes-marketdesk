@@ -9,7 +9,9 @@ import type { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import type { IAuthUserStore } from '../ports/IAuthUserStore';
 import type { IWorkspaceRepository } from '../../../domain/repositories/interfaces/IWorkspaceRepository';
+import type { IMarketplaceRepository } from '../../../domain/repositories/interfaces/IMarketplaceRepository';
 import { Workspace } from '../../../domain/entities/Workspace';
+import { Marketplace } from '../../../domain/entities/Marketplace';
 import { ConflictError } from '../../../domain/shared/DomainError';
 import { ERROR_CODES } from '../../../../shared/constants';
 import { ok, created, fail } from '../formatters/ResponseFormatter';
@@ -46,6 +48,7 @@ export class AuthController {
   constructor(
     private readonly users: IAuthUserStore,
     private readonly workspaceRepo?: IWorkspaceRepository,
+    private readonly marketplaceRepo?: IMarketplaceRepository,
   ) {}
 
   login = async (req: Request, res: Response): Promise<void> => {
@@ -88,6 +91,18 @@ export class AuthController {
       if (ws.isErr()) return next(ws.error);
       await this.workspaceRepo.save(ws.value);
       workspaceId = ws.value.id;
+      if (this.marketplaceRepo) {
+        const olx = Marketplace.create({
+          id: randomUUID(),
+          workspaceId,
+          key: 'olx',
+          name: 'OLX',
+          connected: true,
+          syncMode: 'manual',
+        });
+        if (olx.isErr()) return next(olx.error);
+        await this.marketplaceRepo.save(olx.value);
+      }
     }
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
