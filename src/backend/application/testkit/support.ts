@@ -27,6 +27,9 @@ export class InMemoryWorkspaceRepository implements IWorkspaceRepository {
   async save(workspace: Workspace): Promise<void> {
     this.items.set(workspace.id, workspace);
   }
+  async delete(id: string): Promise<void> {
+    this.items.delete(id);
+  }
 }
 
 export class InMemoryActivityLogRepository implements IActivityLogRepository {
