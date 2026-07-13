@@ -158,6 +158,7 @@ function stubAnalyticsService(): AnalyticsApplicationService {
 async function buildTestApp() {
   const authUserStore = new InMemoryAuthStore();
   const marketplaceRepo = new InMemoryMarketplaceRepository();
+  const workspaceRepo = new InMemoryWorkspaceRepository();
   const passwordHash = await bcrypt.hash('secret123', 4);
   authUserStore.users.push({
     id: 'u-1',
@@ -175,11 +176,11 @@ async function buildTestApp() {
     productRepo: new InMemoryProductRepository() as IProductRepository,
     listingRepo: new InMemoryListingRepository() as IListingRepository,
     marketplaceRepo: marketplaceRepo as IMarketplaceRepository,
-    workspaceRepo: new InMemoryWorkspaceRepository() as IWorkspaceRepository,
+    workspaceRepo: workspaceRepo as IWorkspaceRepository,
     authUserStore,
   };
 
-  return { app: buildApp(deps, { enableRateLimit: false }), authUserStore, marketplaceRepo };
+  return { app: buildApp(deps, { enableRateLimit: false }), authUserStore, marketplaceRepo, workspaceRepo };
 }
 
 const token = signToken({ userId: 'u-1', workspaceId: 'ws-1' });
@@ -241,6 +242,23 @@ describe('Presentation API', () => {
       expect(olx?.name).toBe('OLX');
       expect(olx?.isConnected()).toBe(true);
       expect(olx?.syncMode).toBe('manual');
+    });
+
+    it('cleans up provisioned workspace and marketplace if user creation fails', async () => {
+      const { app, authUserStore, marketplaceRepo, workspaceRepo } = await buildTestApp();
+      authUserStore.create = jest.fn(async () => {
+        throw new Error('user create failed');
+      });
+
+      const res = await request(app).post('/api/auth/register').send({
+        email: 'seller-fail@example.com',
+        password: 'secret123',
+        workspaceName: 'Failing Seller Workspace',
+      });
+
+      expect(res.status).toBe(500);
+      expect(await workspaceRepo.findAll()).toHaveLength(0);
+      expect(marketplaceRepo.items.size).toBe(0);
     });
   });
 
