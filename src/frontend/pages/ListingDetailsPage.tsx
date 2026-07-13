@@ -10,6 +10,7 @@ import {
   Typography,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/EditOutlined';
+import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Listing } from '@shared/types';
@@ -20,6 +21,7 @@ import {
   useUpdateListing,
   useRelistListing,
   usePublishListing,
+  useCreateProductListing,
   usePriceHistory,
 } from '../services/hooks/index.js';
 import { useMarketplaceLookup } from '../hooks/useMarketplaceLookup.js';
@@ -54,18 +56,26 @@ const ListingDetailsPage: React.FC = () => {
 
   const product = useProduct(productId, { skip: !productId });
   const listings = useProductListings(productId, { skip: !productId });
-  const { resolveMarketplaceName } = useMarketplaceLookup();
+  const { marketplaces, resolveMarketplaceName } = useMarketplaceLookup();
 
   const [updateProduct, { isLoading: updating }] = useUpdateProduct();
   const [updateListing, { isLoading: pricing }] = useUpdateListing();
   const [relistListing] = useRelistListing();
   const [publishListing] = usePublishListing();
+  const [createListing, { isLoading: creatingListing }] = useCreateProductListing();
 
   const [editOpen, setEditOpen] = useState(false);
   const [priceListing, setPriceListing] = useState<Listing | null>(null);
   const [activeImage, setActiveImage] = useState(0);
 
   const listingItems = listings.data ?? [];
+  const listingMarketplaceIds = new Set(listingItems.map((listing) => listing.marketplaceId));
+  const availableMarketplace =
+    !listings.isLoading && !listings.isError
+      ? marketplaces?.find(
+          (marketplace) => marketplace.connected && !listingMarketplaceIds.has(marketplace.id),
+        )
+      : undefined;
   const primaryListing = listingItems[0];
   const priceHistory = usePriceHistory(primaryListing?.id ?? '', { skip: !primaryListing });
 
@@ -85,6 +95,21 @@ const ListingDetailsPage: React.FC = () => {
       await updateListing({ id: priceListing.id, patch: { price } }).unwrap();
       dispatch(enqueueToast({ message: 'Listing price updated.', severity: 'success' }));
       setPriceListing(null);
+    } catch (err) {
+      dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
+    }
+  };
+
+
+
+  const handleCreateListing = async () => {
+    if (!availableMarketplace) return;
+    try {
+      await createListing({
+        productId,
+        marketplaceKey: availableMarketplace.key,
+      }).unwrap();
+      dispatch(enqueueToast({ message: `${availableMarketplace.name} listing created.`, severity: 'success' }));
     } catch (err) {
       dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
     }
@@ -244,7 +269,23 @@ const ListingDetailsPage: React.FC = () => {
         </Card>
 
         <Stack spacing={2.5}>
-          <Card title="Marketplace listings" disablePadding>
+          <Card
+            title="Marketplace listings"
+            action={
+              availableMarketplace ? (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<AddIcon />}
+                  disabled={creatingListing}
+                  onClick={handleCreateListing}
+                >
+                  Create {availableMarketplace.name} listing
+                </Button>
+              ) : undefined
+            }
+            disablePadding
+          >
             <ListingsTable
               listings={listingItems}
               loading={listings.isLoading}

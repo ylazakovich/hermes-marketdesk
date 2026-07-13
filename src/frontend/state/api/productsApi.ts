@@ -8,6 +8,7 @@ import type {
   ProductListParams,
   CreateProductInput,
   UpdateProductArg,
+  CreateProductListingInput,
 } from './dto.js';
 
 export const productsApi = baseApi.injectEndpoints({
@@ -55,16 +56,30 @@ export const productsApi = baseApi.injectEndpoints({
       ],
     }),
 
+    createProductListing: builder.mutation<Listing, CreateProductListingInput>({
+      query: ({ productId, ...body }) => ({
+        url: `/products/${productId}/listings`,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (res: ApiResponse<Listing>) => unwrap(res),
+      invalidatesTags: (result, _error, { productId }) => [
+        { type: 'Product', id: productId },
+        { type: 'Listing', id: `PRODUCT:${productId}` },
+        ...(result ? [{ type: 'Listing' as const, id: result.id }] : []),
+      ],
+    }),
+
     getProductListings: builder.query<Listing[], string>({
       query: (id) => `/products/${id}/listings`,
       transformResponse: (res: ApiResponse<Listing[]>) => unwrap(res),
-      providesTags: (result) =>
+      providesTags: (result, _error, id) =>
         result
           ? [
               ...result.map((l) => ({ type: 'Listing' as const, id: l.id })),
-              { type: 'Listing' as const, id: 'LIST' },
+              { type: 'Listing' as const, id: `PRODUCT:${id}` },
             ]
-          : [{ type: 'Listing' as const, id: 'LIST' }],
+          : [{ type: 'Listing' as const, id: `PRODUCT:${id}` }],
     }),
   }),
 });
@@ -75,5 +90,6 @@ export const {
   useCreateProductMutation,
   useUpdateProductMutation,
   useDeleteProductMutation,
+  useCreateProductListingMutation,
   useGetProductListingsQuery,
 } = productsApi;

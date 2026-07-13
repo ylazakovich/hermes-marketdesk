@@ -10,6 +10,7 @@ import {
   useCreateProductMutation,
   useUpdateProductMutation,
   useDeleteProductMutation,
+  useCreateProductListingMutation,
   useGetProductListingsQuery,
   useGetListingsQuery,
   useGetListingQuery,
@@ -64,6 +65,7 @@ export const useProductListings = useGetProductListingsQuery;
 export const useCreateProduct = useCreateProductMutation;
 export const useUpdateProduct = useUpdateProductMutation;
 export const useDeleteProduct = useDeleteProductMutation;
+export const useCreateProductListing = useCreateProductListingMutation;
 
 // ---- Listings ----
 export function useListings(params: ListingListParams = {}, options?: ListingsOpts) {

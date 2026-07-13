@@ -53,8 +53,14 @@ export interface ListingListParams {
   offset?: number;
 }
 
+// Canonical route: POST /products/:id/listings.
+export interface CreateProductListingInput {
+  productId: string;
+  marketplaceKey?: Marketplace['key'];
+  price?: number;
+}
+
 // Canonical route: POST /listings/:id/publish with optional body { actorId? }.
-// There is no create-listing route; publish acts on an existing (draft) listing.
 export interface PublishListingInput {
   id: string;
   actorId?: string;
