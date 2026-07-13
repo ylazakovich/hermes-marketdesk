@@ -7,6 +7,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
+import crypto from 'crypto';
 
 import type { ProductApplicationService } from '../../application/services/ProductApplicationService';
 import type { ListingApplicationService } from '../../application/services/ListingApplicationService';
@@ -95,6 +96,9 @@ export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
       deps.productService,
       deps.listingService,
       deps.productRepo,
+      deps.listingRepo,
+      deps.marketplaceRepo,
+      deps.idGenerator ?? crypto.randomUUID,
     ),
     listings: new ListingController(deps.listingService, deps.listingRepo, {
       priceHistoryReader: deps.priceHistoryReader,

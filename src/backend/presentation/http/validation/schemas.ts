@@ -12,6 +12,7 @@ import {
   PRODUCT_STATUS_LIST,
   AUTONOMY_LEVEL_LIST,
   SYNC_MODE_LIST,
+  MARKETPLACE_KEY_LIST,
 } from '../../../../shared/constants';
 
 const conditionEnum = z.enum([
@@ -52,6 +53,11 @@ export const updateProductSchema = z
   .refine((obj) => Object.keys(obj).length > 0, {
     message: 'At least one field must be provided',
   });
+
+export const createListingSchema = z.object({
+  marketplaceKey: z.enum(MARKETPLACE_KEY_LIST as [string, ...string[]]).default('olx'),
+  price: z.number().nonnegative().optional(),
+});
 
 export const publishListingSchema = z.object({
   actorId: z.string().optional(),

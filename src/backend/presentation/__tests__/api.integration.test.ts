@@ -184,6 +184,7 @@ async function buildTestApp() {
     marketplaceRepo: marketplaceRepo as IMarketplaceRepository,
     workspaceRepo: workspaceRepo as IWorkspaceRepository,
     authUserStore,
+    idGenerator: () => 'listing-1',
   };
 
   const cost = Money.of(10, 'PLN');
@@ -194,7 +195,7 @@ async function buildTestApp() {
     workspaceId: 'ws-1',
     sku: 'S-REAL',
     name: 'Real widget',
-    description: 'A real widget for publish preview tests',
+    description: 'A real widget for listing and publish preview tests',
     costPrice: cost.value,
     sellingPrice: price.value,
     condition: 'good',
@@ -212,6 +213,18 @@ async function buildTestApp() {
   });
   if (marketplace.isErr()) throw marketplace.error;
   await marketplaceRepo.save(marketplace.value);
+  return {
+    app: buildApp(deps, { enableRateLimit: false }),
+    authUserStore,
+    marketplaceRepo,
+    workspaceRepo,
+    listingRepo,
+  };
+}
+
+async function seedPreviewListing(listingRepo: InMemoryListingRepository): Promise<void> {
+  const price = Money.of(20, 'PLN');
+  if (price.isErr()) throw new Error('money fixture failed');
   const listing = Listing.create({
     id: 'listing-preview',
     productId: 'p-real',
@@ -220,15 +233,8 @@ async function buildTestApp() {
   });
   if (listing.isErr()) throw listing.error;
   await listingRepo.save(listing.value);
-
-  return {
-    app: buildApp(deps, { enableRateLimit: false }),
-    authUserStore,
-    listingRepo,
-    marketplaceRepo,
-    workspaceRepo,
-  };
 }
+
 const token = signToken({ userId: 'u-1', workspaceId: 'ws-1' });
 const auth = (req: request.Test) => req.set('Authorization', `Bearer ${token}`);
 
@@ -363,11 +369,69 @@ describe('Presentation API', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.id).toBeDefined();
     });
+
+    it('creates a draft OLX listing for a product', async () => {
+      const { app } = await buildTestApp();
+      const res = await auth(request(app).post('/api/products/p-real/listings')).send({
+        marketplaceKey: 'olx',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.id).toBe('listing-1');
+      expect(res.body.data.productId).toBe('p-real');
+      expect(res.body.data.marketplaceId).toBe('marketplace-olx');
+      expect(res.body.data.price).toBe(20);
+      expect(res.body.data.status).toBe('draft');
+    });
+
+    it('rejects duplicate listing creation for the same marketplace', async () => {
+      const { app } = await buildTestApp();
+      await auth(request(app).post('/api/products/p-real/listings')).send({ marketplaceKey: 'olx' });
+      const res = await auth(request(app).post('/api/products/p-real/listings')).send({
+        marketplaceKey: 'olx',
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe('CONFLICT');
+    });
+
+    it('rejects draft listing creation for a disconnected marketplace', async () => {
+      const { app, marketplaceRepo } = await buildTestApp();
+      const marketplace = await marketplaceRepo.findByKey('ws-1', 'olx');
+      marketplace?.disconnect();
+
+      const res = await auth(request(app).post('/api/products/p-real/listings')).send({
+        marketplaceKey: 'olx',
+      });
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+    });
+
+    it('maps concurrent duplicate listing persistence to a conflict response', async () => {
+      const { app, listingRepo } = await buildTestApp();
+      jest.spyOn(listingRepo, 'save').mockRejectedValueOnce({
+        code: '23505',
+        constraint: 'unique_listing',
+      });
+
+      const res = await auth(request(app).post('/api/products/p-real/listings')).send({
+        marketplaceKey: 'olx',
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe('CONFLICT');
+    });
   });
 
   describe('listings', () => {
     it('returns publish preview without publishing or enqueueing', async () => {
       const { app, listingRepo } = await buildTestApp();
+      await seedPreviewListing(listingRepo);
       const before = await listingRepo.findById('listing-preview');
       const res = await auth(request(app).post('/api/listings/listing-preview/publish-preview')).send({});
       const after = await listingRepo.findById('listing-preview');
@@ -385,6 +449,7 @@ describe('Presentation API', () => {
 
     it('supports dryRun on the publish endpoint without publishing', async () => {
       const { app, listingRepo } = await buildTestApp();
+      await seedPreviewListing(listingRepo);
       const res = await auth(request(app).post('/api/listings/listing-preview/publish')).send({
         dryRun: true,
       });
@@ -400,6 +465,7 @@ describe('Presentation API', () => {
 
     it('returns publish preview warnings without publishing invalid listings', async () => {
       const { app, listingRepo, marketplaceRepo } = await buildTestApp();
+      await seedPreviewListing(listingRepo);
       const marketplace = await marketplaceRepo.findById('marketplace-olx');
       marketplace?.disconnect();
 
