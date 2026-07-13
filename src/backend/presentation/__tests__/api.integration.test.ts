@@ -14,6 +14,10 @@ import type {
 } from '../http/ports/IAuthUserStore';
 import { Ok, Err } from '../../domain/shared/Result';
 import { InvalidStateError, NotFoundError } from '../../domain/shared/DomainError';
+import { Product } from '../../domain/entities/Product';
+import { Marketplace } from '../../domain/entities/Marketplace';
+import { Listing } from '../../domain/entities/Listing';
+import { Money } from '../../domain/valueObjects/Money';
 import type { ProductApplicationService } from '../../application/services/ProductApplicationService';
 import type { ListingApplicationService } from '../../application/services/ListingApplicationService';
 import type { HermesApplicationService } from '../../application/services/HermesApplicationService';
@@ -157,6 +161,9 @@ function stubAnalyticsService(): AnalyticsApplicationService {
 
 async function buildTestApp() {
   const authUserStore = new InMemoryAuthStore();
+  const productRepo = new InMemoryProductRepository();
+  const listingRepo = new InMemoryListingRepository();
+  const marketplaceRepo = new InMemoryMarketplaceRepository();
   const passwordHash = await bcrypt.hash('secret123', 4);
   authUserStore.users.push({
     id: 'u-1',
@@ -171,14 +178,49 @@ async function buildTestApp() {
     listingService: stubListingService(),
     hermesService: stubHermesService(),
     analyticsService: stubAnalyticsService(),
-    productRepo: new InMemoryProductRepository() as IProductRepository,
-    listingRepo: new InMemoryListingRepository() as IListingRepository,
-    marketplaceRepo: new InMemoryMarketplaceRepository() as IMarketplaceRepository,
+    productRepo: productRepo as IProductRepository,
+    listingRepo: listingRepo as IListingRepository,
+    marketplaceRepo: marketplaceRepo as IMarketplaceRepository,
     workspaceRepo: new InMemoryWorkspaceRepository() as IWorkspaceRepository,
     authUserStore,
   };
 
-  return { app: buildApp(deps, { enableRateLimit: false }), authUserStore };
+  const cost = Money.of(10, 'PLN');
+  const price = Money.of(20, 'PLN');
+  if (cost.isErr() || price.isErr()) throw new Error('money fixture failed');
+  const product = Product.create({
+    id: 'p-real',
+    workspaceId: 'ws-1',
+    sku: 'S-REAL',
+    name: 'Real widget',
+    description: 'A real widget for publish preview tests',
+    costPrice: cost.value,
+    sellingPrice: price.value,
+    condition: 'good',
+    category: 'misc',
+    status: 'active',
+  });
+  if (product.isErr()) throw product.error;
+  await productRepo.save(product.value);
+  const marketplace = Marketplace.create({
+    id: 'marketplace-olx',
+    workspaceId: 'ws-1',
+    key: 'olx',
+    name: 'OLX',
+    connected: true,
+  });
+  if (marketplace.isErr()) throw marketplace.error;
+  await marketplaceRepo.save(marketplace.value);
+  const listing = Listing.create({
+    id: 'listing-preview',
+    productId: 'p-real',
+    marketplaceId: 'marketplace-olx',
+    price: price.value,
+  });
+  if (listing.isErr()) throw listing.error;
+  await listingRepo.save(listing.value);
+
+  return { app: buildApp(deps, { enableRateLimit: false }), authUserStore, listingRepo };
 }
 
 const token = signToken({ userId: 'u-1', workspaceId: 'ws-1' });
@@ -277,6 +319,40 @@ describe('Presentation API', () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data.id).toBeDefined();
+    });
+  });
+
+  describe('listings', () => {
+    it('returns publish preview without publishing or enqueueing', async () => {
+      const { app, listingRepo } = await buildTestApp();
+      const before = await listingRepo.findById('listing-preview');
+      const res = await auth(request(app).post('/api/listings/listing-preview/publish-preview')).send({});
+      const after = await listingRepo.findById('listing-preview');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.dryRun).toBe(true);
+      expect(res.body.data.canPublish).toBe(true);
+      expect(res.body.data.payload.productName).toBe('Real widget');
+      expect(res.body.data.payload.price).toBe(20);
+      expect(before?.status).toBe('draft');
+      expect(after?.status).toBe('draft');
+      expect(after?.marketplaceListingId).toBeNull();
+    });
+
+    it('supports dryRun on the publish endpoint without publishing', async () => {
+      const { app, listingRepo } = await buildTestApp();
+      const res = await auth(request(app).post('/api/listings/listing-preview/publish')).send({
+        dryRun: true,
+      });
+      const after = await listingRepo.findById('listing-preview');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.dryRun).toBe(true);
+      expect(res.body.data.canPublish).toBe(true);
+      expect(after?.status).toBe('draft');
+      expect(after?.marketplaceListingId).toBeNull();
     });
   });
 

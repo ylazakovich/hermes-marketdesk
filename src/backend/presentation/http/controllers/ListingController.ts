@@ -9,6 +9,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { ListingApplicationService } from '../../../application/services/ListingApplicationService';
 import type { IListingRepository } from '../../../domain/repositories/interfaces/IListingRepository';
+import type { IProductRepository } from '../../../domain/repositories/interfaces/IProductRepository';
+import type { IMarketplaceRepository } from '../../../domain/repositories/interfaces/IMarketplaceRepository';
 import type { IPriceHistoryReader } from '../../../application/ports/IPriceHistoryReader';
 import type { IPriceHistoryRecorder } from '../../../application/ports/IPriceHistoryRecorder';
 import type { IdGenerator } from '../../../application/ports/IdGenerator';
@@ -26,6 +28,8 @@ export interface ListingControllerDeps {
   priceHistoryReader?: IPriceHistoryReader;
   priceHistoryRecorder?: IPriceHistoryRecorder;
   idGenerator?: IdGenerator;
+  productRepo?: IProductRepository;
+  marketplaceRepo?: IMarketplaceRepository;
 }
 
 export class ListingController {
@@ -34,6 +38,47 @@ export class ListingController {
     private readonly listingRepo: IListingRepository,
     private readonly deps: ListingControllerDeps = {},
   ) {}
+
+
+  private async buildPublishPreview(listingId: string, workspaceId: string) {
+    const listing = await this.listingRepo.findByIdForWorkspace(listingId, workspaceId);
+    if (!listing) return null;
+    const product = this.deps.productRepo
+      ? await this.deps.productRepo.findById(listing.productId)
+      : null;
+    const marketplace = this.deps.marketplaceRepo
+      ? await this.deps.marketplaceRepo.findById(listing.marketplaceId)
+      : null;
+
+    const warnings: string[] = [];
+    if (!product) warnings.push(`Product not found: ${listing.productId}`);
+    if (!marketplace) warnings.push(`Marketplace not found: ${listing.marketplaceId}`);
+    if (marketplace && !marketplace.isConnected()) {
+      warnings.push(`Marketplace ${marketplace.key} is not connected`);
+    }
+    if (product && !product.canPublish()) warnings.push('Cannot publish a sold product');
+    if (listing.price.isZero()) warnings.push('Listing price must be set before publish');
+
+    return {
+      dryRun: true,
+      canPublish: warnings.length === 0,
+      listingId: listing.id,
+      status: listing.status,
+      marketplaceKey: marketplace?.key,
+      payload: product
+        ? {
+            productName: product.name,
+            description: product.description,
+            price: listing.price.amount,
+            currency: listing.price.currency,
+            category: product.category,
+            condition: product.condition,
+            imageCount: product.images.length,
+          }
+        : null,
+      warnings,
+    };
+  }
 
   list = async (req: Request, res: Response): Promise<void> => {
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
@@ -61,8 +106,21 @@ export class ListingController {
     ok(res, listing);
   };
 
+  publishPreview = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const listingId = routeParam(req.params.id);
+    const preview = await this.buildPublishPreview(listingId, req.user!.workspaceId!);
+    if (!preview) return next(new NotFoundError(`Listing not found: ${listingId}`));
+    ok(res, preview);
+  };
+
   publish = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const listingId = routeParam(req.params.id);
+    if (req.body?.dryRun === true) {
+      const preview = await this.buildPublishPreview(listingId, req.user!.workspaceId!);
+      if (!preview) return next(new NotFoundError(`Listing not found: ${listingId}`));
+      ok(res, preview);
+      return;
+    }
     // Tenant-scoped load (S2) so a listing cannot be published on another tenant's
     // behalf — mirrors the relist/update guard rather than a bare findById.
     const listing = await this.listingRepo.findByIdForWorkspace(

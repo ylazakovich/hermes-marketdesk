@@ -55,6 +55,7 @@ export const updateProductSchema = z
 
 export const publishListingSchema = z.object({
   actorId: z.string().optional(),
+  dryRun: z.boolean().optional(),
 });
 
 export const updateWorkspaceSchema = z

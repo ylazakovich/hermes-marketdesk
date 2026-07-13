@@ -19,6 +19,7 @@ import {
   useUpdateProduct,
   useUpdateListing,
   useRelistListing,
+  usePublishListingPreview,
   usePublishListing,
   usePriceHistory,
 } from '../services/hooks/index.js';
@@ -59,6 +60,7 @@ const ListingDetailsPage: React.FC = () => {
   const [updateProduct, { isLoading: updating }] = useUpdateProduct();
   const [updateListing, { isLoading: pricing }] = useUpdateListing();
   const [relistListing] = useRelistListing();
+  const [publishListingPreview] = usePublishListingPreview();
   const [publishListing] = usePublishListing();
 
   const [editOpen, setEditOpen] = useState(false);
@@ -101,6 +103,15 @@ const ListingDetailsPage: React.FC = () => {
 
   const handlePublish = async (listing: Listing) => {
     try {
+      const preview = await publishListingPreview(listing.id).unwrap();
+      if (!preview.canPublish) {
+        dispatch(enqueueToast({ message: preview.warnings.join('; '), severity: 'warning' }));
+        return;
+      }
+      const confirmed = window.confirm(
+        `Publish ${preview.payload?.productName ?? 'listing'} to ${preview.marketplaceKey?.toUpperCase() ?? 'marketplace'} for ${preview.payload?.price} ${preview.payload?.currency}?`,
+      );
+      if (!confirmed) return;
       await publishListing({ id: listing.id }).unwrap();
       dispatch(enqueueToast({ message: 'Listing published.', severity: 'success' }));
     } catch (err) {

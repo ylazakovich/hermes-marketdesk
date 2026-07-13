@@ -13,6 +13,7 @@ import {
   useGetProductListingsQuery,
   useGetListingsQuery,
   useGetListingQuery,
+  usePublishListingPreviewMutation,
   usePublishListingMutation,
   useUpdateListingMutation,
   useRelistListingMutation,
@@ -71,6 +72,7 @@ export function useListings(params: ListingListParams = {}, options?: ListingsOp
   return useGetListingsQuery({ workspaceId, ...params }, options);
 }
 export const useListing = useGetListingQuery;
+export const usePublishListingPreview = usePublishListingPreviewMutation;
 export const usePublishListing = usePublishListingMutation;
 export const useUpdateListing = useUpdateListingMutation;
 export const useRelistListing = useRelistListingMutation;
