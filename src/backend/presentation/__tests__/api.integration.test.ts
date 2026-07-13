@@ -14,6 +14,9 @@ import type {
 } from '../http/ports/IAuthUserStore';
 import { Ok, Err } from '../../domain/shared/Result';
 import { InvalidStateError, NotFoundError } from '../../domain/shared/DomainError';
+import { Product } from '../../domain/entities/Product';
+import { Marketplace } from '../../domain/entities/Marketplace';
+import { Money } from '../../domain/valueObjects/Money';
 import type { ProductApplicationService } from '../../application/services/ProductApplicationService';
 import type { ListingApplicationService } from '../../application/services/ListingApplicationService';
 import type { HermesApplicationService } from '../../application/services/HermesApplicationService';
@@ -157,6 +160,9 @@ function stubAnalyticsService(): AnalyticsApplicationService {
 
 async function buildTestApp() {
   const authUserStore = new InMemoryAuthStore();
+  const productRepo = new InMemoryProductRepository();
+  const listingRepo = new InMemoryListingRepository();
+  const marketplaceRepo = new InMemoryMarketplaceRepository();
   const passwordHash = await bcrypt.hash('secret123', 4);
   authUserStore.users.push({
     id: 'u-1',
@@ -171,14 +177,42 @@ async function buildTestApp() {
     listingService: stubListingService(),
     hermesService: stubHermesService(),
     analyticsService: stubAnalyticsService(),
-    productRepo: new InMemoryProductRepository() as IProductRepository,
-    listingRepo: new InMemoryListingRepository() as IListingRepository,
-    marketplaceRepo: new InMemoryMarketplaceRepository() as IMarketplaceRepository,
+    productRepo: productRepo as IProductRepository,
+    listingRepo: listingRepo as IListingRepository,
+    marketplaceRepo: marketplaceRepo as IMarketplaceRepository,
     workspaceRepo: new InMemoryWorkspaceRepository() as IWorkspaceRepository,
     authUserStore,
+    idGenerator: () => 'listing-1',
   };
 
-  return { app: buildApp(deps, { enableRateLimit: false }), authUserStore };
+  const cost = Money.of(10, 'PLN');
+  const price = Money.of(20, 'PLN');
+  if (cost.isErr() || price.isErr()) throw new Error('money fixture failed');
+  const product = Product.create({
+    id: 'p-real',
+    workspaceId: 'ws-1',
+    sku: 'S-REAL',
+    name: 'Real widget',
+    description: 'A real widget for listing creation tests',
+    costPrice: cost.value,
+    sellingPrice: price.value,
+    condition: 'good',
+    category: 'misc',
+    status: 'active',
+  });
+  if (product.isErr()) throw product.error;
+  await productRepo.save(product.value);
+  const marketplace = Marketplace.create({
+    id: 'marketplace-olx',
+    workspaceId: 'ws-1',
+    key: 'olx',
+    name: 'OLX',
+    connected: true,
+  });
+  if (marketplace.isErr()) throw marketplace.error;
+  await marketplaceRepo.save(marketplace.value);
+
+  return { app: buildApp(deps, { enableRateLimit: false }), authUserStore, marketplaceRepo, listingRepo };
 }
 
 const token = signToken({ userId: 'u-1', workspaceId: 'ws-1' });
@@ -277,6 +311,33 @@ describe('Presentation API', () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data.id).toBeDefined();
+    });
+
+    it('creates a draft OLX listing for a product', async () => {
+      const { app } = await buildTestApp();
+      const res = await auth(request(app).post('/api/products/p-real/listings')).send({
+        marketplaceKey: 'olx',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.id).toBe('listing-1');
+      expect(res.body.data.productId).toBe('p-real');
+      expect(res.body.data.marketplaceId).toBe('marketplace-olx');
+      expect(res.body.data.price).toBe(20);
+      expect(res.body.data.status).toBe('draft');
+    });
+
+    it('rejects duplicate listing creation for the same marketplace', async () => {
+      const { app } = await buildTestApp();
+      await auth(request(app).post('/api/products/p-real/listings')).send({ marketplaceKey: 'olx' });
+      const res = await auth(request(app).post('/api/products/p-real/listings')).send({
+        marketplaceKey: 'olx',
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe('CONFLICT');
     });
   });
 

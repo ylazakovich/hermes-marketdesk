@@ -6,6 +6,8 @@ import type { Request, Response, NextFunction } from 'express';
 import type { ProductApplicationService } from '../../../application/services/ProductApplicationService';
 import type { ListingApplicationService } from '../../../application/services/ListingApplicationService';
 import type { IProductRepository } from '../../../domain/repositories/interfaces/IProductRepository';
+import type { IListingRepository } from '../../../domain/repositories/interfaces/IListingRepository';
+import type { IMarketplaceRepository } from '../../../domain/repositories/interfaces/IMarketplaceRepository';
 import type { CreateProductDTO } from '../../../application/dto/CreateProductDTO';
 import type { UpdateProductDTO } from '../../../application/dto/UpdateProductDTO';
 import type {
@@ -13,8 +15,11 @@ import type {
   SortKey,
 } from '../../../application/dto/ListProductsQueryDTO';
 import type { ProductStatus } from '../../../../shared/types';
-import { NotFoundError } from '../../../domain/shared/DomainError';
+import { ConflictError, NotFoundError } from '../../../domain/shared/DomainError';
+import { Listing } from '../../../domain/entities/Listing';
+import { Money } from '../../../domain/valueObjects/Money';
 import { ok, created, paginated } from '../formatters/ResponseFormatter';
+import { presentListing } from '../../../application/dto/presenters';
 
 
 function routeParam(value: string | string[] | undefined): string {
@@ -50,6 +55,9 @@ export class ProductController {
     private readonly products: ProductApplicationService,
     private readonly listings: ListingApplicationService,
     private readonly productRepo: IProductRepository,
+    private readonly listingRepo: IListingRepository,
+    private readonly marketplaceRepo: IMarketplaceRepository,
+    private readonly idGenerator: () => string,
   ) {}
 
   list = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -112,6 +120,40 @@ export class ProductController {
     if (!existing) return next(new NotFoundError(`Product not found: ${productId}`));
     await this.productRepo.delete(productId, workspaceId);
     ok(res, { id: productId, deleted: true });
+  };
+
+
+
+  createListing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const productId = routeParam(req.params.id);
+    const workspaceId = req.user!.workspaceId!;
+    const product = await this.productRepo.findByIdForWorkspace(productId, workspaceId);
+    if (!product) return next(new NotFoundError(`Product not found: ${productId}`));
+
+    const marketplace = await this.marketplaceRepo.findByKey(workspaceId, req.body.marketplaceKey ?? 'olx');
+    if (!marketplace) {
+      return next(new NotFoundError(`Marketplace not found: ${req.body.marketplaceKey ?? 'olx'}`));
+    }
+
+    const existing = (await this.listingRepo.findByProduct(productId)).find(
+      (listing) => listing.marketplaceId === marketplace.id,
+    );
+    if (existing) {
+      return next(new ConflictError(`Listing already exists for marketplace: ${marketplace.key}`));
+    }
+
+    const money = Money.of(req.body.price ?? product.sellingPrice.amount, product.sellingPrice.currency);
+    if (money.isErr()) return next(money.error);
+    const listing = Listing.create({
+      id: this.idGenerator(),
+      productId: product.id,
+      marketplaceId: marketplace.id,
+      price: money.value,
+    });
+    if (listing.isErr()) return next(listing.error);
+
+    await this.listingRepo.save(listing.value);
+    created(res, presentListing(listing.value));
   };
 
   getListings = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
