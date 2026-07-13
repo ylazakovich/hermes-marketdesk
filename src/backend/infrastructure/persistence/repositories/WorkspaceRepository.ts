@@ -64,4 +64,8 @@ export class WorkspaceRepository implements IWorkspaceRepository {
       this.queryClient,
     );
   }
+
+  async delete(id: string): Promise<void> {
+    await query(`DELETE FROM workspaces WHERE id = $1`, [id], this.queryClient);
+  }
 }

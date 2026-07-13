@@ -163,6 +163,7 @@ async function buildTestApp() {
   const productRepo = new InMemoryProductRepository();
   const listingRepo = new InMemoryListingRepository();
   const marketplaceRepo = new InMemoryMarketplaceRepository();
+  const workspaceRepo = new InMemoryWorkspaceRepository();
   const passwordHash = await bcrypt.hash('secret123', 4);
   authUserStore.users.push({
     id: 'u-1',
@@ -180,7 +181,7 @@ async function buildTestApp() {
     productRepo: productRepo as IProductRepository,
     listingRepo: listingRepo as IListingRepository,
     marketplaceRepo: marketplaceRepo as IMarketplaceRepository,
-    workspaceRepo: new InMemoryWorkspaceRepository() as IWorkspaceRepository,
+    workspaceRepo: workspaceRepo as IWorkspaceRepository,
     authUserStore,
     idGenerator: () => 'listing-1',
   };
@@ -212,9 +213,14 @@ async function buildTestApp() {
   if (marketplace.isErr()) throw marketplace.error;
   await marketplaceRepo.save(marketplace.value);
 
-  return { app: buildApp(deps, { enableRateLimit: false }), authUserStore, marketplaceRepo, listingRepo };
+  return {
+    app: buildApp(deps, { enableRateLimit: false }),
+    authUserStore,
+    marketplaceRepo,
+    workspaceRepo,
+    listingRepo,
+  };
 }
-
 const token = signToken({ userId: 'u-1', workspaceId: 'ws-1' });
 const auth = (req: request.Test) => req.set('Authorization', `Bearer ${token}`);
 
@@ -254,6 +260,43 @@ describe('Presentation API', () => {
       // Same uniform message as the wrong-password path (no user enumeration).
       expect(res.body.error.code).toBe('UNAUTHORIZED');
       expect(res.body.error.message).toBe('Invalid email or password');
+    });
+
+    it('provisions a connected OLX marketplace for a new workspace on register', async () => {
+      const { app, marketplaceRepo } = await buildTestApp();
+      const res = await request(app).post('/api/auth/register').send({
+        email: 'seller@example.com',
+        password: 'secret123',
+        workspaceName: 'Seller Workspace',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      const workspaceId = res.body.data.user.workspaceId;
+      expect(workspaceId).toBeDefined();
+
+      const olx = await marketplaceRepo.findByKey(workspaceId, 'olx');
+      expect(olx).not.toBeNull();
+      expect(olx?.name).toBe('OLX');
+      expect(olx?.isConnected()).toBe(true);
+      expect(olx?.syncMode).toBe('manual');
+    });
+
+    it('cleans up provisioned workspace and marketplace if user creation fails', async () => {
+      const { app, authUserStore, marketplaceRepo, workspaceRepo } = await buildTestApp();
+      authUserStore.create = jest.fn(async () => {
+        throw new Error('user create failed');
+      });
+
+      const res = await request(app).post('/api/auth/register').send({
+        email: 'seller-fail@example.com',
+        password: 'secret123',
+        workspaceName: 'Failing Seller Workspace',
+      });
+
+      expect(res.status).toBe(500);
+      expect(await workspaceRepo.findAll()).toHaveLength(0);
+      expect(marketplaceRepo.items.size).toBe(1);
     });
   });
 

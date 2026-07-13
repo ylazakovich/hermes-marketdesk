@@ -91,7 +91,7 @@ export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
   const controllers = {
-    auth: new AuthController(deps.authUserStore, deps.workspaceRepo),
+    auth: new AuthController(deps.authUserStore, deps.workspaceRepo, deps.marketplaceRepo),
     products: new ProductController(
       deps.productService,
       deps.listingService,
