@@ -9,11 +9,15 @@ import type {
 interface PublishAttemptRow {
   operation_id: string;
   listing_id: string;
+  listing_updated_at: Date | string;
   marketplace_key: MarketplaceKey;
-  status: 'publishing' | 'published';
+  status: 'publishing' | 'published' | 'finalized' | 'abandoned';
   external_listing_id: string | null;
   published_at: Date | string | null;
 }
+
+const SELECT_COLUMNS =
+  'operation_id, listing_id, listing_updated_at, marketplace_key, status, external_listing_id, published_at';
 
 function toCheckpoint(row: PublishAttemptRow): PublishAttemptCheckpoint {
   return {
@@ -31,7 +35,7 @@ export class PublishAttemptRepository implements PublishAttemptStore {
 
   async find(operationId: string): Promise<PublishAttemptCheckpoint | null> {
     const result = await this.pool.query<PublishAttemptRow>(
-      `SELECT operation_id, listing_id, marketplace_key, status, external_listing_id, published_at
+      `SELECT ${SELECT_COLUMNS}
        FROM marketplace_publish_attempts
        WHERE operation_id = $1`,
       [operationId]
@@ -42,26 +46,29 @@ export class PublishAttemptRepository implements PublishAttemptStore {
   async begin(
     operationId: string,
     listingId: string,
-    marketplaceKey: MarketplaceKey
+    marketplaceKey: MarketplaceKey,
+    listingUpdatedAt: Date
   ): Promise<{ created: boolean; checkpoint: PublishAttemptCheckpoint }> {
-    const inserted = await this.pool.query<PublishAttemptRow>(
-      `INSERT INTO marketplace_publish_attempts
-         (operation_id, listing_id, marketplace_key, status)
-       VALUES ($1, $2, $3, 'publishing')
-       ON CONFLICT (operation_id) DO NOTHING
-       RETURNING operation_id, listing_id, marketplace_key, status,
-                 external_listing_id, published_at`,
-      [operationId, listingId, marketplaceKey]
-    );
-    if (inserted.rows[0]) {
-      return { created: true, checkpoint: toCheckpoint(inserted.rows[0]) };
-    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const inserted = await this.pool.query<PublishAttemptRow>(
+        `INSERT INTO marketplace_publish_attempts
+           (operation_id, listing_id, listing_updated_at, marketplace_key, status)
+         VALUES ($1, $2, $4, $3, 'publishing')
+         ON CONFLICT DO NOTHING
+         RETURNING ${SELECT_COLUMNS}`,
+        [operationId, listingId, marketplaceKey, listingUpdatedAt]
+      );
+      if (inserted.rows[0]) {
+        return { created: true, checkpoint: toCheckpoint(inserted.rows[0]) };
+      }
 
-    const existing = await this.find(operationId);
-    if (!existing) {
-      throw new Error(`Publish checkpoint disappeared after conflict: ${operationId}`);
+      const existing =
+        (await this.find(operationId)) ??
+        (await this.findByListingGeneration(listingId, listingUpdatedAt)) ??
+        (await this.findActiveByListing(listingId));
+      if (existing) return { created: false, checkpoint: existing };
     }
-    return { created: false, checkpoint: existing };
+    throw new Error(`Publish checkpoint conflict could not be resolved: ${operationId}`);
   }
 
   async markPublished(operationId: string, result: PublishResult): Promise<void> {
@@ -77,5 +84,44 @@ export class PublishAttemptRepository implements PublishAttemptStore {
     if (updated.rowCount !== 1) {
       throw new Error(`Publish checkpoint not found: ${operationId}`);
     }
+  }
+
+  async markFinalized(operationId: string): Promise<void> {
+    const updated = await this.pool.query(
+      `UPDATE marketplace_publish_attempts
+       SET status = 'finalized', updated_at = NOW()
+       WHERE operation_id = $1 AND status IN ('published', 'finalized')`,
+      [operationId]
+    );
+    if (updated.rowCount !== 1) {
+      throw new Error(`Published checkpoint not found: ${operationId}`);
+    }
+  }
+
+  private async findActiveByListing(listingId: string): Promise<PublishAttemptCheckpoint | null> {
+    const result = await this.pool.query<PublishAttemptRow>(
+      `SELECT ${SELECT_COLUMNS}
+       FROM marketplace_publish_attempts
+       WHERE listing_id = $1 AND status IN ('publishing', 'published')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [listingId]
+    );
+    return result.rows[0] ? toCheckpoint(result.rows[0]) : null;
+  }
+
+  private async findByListingGeneration(
+    listingId: string,
+    listingUpdatedAt: Date
+  ): Promise<PublishAttemptCheckpoint | null> {
+    const result = await this.pool.query<PublishAttemptRow>(
+      `SELECT ${SELECT_COLUMNS}
+       FROM marketplace_publish_attempts
+       WHERE listing_id = $1 AND listing_updated_at = $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [listingId, listingUpdatedAt]
+    );
+    return result.rows[0] ? toCheckpoint(result.rows[0]) : null;
   }
 }

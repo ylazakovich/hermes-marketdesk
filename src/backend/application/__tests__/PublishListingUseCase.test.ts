@@ -39,6 +39,9 @@ function setup(connected: boolean, oauthAccount: 'connected' | 'missing' | 'lega
           upsert: async () => {
             throw new Error('not used');
           },
+          updateConnectedIfUnchanged: async () => {
+            throw new Error('not used');
+          },
         };
 
   const product = unwrap(

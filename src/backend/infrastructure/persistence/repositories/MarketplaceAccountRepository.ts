@@ -48,13 +48,13 @@ export class MarketplaceAccountRepository implements MarketplaceAccountRepositor
     const { rows } = await query<MarketplaceAccountRow>(
       `${ACCOUNT_SELECT} WHERE marketplace_id = $1 LIMIT 1`,
       [marketplaceId],
-      this.queryClient,
+      this.queryClient
     );
     return rows[0] ? MarketplaceAccountMapper.toRecord(rows[0]) : null;
   }
 
   async upsert(
-    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>,
+    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>
   ): Promise<MarketplaceAccountRecord> {
     const { rows } = await query<MarketplaceAccountRow>(
       `INSERT INTO marketplace_accounts
@@ -75,10 +75,40 @@ export class MarketplaceAccountRepository implements MarketplaceAccountRepositor
         account.status,
         account.scopes,
       ],
-      this.queryClient,
+      this.queryClient
     );
     const row = rows[0];
     if (!row) throw new Error('Marketplace account upsert returned no row');
     return MarketplaceAccountMapper.toRecord(row);
+  }
+
+  async updateConnectedIfUnchanged(
+    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>,
+    expectedUpdatedAt: Date
+  ): Promise<MarketplaceAccountRecord | null> {
+    const { rows } = await query<MarketplaceAccountRow>(
+      `UPDATE marketplace_accounts
+       SET handle = $3,
+           credentials = $4::jsonb,
+           status = $5,
+           scopes = $6,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND marketplace_id = $2
+         AND status = 'connected'
+         AND updated_at = $7
+       RETURNING id, marketplace_id, handle, credentials, status, scopes, created_at, updated_at`,
+      [
+        account.id,
+        account.marketplaceId,
+        account.handle,
+        JSON.stringify(account.credentials),
+        account.status,
+        account.scopes,
+        expectedUpdatedAt,
+      ],
+      this.queryClient
+    );
+    return rows[0] ? MarketplaceAccountMapper.toRecord(rows[0]) : null;
   }
 }

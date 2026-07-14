@@ -48,4 +48,26 @@ describe('MarketplaceAccountRepository', () => {
       ['basic'],
     ]);
   });
+
+  it('updates refreshed credentials with a connected-state compare-and-swap', async () => {
+    const query = jest.fn(async () => ({ rows: [row], rowCount: 1 }));
+    const repo = new MarketplaceAccountRepository({ query } as unknown as Pool);
+    const expectedUpdatedAt = new Date('2026-07-14T12:01:00.000Z');
+
+    await repo.updateConnectedIfUnchanged(
+      {
+        id: 'account-1',
+        marketplaceId: 'marketplace-1',
+        handle: 'OLX account',
+        credentials: { version: 1, ciphertext: 'refreshed' },
+        status: 'connected',
+        scopes: ['basic'],
+      },
+      expectedUpdatedAt
+    );
+
+    expect(String(query.mock.calls[0][0])).toContain("AND status = 'connected'");
+    expect(String(query.mock.calls[0][0])).toContain('AND updated_at = $7');
+    expect(query.mock.calls[0][1]?.[6]).toEqual(expectedUpdatedAt);
+  });
 });

@@ -32,7 +32,7 @@ function makeProduct() {
       sellingPrice: money(100),
       condition: 'good',
       category: 'home',
-    }),
+    })
   );
 }
 
@@ -43,7 +43,7 @@ function makeListing() {
       productId: 'prod-1',
       marketplaceId: 'mp-1',
       price: money(100),
-    }),
+    })
   );
 }
 
@@ -66,7 +66,7 @@ function setup(accountStatus: 'connected' | 'missing' = 'connected') {
       key: 'olx',
       name: 'OLX',
       connected: true,
-    }),
+    })
   );
   productRepo.items.set(product.id, product);
   listingRepo.items.set(listing.id, listing);
@@ -88,6 +88,9 @@ function setup(accountStatus: 'connected' | 'missing' = 'connected') {
     upsert: async () => {
       throw new Error('not used');
     },
+    updateConnectedIfUnchanged: async () => {
+      throw new Error('not used');
+    },
   };
 
   const useCase = new ApproveHermesEventUseCase(
@@ -100,7 +103,7 @@ function setup(accountStatus: 'connected' | 'missing' = 'connected') {
     publishQueue,
     publisher,
     idFactory('rec'),
-    accountRepo,
+    accountRepo
   );
 
   return {
@@ -129,7 +132,7 @@ describe('ApproveHermesEventUseCase', () => {
         title: 'Lower the price',
         detail: 'Move stock faster',
         proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
-      }),
+      })
     );
     await eventRepo.save(event);
 
@@ -167,7 +170,7 @@ describe('ApproveHermesEventUseCase', () => {
         severity: 'warning',
         title: 'Lower the price',
         proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
-      }),
+      })
     );
     unwrap(event.approve()); // move to applied
     await eventRepo.save(event);
@@ -196,7 +199,7 @@ describe('ApproveHermesEventUseCase', () => {
         severity: 'warning',
         title: 'Relist product',
         proposedChange: { kind: 'relist', listingIds: ['lst-1'] },
-      }),
+      })
     );
     await eventRepo.save(event);
 
@@ -218,7 +221,7 @@ describe('ApproveHermesEventUseCase', () => {
         severity: 'warning',
         title: 'Lower the price',
         proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
-      }),
+      })
     );
     await eventRepo.save(event);
 

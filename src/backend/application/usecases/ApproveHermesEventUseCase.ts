@@ -175,6 +175,8 @@ export class ApproveHermesEventUseCase {
       await this.publishQueue.enqueue(
         {
           operationId,
+          mode: 'relist',
+          listingUpdatedAt: listing.updatedAt.toISOString(),
           marketplaceKey: marketplace.key,
           marketplaceId: marketplace.id,
           listingId: listing.id,

@@ -44,11 +44,29 @@ function resolverFor(adapter: IMarketplaceAdapter): {
 
 function memoryPublishAttempts(): PublishAttemptStore {
   const attempts = new Map<string, PublishAttemptCheckpoint>();
+  const listingGenerations = new Map<string, string>();
   return {
     find: async (operationId) => attempts.get(operationId) ?? null,
-    begin: async (operationId: string, listingId: string, marketplaceKey: MarketplaceKey) => {
+    begin: async (
+      operationId: string,
+      listingId: string,
+      marketplaceKey: MarketplaceKey,
+      listingUpdatedAt: Date
+    ) => {
       const existing = attempts.get(operationId);
       if (existing) return { created: false, checkpoint: existing };
+      const generationOperationId = listingGenerations.get(
+        `${listingId}:${listingUpdatedAt.toISOString()}`
+      );
+      if (generationOperationId) {
+        return { created: false, checkpoint: attempts.get(generationOperationId)! };
+      }
+      const active = [...attempts.values()].find(
+        (attempt) =>
+          attempt.listingId === listingId &&
+          (attempt.status === 'publishing' || attempt.status === 'published')
+      );
+      if (active) return { created: false, checkpoint: active };
       const checkpoint: PublishAttemptCheckpoint = {
         operationId,
         listingId,
@@ -58,6 +76,7 @@ function memoryPublishAttempts(): PublishAttemptStore {
         publishedAt: null,
       };
       attempts.set(operationId, checkpoint);
+      listingGenerations.set(`${listingId}:${listingUpdatedAt.toISOString()}`, operationId);
       return { created: true, checkpoint };
     },
     markPublished: async (operationId, result) => {
@@ -68,6 +87,10 @@ function memoryPublishAttempts(): PublishAttemptStore {
         externalListingId: result.externalListingId,
         publishedAt: result.publishedAt,
       });
+    },
+    markFinalized: async (operationId) => {
+      const existing = attempts.get(operationId)!;
+      attempts.set(operationId, { ...existing, status: 'finalized' });
     },
   };
 }
@@ -473,6 +496,135 @@ describe('PublishListingHandler', () => {
     expect(publish).not.toHaveBeenCalled();
     expect(result.finalized).toBe(true);
     expect(result.result.externalListingId).toBe('olx-99');
+  });
+
+  it('re-publishes an explicitly requested relist even when the listing is currently live', async () => {
+    const publish = jest.fn(async () => publishResult);
+    const adapter = fakeAdapter({ publish });
+    const { resolver } = resolverFor(adapter);
+    const publishListing = jest.fn(async () => Ok({} as unknown as Listing));
+    const handler = new PublishListingHandler(
+      resolver,
+      undefined,
+      {
+        publishListing,
+        getPublishState: async () => ({
+          isPublished: true,
+          externalListingId: 'olx-old',
+          publishedAt: new Date('2026-07-13T12:00:00.000Z'),
+        }),
+      },
+      undefined,
+      undefined,
+      memoryPublishAttempts()
+    );
+
+    await expect(
+      handler.handle({
+        operationId: 'op-relist',
+        mode: 'relist',
+        marketplaceKey: 'olx',
+        marketplaceId: 'm-1',
+        listingId: 'l-live',
+        input,
+      })
+    ).resolves.toMatchObject({ finalized: true });
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publishListing).toHaveBeenCalledWith(
+      'l-live',
+      publishResult.externalListingId,
+      publishResult.publishedAt
+    );
+  });
+
+  it('serializes different publish operation ids for the same listing', async () => {
+    const publish = jest.fn(async () => publishResult);
+    const attempts = memoryPublishAttempts();
+    await attempts.begin('op-first', 'l-race', 'olx', new Date(0));
+    const adapter = fakeAdapter({ publish });
+    const { resolver } = resolverFor(adapter);
+    const handler = new PublishListingHandler(
+      resolver,
+      undefined,
+      { publishListing: jest.fn(async () => Ok({} as unknown as Listing)) },
+      undefined,
+      undefined,
+      attempts
+    );
+
+    await expect(
+      handler.handle({
+        operationId: 'op-second',
+        mode: 'publish',
+        marketplaceKey: 'olx',
+        marketplaceId: 'm-1',
+        listingId: 'l-race',
+        input,
+      })
+    ).rejects.toThrow('ambiguous in-flight marketplace publish');
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('coalesces delayed operations enqueued from the same listing generation', async () => {
+    const publish = jest.fn(async () => publishResult);
+    const adapter = fakeAdapter({ publish });
+    const { resolver } = resolverFor(adapter);
+    const handler = new PublishListingHandler(
+      resolver,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      memoryPublishAttempts()
+    );
+    const base = {
+      mode: 'relist' as const,
+      listingUpdatedAt: '2026-07-14T12:00:00.000Z',
+      marketplaceKey: 'olx' as const,
+      marketplaceId: 'm-1',
+      listingId: 'l-generation',
+      input,
+    };
+
+    await handler.handle({ ...base, operationId: 'op-generation-a' });
+    await handler.handle({ ...base, operationId: 'op-generation-b' });
+
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient checkpoint write without repeating provider publish', async () => {
+    const publish = jest.fn(async () => publishResult);
+    const attempts = memoryPublishAttempts();
+    const persist = attempts.markPublished.bind(attempts);
+    const serializationFailure = Object.assign(new Error('serialization failure'), {
+      code: '40001',
+    });
+    attempts.markPublished = jest
+      .fn()
+      .mockRejectedValueOnce(serializationFailure)
+      .mockImplementation(persist);
+    const adapter = fakeAdapter({ publish });
+    const { resolver } = resolverFor(adapter);
+    const handler = new PublishListingHandler(
+      resolver,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      attempts
+    );
+
+    await handler.handle({
+      operationId: 'op-checkpoint-retry',
+      listingUpdatedAt: '2026-07-14T12:00:00.000Z',
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      listingId: 'l-checkpoint-retry',
+      input,
+    });
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(attempts.markPublished).toHaveBeenCalledTimes(2);
   });
 
   it('publishes normally when the probe reports the listing is not yet published (CR3)', async () => {

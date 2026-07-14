@@ -16,6 +16,26 @@ import type { PublishListingJob } from '../../../application/ports/IJobQueue';
 
 export type PublishListingJobData = PublishListingJob;
 
+function isTransientInfrastructureError(error: unknown): boolean {
+  if (error instanceof ServiceUnavailableError) return true;
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = String((error as { code?: unknown }).code ?? '');
+  return (
+    code.startsWith('08') ||
+    [
+      '40001',
+      '40P01',
+      '55P03',
+      '57P01',
+      '57P02',
+      '57P03',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EPIPE',
+    ].includes(code)
+  );
+}
+
 async function retryTransientPhase<T>(
   operation: () => Promise<T>,
   succeeded: (value: T) => boolean = () => true,
@@ -28,9 +48,9 @@ async function retryTransientPhase<T>(
     try {
       lastValue = await operation();
       if (succeeded(lastValue) || attempt === attempts) return lastValue;
-      if (!(failure(lastValue) instanceof ServiceUnavailableError)) return lastValue;
+      if (!isTransientInfrastructureError(failure(lastValue))) return lastValue;
     } catch (error) {
-      if (!(error instanceof ServiceUnavailableError) || attempt === attempts) throw error;
+      if (!isTransientInfrastructureError(error) || attempt === attempts) throw error;
     }
     await sleep(50 * 2 ** (attempt - 1));
   }
@@ -41,7 +61,7 @@ export interface PublishAttemptCheckpoint {
   operationId: string;
   listingId: string;
   marketplaceKey: MarketplaceKey;
-  status: 'publishing' | 'published';
+  status: 'publishing' | 'published' | 'finalized' | 'abandoned';
   externalListingId: string | null;
   publishedAt: Date | null;
 }
@@ -51,9 +71,11 @@ export interface PublishAttemptStore {
   begin(
     operationId: string,
     listingId: string,
-    marketplaceKey: MarketplaceKey
+    marketplaceKey: MarketplaceKey,
+    listingUpdatedAt: Date
   ): Promise<{ created: boolean; checkpoint: PublishAttemptCheckpoint }>;
   markPublished(operationId: string, result: PublishResult): Promise<void>;
+  markFinalized(operationId: string): Promise<void>;
 }
 
 export interface PublishMarketplaceAdapterResolver {
@@ -127,27 +149,39 @@ export class PublishListingHandler {
     // Backward-compatible fallback for jobs that were already queued before
     // operationId became part of the payload. New enqueue paths always set it.
     const operationId = data.operationId ?? data.listingId;
-    // Idempotency guard (CR3): if a prior attempt already published this listing
-    // to the marketplace, do NOT re-POST (which would create a duplicate — CR2).
-    // The remote resource exists; just report the already-finalized state.
+    let checkpointOperationId = operationId;
+    const checkpoint = await this.publishAttempts?.find(operationId);
+    let checkpointFinalized = checkpoint?.status === 'finalized';
+    // A same-operation retry after finalization can safely complete the checkpoint.
+    // A fresh relist intentionally bypasses the generic "already live" shortcut.
     if (this.listings?.getPublishState) {
       const state = await this.listings.getPublishState(data.listingId);
       if (state?.isPublished && state.externalListingId) {
-        return {
-          marketplaceKey: data.marketplaceKey,
-          listingId: data.listingId,
-          result: {
-            externalListingId: state.externalListingId,
-            publishedAt: state.publishedAt ?? new Date(),
-          },
-          finalized: true,
-        };
+        const sameCheckpoint =
+          checkpoint?.externalListingId === state.externalListingId &&
+          (checkpoint.status === 'published' || checkpoint.status === 'finalized');
+        if (sameCheckpoint || data.mode !== 'relist') {
+          if (sameCheckpoint && checkpoint.status !== 'finalized') {
+            await retryTransientPhase(() => this.publishAttempts!.markFinalized(operationId));
+          }
+          return {
+            marketplaceKey: data.marketplaceKey,
+            listingId: data.listingId,
+            result: {
+              externalListingId: state.externalListingId,
+              publishedAt: state.publishedAt ?? new Date(),
+            },
+            finalized: true,
+          };
+        }
       }
     }
 
     let result: PublishResult | undefined;
-    const checkpoint = await this.publishAttempts?.find(operationId);
-    if (checkpoint?.status === 'published' && checkpoint.externalListingId) {
+    if (
+      (checkpoint?.status === 'published' || checkpoint?.status === 'finalized') &&
+      checkpoint.externalListingId
+    ) {
       result = {
         externalListingId: checkpoint.externalListingId,
         publishedAt: checkpoint.publishedAt ?? new Date(),
@@ -179,10 +213,17 @@ export class PublishListingHandler {
         const started = await this.publishAttempts.begin(
           operationId,
           data.listingId,
-          data.marketplaceKey
+          data.marketplaceKey,
+          new Date(data.listingUpdatedAt ?? 0)
         );
         if (!started.created) {
-          if (started.checkpoint.status === 'published' && started.checkpoint.externalListingId) {
+          checkpointOperationId = started.checkpoint.operationId;
+          checkpointFinalized = started.checkpoint.status === 'finalized';
+          if (
+            (started.checkpoint.status === 'published' ||
+              started.checkpoint.status === 'finalized') &&
+            started.checkpoint.externalListingId
+          ) {
             result = {
               externalListingId: started.checkpoint.externalListingId,
               publishedAt: started.checkpoint.publishedAt ?? new Date(),
@@ -197,8 +238,21 @@ export class PublishListingHandler {
 
       if (!result) {
         result = await adapter.publish(data.input);
-        await this.publishAttempts?.markPublished(operationId, result);
+        if (this.publishAttempts) {
+          await retryTransientPhase(() =>
+            this.publishAttempts!.markPublished(operationId, result!)
+          );
+        }
       }
+    }
+
+    if (checkpointFinalized) {
+      return {
+        marketplaceKey: data.marketplaceKey,
+        listingId: data.listingId,
+        result,
+        finalized: true,
+      };
     }
 
     // Finalize the listing in the DB when a finalizer is wired: status -> live,
@@ -226,6 +280,9 @@ export class PublishListingHandler {
           finalizeResult.error
         );
       }
+      if (this.publishAttempts) {
+        await retryTransientPhase(() => this.publishAttempts!.markFinalized(checkpointOperationId));
+      }
       return {
         marketplaceKey: data.marketplaceKey,
         listingId: data.listingId,
@@ -247,6 +304,9 @@ export class PublishListingHandler {
         },
         occurredAt: new Date(),
       });
+    }
+    if (this.publishAttempts) {
+      await retryTransientPhase(() => this.publishAttempts!.markFinalized(checkpointOperationId));
     }
 
     return {

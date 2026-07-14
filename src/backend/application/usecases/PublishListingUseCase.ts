@@ -101,6 +101,8 @@ export class PublishListingUseCase {
     await this.publishQueue.enqueue(
       {
         operationId,
+        mode: input.mode ?? 'publish',
+        listingUpdatedAt: listing.updatedAt.toISOString(),
         marketplaceKey: marketplace.key,
         marketplaceId: marketplace.id,
         listingId: listing.id,

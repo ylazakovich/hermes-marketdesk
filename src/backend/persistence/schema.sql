@@ -142,20 +142,31 @@ CREATE INDEX IF NOT EXISTS idx_listings_marketplace_status ON listings(marketpla
 CREATE TABLE IF NOT EXISTS marketplace_publish_attempts (
   operation_id UUID PRIMARY KEY,
   listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+  listing_updated_at TIMESTAMPTZ NOT NULL,
   marketplace_key VARCHAR(50) NOT NULL,
-  status VARCHAR(20) NOT NULL CHECK (status IN ('publishing', 'published')),
+  status VARCHAR(20) NOT NULL,
   external_listing_id VARCHAR(255),
   published_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CHECK (
+  CONSTRAINT marketplace_publish_attempts_status_valid
+    CHECK (status IN ('publishing', 'published', 'finalized', 'abandoned')),
+  CONSTRAINT marketplace_publish_attempts_state_valid CHECK (
     (status = 'publishing' AND external_listing_id IS NULL)
-    OR (status = 'published' AND external_listing_id IS NOT NULL)
+    OR (status IN ('published', 'finalized') AND external_listing_id IS NOT NULL)
+    OR status = 'abandoned'
   )
 );
 
 CREATE INDEX IF NOT EXISTS idx_marketplace_publish_attempts_listing
   ON marketplace_publish_attempts(listing_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_publish_attempts_listing_generation
+  ON marketplace_publish_attempts(listing_id, listing_updated_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_publish_attempts_active_listing
+  ON marketplace_publish_attempts(listing_id)
+  WHERE status IN ('publishing', 'published');
 
 CREATE TABLE IF NOT EXISTS price_history (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

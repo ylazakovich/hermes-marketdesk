@@ -33,6 +33,10 @@ export interface MarketplaceAccountRepository {
   upsert(
     account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>
   ): Promise<MarketplaceAccountRecord>;
+  updateConnectedIfUnchanged(
+    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>,
+    expectedUpdatedAt: Date
+  ): Promise<MarketplaceAccountRecord | null>;
 }
 
 export interface MarketplaceOAuthStateContext {
@@ -330,22 +334,20 @@ export class MarketplaceOAuthService {
     if (!refreshed.refreshToken) refreshed.refreshToken = tokens.refreshToken;
 
     await lease?.assertOwned();
-    const current = await this.deps.accountRepo.findByMarketplaceId(marketplaceId);
-    if (
-      !current ||
-      current.status !== 'connected' ||
-      current.updatedAt.getTime() !== account.updatedAt.getTime()
-    ) {
+    const saved = await this.deps.accountRepo.updateConnectedIfUnchanged(
+      {
+        id: account.id,
+        marketplaceId: account.marketplaceId,
+        handle: refreshed.accountHandle?.trim() || account.handle,
+        credentials: this.deps.credentialVault.encrypt(refreshed),
+        status: 'connected',
+        scopes: refreshed.scopes,
+      },
+      account.updatedAt
+    );
+    if (!saved) {
       throw new InvalidStateError('OLX account changed while its access token was refreshing');
     }
-    await this.deps.accountRepo.upsert({
-      id: account.id,
-      marketplaceId: account.marketplaceId,
-      handle: refreshed.accountHandle?.trim() || account.handle,
-      credentials: this.deps.credentialVault.encrypt(refreshed),
-      status: 'connected',
-      scopes: refreshed.scopes,
-    });
     return refreshed.accessToken;
   }
 

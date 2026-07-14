@@ -25,6 +25,21 @@ class InMemoryAccountRepository {
     this.accounts.set(input.marketplaceId, account);
     return account;
   }
+
+  async updateConnectedIfUnchanged(
+    input: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>,
+    expectedUpdatedAt: Date
+  ): Promise<MarketplaceAccountRecord | null> {
+    const current = this.accounts.get(input.marketplaceId);
+    if (
+      !current ||
+      current.status !== 'connected' ||
+      current.updatedAt.getTime() !== expectedUpdatedAt.getTime()
+    ) {
+      return null;
+    }
+    return this.upsert(input);
+  }
 }
 
 class InMemoryStateStore {
@@ -197,6 +212,37 @@ describe('MarketplaceOAuthService', () => {
     const saved = accountRepo.accounts.get(marketplace.id)!;
     const savedTokens = saved.credentials.payload as OlxOAuthTokens;
     expect(savedTokens.refreshToken).toBe('rotated-refresh-token');
+  });
+
+  it('does not resurrect credentials when the account changes before refresh persistence', async () => {
+    const { service, marketplace, accountRepo } = setup();
+    await accountRepo.upsert({
+      id: 'account-cas',
+      marketplaceId: marketplace.id,
+      handle: 'OLX account',
+      credentials: {
+        payload: { ...initialTokens, expiresAt: new Date('2026-07-14T11:59:00.000Z') },
+      },
+      status: 'connected',
+      scopes: ['basic'],
+    });
+    jest.spyOn(accountRepo, 'updateConnectedIfUnchanged').mockImplementationOnce(async () => {
+      const current = accountRepo.accounts.get(marketplace.id)!;
+      await accountRepo.upsert({
+        ...current,
+        credentials: {},
+        status: 'disconnected',
+      });
+      return null;
+    });
+
+    await expect(service.getValidAccessToken(marketplace.id)).rejects.toThrow(
+      'account changed while its access token was refreshing'
+    );
+    expect(accountRepo.accounts.get(marketplace.id)).toMatchObject({
+      status: 'disconnected',
+      credentials: {},
+    });
   });
 
   it('clears stored credentials when disconnecting', async () => {
