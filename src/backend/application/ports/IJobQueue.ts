@@ -32,6 +32,7 @@ export interface ListingPublishJobInput {
 
 export interface PublishListingJob {
   marketplaceKey: MarketplaceKey;
+  marketplaceId: string;
   listingId: string;
   input: ListingPublishJobInput;
 }

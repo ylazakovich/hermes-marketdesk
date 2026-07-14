@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS marketplace_accounts (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_marketplace_accounts_marketplace ON marketplace_accounts(marketplace_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_accounts_marketplace ON marketplace_accounts(marketplace_id);
 
 -- ============================================================================
 -- Listings & Price History

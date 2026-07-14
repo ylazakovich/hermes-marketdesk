@@ -9,7 +9,7 @@
 
 import type { Pool } from 'pg';
 import type { Redis } from 'ioredis';
-import { buildContainer, type ManagedQueue } from '../container';
+import { buildBullAddOptions, buildContainer, type ManagedQueue } from '../container';
 import { buildApp } from '../../../presentation/http/app';
 import type { IAIProvider } from '../../../domain/ports/IAIProvider';
 
@@ -56,6 +56,11 @@ function build() {
 // --- Tests -------------------------------------------------------------------
 
 describe('buildContainer (composition root)', () => {
+  it('forces non-idempotent publish jobs to a single Bull attempt', () => {
+    expect(buildBullAddOptions('publish-listing')).toMatchObject({ attempts: 1 });
+    expect(buildBullAddOptions('sync-marketplace')).not.toHaveProperty('attempts');
+  });
+
   it('populates every required AppDeps field', () => {
     const { deps } = build();
     expect(deps.productService).toBeDefined();

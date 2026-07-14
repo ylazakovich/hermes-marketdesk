@@ -5,7 +5,8 @@ export type DomainErrorCode =
   | 'INVALID_STATE'
   | 'NOT_FOUND'
   | 'CONFLICT'
-  | 'GUARDRAIL_VIOLATION';
+  | 'GUARDRAIL_VIOLATION'
+  | 'SERVICE_UNAVAILABLE';
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;
@@ -46,5 +47,14 @@ export class ConflictError extends DomainError {
 export class GuardrailViolationError extends DomainError {
   constructor(message: string) {
     super(message, 'GUARDRAIL_VIOLATION');
+  }
+}
+
+export class ServiceUnavailableError extends DomainError {
+  readonly cause?: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message, 'SERVICE_UNAVAILABLE');
+    this.cause = cause;
   }
 }

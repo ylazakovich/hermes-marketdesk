@@ -186,6 +186,34 @@ describe('PublishListingHandler', () => {
     expect(published[0].payload).toMatchObject({ externalListingId: 'olx-99' });
   });
 
+  it('uses the marketplace account access token for real OLX publish jobs', async () => {
+    const adapter = fakeAdapter({ publish: jest.fn(async () => publishResult) });
+    const create = jest.fn(() => adapter);
+    const tokenProvider = {
+      getValidAccessToken: jest.fn(async () => 'workspace-access-token'),
+    };
+    const authenticatedClient = { request: jest.fn() };
+    const clientFactory = jest.fn(() => authenticatedClient);
+    const handler = new PublishListingHandler(
+      { create },
+      undefined,
+      undefined,
+      tokenProvider,
+      clientFactory,
+    );
+
+    await handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      listingId: 'l-oauth',
+      input,
+    });
+
+    expect(tokenProvider.getValidAccessToken).toHaveBeenCalledWith('m-1');
+    expect(clientFactory).toHaveBeenCalledWith('workspace-access-token');
+    expect(create).toHaveBeenCalledWith('olx', authenticatedClient);
+  });
+
   it('works without an event publisher', async () => {
     const adapter = fakeAdapter({ publish: jest.fn(async () => publishResult) });
     const { resolver } = resolverFor(adapter);

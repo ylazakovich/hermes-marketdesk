@@ -172,6 +172,7 @@ export class ApproveHermesEventUseCase {
 
       await this.publishQueue.enqueue({
         marketplaceKey: marketplace.key,
+        marketplaceId: marketplace.id,
         listingId: listing.id,
         input: {
           productName: product.name,

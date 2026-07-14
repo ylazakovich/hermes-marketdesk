@@ -20,6 +20,7 @@ import type { IActivityLogRepository } from '../../domain/repositories/interface
 import type { IJobQueue, PublishListingJob } from '../ports/IJobQueue';
 import type { IdGenerator } from '../ports/IdGenerator';
 import type { PublishListingDTO } from '../dto/PublishListingDTO';
+import type { MarketplaceAccountRepository } from '../services/MarketplaceOAuthService';
 
 export interface PublishEligibility {
   canPublish: boolean;
@@ -61,6 +62,7 @@ export class PublishListingUseCase {
     private readonly publishQueue: IJobQueue<PublishListingJob>,
     private readonly activityLog: IActivityLogRepository,
     private readonly idGenerator: IdGenerator,
+    private readonly marketplaceAccountRepo?: MarketplaceAccountRepository,
   ) {}
 
   async execute(input: PublishListingDTO): Promise<Result<Listing>> {
@@ -84,8 +86,20 @@ export class PublishListingUseCase {
       return Err(eligibility.error ?? new InvalidStateError(eligibility.warnings[0]));
     }
 
+    if (this.marketplaceAccountRepo) {
+      const account = await this.marketplaceAccountRepo.findByMarketplaceId(marketplace.id);
+      if (!account || account.status !== 'connected') {
+        return Err(
+          new GuardrailViolationError(
+            `Marketplace ${marketplace.key} OAuth account must be connected before publishing`,
+          ),
+        );
+      }
+    }
+
     await this.publishQueue.enqueue({
       marketplaceKey: marketplace.key,
+      marketplaceId: marketplace.id,
       listingId: listing.id,
       input: {
         productName: product.name,

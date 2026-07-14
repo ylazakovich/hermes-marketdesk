@@ -5,8 +5,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { IMarketplaceRepository } from '../../../domain/repositories/interfaces/IMarketplaceRepository';
 import type { ListingApplicationService } from '../../../application/services/ListingApplicationService';
+import type { MarketplaceOAuthService } from '../../../application/services/MarketplaceOAuthService';
 import type { SyncMode } from '../../../../shared/types';
-import { NotFoundError } from '../../../domain/shared/DomainError';
+import { DomainError, InvalidStateError, NotFoundError } from '../../../domain/shared/DomainError';
 import { presentMarketplace } from '../../../application/dto/presenters';
 import { ok } from '../formatters/ResponseFormatter';
 
@@ -19,6 +20,8 @@ export class MarketplaceController {
   constructor(
     private readonly marketplaceRepo: IMarketplaceRepository,
     private readonly listings: ListingApplicationService,
+    private readonly oauth: MarketplaceOAuthService,
+    private readonly oauthReturnUrl: string,
   ) {}
 
   list = async (req: Request, res: Response): Promise<void> => {
@@ -60,16 +63,49 @@ export class MarketplaceController {
 
   connect = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const marketplaceId = routeParam(req.params.id);
-    const marketplace = await this.marketplaceRepo.findByIdForWorkspace(
+    const result = await this.oauth.start({
       marketplaceId,
-      req.user!.workspaceId!,
-    );
-    if (!marketplace) {
-      return next(new NotFoundError(`Marketplace not found: ${marketplaceId}`));
+      workspaceId: req.user!.workspaceId!,
+    });
+    ok(res, result);
+  };
+
+  callback = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const providerKey = routeParam(req.params.provider);
+    const code = routeParam(req.query.code as string | string[] | undefined);
+    const state = routeParam(req.query.state as string | string[] | undefined);
+    const wantsJson =
+      req.query.response === 'json' ||
+      (req.get('accept') ?? '').toLowerCase().includes('application/json');
+
+    try {
+      const result = await this.oauth.complete({ providerKey, code, state });
+      if (wantsJson) {
+        ok(res, result);
+        return;
+      }
+      const target = new URL(this.oauthReturnUrl);
+      target.searchParams.set('oauth', 'success');
+      target.searchParams.set('marketplaceId', result.marketplaceId);
+      res.redirect(303, target.toString());
+    } catch (error) {
+      if (wantsJson) return next(error);
+      const target = new URL(this.oauthReturnUrl);
+      target.searchParams.set('oauth', 'error');
+      target.searchParams.set(
+        'code',
+        error instanceof DomainError ? error.code : 'INTERNAL_ERROR',
+      );
+      res.redirect(303, target.toString());
     }
-    marketplace.connect();
-    await this.marketplaceRepo.save(marketplace);
-    ok(res, presentMarketplace(marketplace));
+  };
+
+  check = async (req: Request, res: Response): Promise<void> => {
+    const result = await this.oauth.check({
+      marketplaceId: routeParam(req.params.id),
+      workspaceId: req.user!.workspaceId!,
+    });
+    ok(res, result);
   };
 
   update = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -82,8 +118,18 @@ export class MarketplaceController {
       return next(new NotFoundError(`Marketplace not found: ${marketplaceId}`));
     }
     if (typeof req.body?.connected === 'boolean') {
-      if (req.body.connected) marketplace.connect();
-      else marketplace.disconnect();
+      if (req.body.connected && !marketplace.isConnected()) {
+        return next(
+          new InvalidStateError('Use POST /marketplaces/:id/connect to authorize with OAuth'),
+        );
+      }
+      if (!req.body.connected) {
+        await this.oauth.disconnect({
+          marketplaceId,
+          workspaceId: req.user!.workspaceId!,
+        });
+        marketplace.disconnect();
+      }
     }
     if (typeof req.body?.syncMode === 'string') {
       const result = marketplace.setSyncMode(req.body.syncMode as SyncMode);

@@ -9,7 +9,7 @@ import type { MarketplaceKey } from '../../../shared/types';
 import type { MarketplaceHttpClient } from './MarketplaceHttpClient';
 import type { MarketplaceAdapterOptions } from './BaseMarketplaceAdapter';
 import { MarketplaceNotImplementedError } from './MarketplaceError';
-import { OLXAdapter } from './OLXAdapter';
+import { OLXAdapter, type OlxAdapterConfig } from './OLXAdapter';
 import { AllegroAdapter } from './AllegroAdapter';
 import { VintedAdapter } from './VintedAdapter';
 import { FacebookAdapter } from './FacebookAdapter';
@@ -23,6 +23,7 @@ type AdapterConstructor = new (
 export interface MarketplaceAdapterFactoryConfig {
   httpClients?: Partial<Record<MarketplaceKey, MarketplaceHttpClient>>;
   options?: Partial<Record<MarketplaceKey, MarketplaceAdapterOptions>>;
+  olx?: OlxAdapterConfig;
 }
 
 export class MarketplaceAdapterFactory {
@@ -53,6 +54,13 @@ export class MarketplaceAdapterFactory {
     http?: MarketplaceHttpClient,
     options?: MarketplaceAdapterOptions,
   ): IMarketplaceAdapter {
+    if (key === 'olx') {
+      return new OLXAdapter(
+        http ?? this.config.httpClients?.olx,
+        options ?? this.config.options?.olx,
+        this.config.olx,
+      );
+    }
     const ctor = this.registry.get(key);
     if (!ctor) {
       throw new MarketplaceNotImplementedError(

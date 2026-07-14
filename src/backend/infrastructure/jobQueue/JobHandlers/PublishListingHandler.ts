@@ -9,16 +9,27 @@ import type {
   PublishResult,
 } from '../../../domain/services/MarketplaceAdapter';
 import type { MarketplaceKey } from '../../../../shared/types';
+import type { IMarketplaceAdapter } from '../../../domain/services/MarketplaceAdapter';
+import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
 import type { IEventPublisher } from '../../../domain/ports/IEventPublisher';
 import type { Result } from '../../../domain/shared/Result';
 import type { Listing } from '../../../domain/entities/Listing';
-import type { MarketplaceAdapterResolver } from './SyncMarketplaceHandler';
+import { InvalidStateError } from '../../../domain/shared/DomainError';
 
 export interface PublishListingJobData {
   marketplaceKey: MarketplaceKey;
+  marketplaceId?: string;
   // Internal listing id, carried for event correlation.
   listingId: string;
   input: ListingPublishInput;
+}
+
+export interface PublishMarketplaceAdapterResolver {
+  create(key: MarketplaceKey, http?: MarketplaceHttpClient): IMarketplaceAdapter;
+}
+
+export interface MarketplaceAccessTokenProvider {
+  getValidAccessToken(marketplaceId: string): Promise<string>;
 }
 
 export interface PublishListingResult {
@@ -71,9 +82,11 @@ export class ListingFinalizationError extends Error {
 
 export class PublishListingHandler {
   constructor(
-    private readonly adapters: MarketplaceAdapterResolver,
+    private readonly adapters: PublishMarketplaceAdapterResolver,
     private readonly events?: IEventPublisher,
     private readonly listings?: ListingFinalizer,
+    private readonly accessTokens?: MarketplaceAccessTokenProvider,
+    private readonly authenticatedHttpClient?: (accessToken: string) => MarketplaceHttpClient,
   ) {}
 
   async handle(data: PublishListingJobData): Promise<PublishListingResult> {
@@ -95,7 +108,19 @@ export class PublishListingHandler {
       }
     }
 
-    const adapter = this.adapters.create(data.marketplaceKey);
+    let adapter: IMarketplaceAdapter;
+    if (data.marketplaceKey === 'olx' && this.accessTokens && this.authenticatedHttpClient) {
+      if (!data.marketplaceId) {
+        throw new InvalidStateError('Publish job is missing marketplaceId for OLX OAuth');
+      }
+      const accessToken = await this.accessTokens.getValidAccessToken(data.marketplaceId);
+      adapter = this.adapters.create(
+        data.marketplaceKey,
+        this.authenticatedHttpClient(accessToken),
+      );
+    } else {
+      adapter = this.adapters.create(data.marketplaceKey);
+    }
     const result = await adapter.publish(data.input);
 
     // Finalize the listing in the DB when a finalizer is wired: status -> live,
