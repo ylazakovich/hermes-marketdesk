@@ -81,6 +81,12 @@ describe('Product status transitions (forward-only)', () => {
 });
 
 describe('Product price / description updates', () => {
+  it('updates cost price while preserving currency', () => {
+    const product = unwrap(Product.create(baseProps()));
+    expect(product.updateCostPrice(money(45)).isOk()).toBe(true);
+    expect(product.costPrice.amount).toBeCloseTo(45);
+  });
+
   it('allows updating selling price below cost', () => {
     const product = unwrap(Product.create(baseProps()));
     expect(product.updateSellingPrice(money(10)).isOk()).toBe(true);
