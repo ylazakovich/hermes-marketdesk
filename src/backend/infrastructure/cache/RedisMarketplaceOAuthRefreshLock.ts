@@ -92,8 +92,10 @@ export class RedisMarketplaceOAuthRefreshLock implements MarketplaceOAuthRefresh
       clearInterval(timer);
       try {
         await this.redis.eval(RELEASE_SCRIPT, 1, key, token);
-      } catch (error) {
-        this.logger?.error({ error, key }, 'Failed to release OLX token refresh lock');
+      } catch {
+        // Redis/provider errors can carry request context; never attach them to
+        // logs on this credential-adjacent path.
+        this.logger?.error({}, 'Failed to release OLX token refresh lock');
       }
     }
   }

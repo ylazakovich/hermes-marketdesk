@@ -88,9 +88,6 @@ describe('RedisMarketplaceOAuthRefreshLock', () => {
     const lock = new RedisMarketplaceOAuthRefreshLock(redis, logger);
 
     await expect(lock.withLock('marketplace-1', async () => 'token')).resolves.toBe('token');
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.any(Error) }),
-      'Failed to release OLX token refresh lock'
-    );
+    expect(logger.error).toHaveBeenCalledWith({}, 'Failed to release OLX token refresh lock');
   });
 });

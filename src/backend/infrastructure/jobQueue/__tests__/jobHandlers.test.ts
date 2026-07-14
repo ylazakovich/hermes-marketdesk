@@ -454,17 +454,15 @@ describe('PublishListingHandler', () => {
     ).rejects.toBeInstanceOf(ListingFinalizationError);
     expect(published).toHaveLength(0);
     // The durable checkpoint lets a retry reconcile without re-publishing.
-    await handler
-      .handle({
+    await expect(
+      handler.handle({
         operationId: 'op-1',
         marketplaceKey: 'olx',
         marketplaceId: 'm-1',
         listingId: 'l-4',
         input,
       })
-      .catch((err: ListingFinalizationError) => {
-        expect(err.externalListingId).toBe('olx-99');
-      });
+    ).rejects.toMatchObject({ externalListingId: 'olx-99' });
     expect(publish).toHaveBeenCalledTimes(1);
   });
 
