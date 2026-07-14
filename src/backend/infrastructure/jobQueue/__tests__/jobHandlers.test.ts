@@ -19,7 +19,8 @@ import type { MarketplaceKey } from '../../../../shared/types';
 import { Listing } from '../../../domain/entities/Listing';
 import { Marketplace } from '../../../domain/entities/Marketplace';
 import { Ok, Err } from '../../../domain/shared/Result';
-import { NotFoundError, ServiceUnavailableError } from '../../../domain/shared/DomainError';
+import { NotFoundError, ServiceUnavailableError, InvalidStateError } from '../../../domain/shared/DomainError';
+import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
 import { unwrap, money } from '../../../domain/testkit/support';
 
 function fakeAdapter(overrides: Partial<IMarketplaceAdapter> = {}): IMarketplaceAdapter {
@@ -119,6 +120,88 @@ describe('SyncMarketplaceHandler', () => {
       persisted: 0,
       marketplaceUpdated: false,
     });
+  });
+
+  it('uses the marketplace account access token for OLX sync jobs', async () => {
+    const synced: SyncedListing[] = [
+      { externalListingId: 'olx-1', status: 'live', views: 5, watchers: 1, messages: 0 },
+    ];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const create = jest.fn(() => adapter);
+    const tokenProvider = {
+      getValidAccessToken: jest.fn(async () => 'workspace-access-token'),
+    };
+    const authenticatedClient: MarketplaceHttpClient = { request: jest.fn() };
+    const clientFactory = jest.fn(() => authenticatedClient);
+    const handler = new SyncMarketplaceHandler(
+      { create },
+      { accessTokens: tokenProvider, authenticatedHttpClient: clientFactory }
+    );
+
+    await handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      externalListingIds: ['olx-1'],
+    });
+
+    expect(tokenProvider.getValidAccessToken).toHaveBeenCalledWith('m-1');
+    expect(clientFactory).toHaveBeenCalledWith('workspace-access-token');
+    expect(create).toHaveBeenCalledWith('olx', authenticatedClient);
+    expect(adapter.sync).toHaveBeenCalledWith(['olx-1']);
+  });
+
+  it('keeps non-OLX sync on the existing generic adapter path', async () => {
+    const adapter = fakeAdapter({ sync: jest.fn(async () => []) });
+    const create = jest.fn(() => adapter);
+    const tokenProvider = {
+      getValidAccessToken: jest.fn(async () => 'unused-token'),
+    };
+    const clientFactory = jest.fn(() => ({ request: jest.fn() }));
+    const handler = new SyncMarketplaceHandler(
+      { create },
+      { accessTokens: tokenProvider, authenticatedHttpClient: clientFactory }
+    );
+
+    await handler.handle({
+      marketplaceKey: 'allegro',
+      marketplaceId: 'm-2',
+      externalListingIds: ['allegro-1'],
+    });
+
+    expect(tokenProvider.getValidAccessToken).not.toHaveBeenCalled();
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith('allegro');
+  });
+
+  it('records marketplace error when OLX credentials are unavailable', async () => {
+    const create = jest.fn(() => fakeAdapter());
+    const tokenProvider = {
+      getValidAccessToken: jest.fn(async () => {
+        throw new InvalidStateError('OLX account is not connected');
+      }),
+    };
+    const marketplace = unwrap(
+      Marketplace.create({ id: 'm-1', workspaceId: 'w-1', key: 'olx', name: 'OLX' })
+    );
+    const marketplaceStore = {
+      findById: jest.fn(async () => marketplace),
+      save: jest.fn(async () => undefined),
+    };
+    const handler = new SyncMarketplaceHandler(
+      { create },
+      {
+        marketplaceStore,
+        accessTokens: tokenProvider,
+        authenticatedHttpClient: () => ({ request: jest.fn() }),
+      }
+    );
+
+    await expect(
+      handler.handle({ marketplaceKey: 'olx', marketplaceId: 'm-1', externalListingIds: [] })
+    ).rejects.toThrow('OLX account is not connected');
+    expect(create).not.toHaveBeenCalled();
+    expect(marketplace.errorCount).toBe(1);
+    expect(marketplaceStore.save).toHaveBeenCalled();
   });
 
   it('persists fetched stats onto listings and records the marketplace sync (C5)', async () => {

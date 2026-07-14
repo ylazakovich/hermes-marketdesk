@@ -57,6 +57,7 @@ export class MarketplaceController {
     }
     const result = await this.listings.syncMarketplace({
       marketplaceId,
+      workspaceId: req.user!.workspaceId!,
       actorId: req.user?.userId,
     });
     if (result.isErr()) return next(result.error);

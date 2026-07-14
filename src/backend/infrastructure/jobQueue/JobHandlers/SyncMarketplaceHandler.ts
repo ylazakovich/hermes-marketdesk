@@ -12,11 +12,17 @@ import type {
 import type { MarketplaceKey } from '../../../../shared/types';
 import type { Listing } from '../../../domain/entities/Listing';
 import type { Marketplace } from '../../../domain/entities/Marketplace';
+import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
+import { InvalidStateError } from '../../../domain/shared/DomainError';
 
 // Structural port for resolving an adapter by marketplace key. Satisfied by the
 // MarketplaceAdapterFactory without importing it here.
 export interface MarketplaceAdapterResolver {
-  create(key: MarketplaceKey): IMarketplaceAdapter;
+  create(key: MarketplaceKey, http?: MarketplaceHttpClient): IMarketplaceAdapter;
+}
+
+export interface SyncMarketplaceAccessTokenProvider {
+  getValidAccessToken(marketplaceId: string): Promise<string>;
 }
 
 // Structural persistence ports. Satisfied by IListingRepository /
@@ -34,6 +40,8 @@ export interface MarketplaceSyncStore {
 export interface SyncMarketplaceHandlerDeps {
   listingStore?: SyncListingStore;
   marketplaceStore?: MarketplaceSyncStore;
+  accessTokens?: SyncMarketplaceAccessTokenProvider;
+  authenticatedHttpClient?: (accessToken: string) => MarketplaceHttpClient;
 }
 
 export interface SyncMarketplaceJobData {
@@ -58,10 +66,9 @@ export class SyncMarketplaceHandler {
   ) {}
 
   async handle(data: SyncMarketplaceJobData): Promise<SyncMarketplaceResult> {
-    const adapter = this.adapters.create(data.marketplaceKey);
-
     let synced: SyncedListing[];
     try {
+      const adapter = await this.createAdapter(data);
       synced = await adapter.sync(data.externalListingIds);
     } catch (error) {
       // Record the failed sync attempt on the marketplace before surfacing the
@@ -79,6 +86,20 @@ export class SyncMarketplaceHandler {
       persisted,
       marketplaceUpdated,
     };
+  }
+
+  private async createAdapter(data: SyncMarketplaceJobData): Promise<IMarketplaceAdapter> {
+    if (data.marketplaceKey === 'olx' && this.deps.accessTokens && this.deps.authenticatedHttpClient) {
+      if (!data.marketplaceId) {
+        throw new InvalidStateError('Sync job is missing marketplaceId for OLX OAuth');
+      }
+      const accessToken = await this.deps.accessTokens.getValidAccessToken(data.marketplaceId);
+      return this.adapters.create(
+        data.marketplaceKey,
+        this.deps.authenticatedHttpClient(accessToken)
+      );
+    }
+    return this.adapters.create(data.marketplaceKey);
   }
 
   // Write fetched engagement stats onto the matching listing aggregates.

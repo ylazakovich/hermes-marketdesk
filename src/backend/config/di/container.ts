@@ -354,6 +354,16 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
   const syncHandler = new SyncMarketplaceHandler(adapterFactory, {
     listingStore: listingRepo,
     marketplaceStore: marketplaceRepo,
+    accessTokens: env.marketplaces.olx.adapterMode === 'real' ? marketplaceOAuthService : undefined,
+    authenticatedHttpClient:
+      env.marketplaces.olx.adapterMode === 'real'
+        ? (accessToken) =>
+            new FetchMarketplaceHttpClient({
+              defaultHeaders: buildOlxHeaders(accessToken),
+              timeoutMs: env.marketplaces.olx.requestTimeoutMs,
+              livePublishEnabled: env.marketplaces.olx.livePublishEnabled,
+            })
+        : undefined,
   });
   syncQueue.registerHandler((data) => syncHandler.handle(data));
 
