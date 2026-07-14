@@ -69,6 +69,22 @@ export const env = {
     webhookSecret: process.env.HERMES_WEBHOOK_SECRET || '',
   },
 
+  // External marketplaces
+  marketplaces: {
+    olx: {
+      market: process.env.OLX_MARKET || 'PL',
+      adapterMode: process.env.OLX_ADAPTER_MODE || 'stub',
+      apiBaseUrl: process.env.OLX_API_BASE_URL || 'https://api.olx.pl/v1',
+      clientId: process.env.OLX_CLIENT_ID || '',
+      clientSecret: process.env.OLX_CLIENT_SECRET || '',
+      redirectUri: process.env.OLX_REDIRECT_URI || '',
+      accessToken: process.env.OLX_ACCESS_TOKEN || '',
+      refreshToken: process.env.OLX_REFRESH_TOKEN || '',
+      livePublishEnabled: process.env.OLX_LIVE_PUBLISH_ENABLED === 'true',
+      requestTimeoutMs: parseInt(process.env.OLX_REQUEST_TIMEOUT_MS || '30000', 10),
+    },
+  },
+
   // CORS
   cors: {
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',

@@ -38,6 +38,8 @@ import type { EventBroker, EventSubscriber } from '../../infrastructure/eventBro
 import type { RedisCache } from '../../infrastructure/cache/RedisCache';
 import { BullJobQueue } from '../../infrastructure/jobQueue/BullJobQueue';
 import { MarketplaceAdapterFactory } from '../../infrastructure/adapters/MarketplaceAdapterFactory';
+import { FetchMarketplaceHttpClient } from '../../infrastructure/adapters/FetchMarketplaceHttpClient';
+import { env } from '../env';
 import { HermesAI } from '../../infrastructure/external/HermesAI';
 import { HermesCompletionClient } from '../../infrastructure/external/HermesCompletionClient';
 import { createEmailProvider } from '../../infrastructure/external/EmailProvider';
@@ -152,7 +154,19 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
   const idGenerator: IdGenerator = overrides.idGenerator ?? randomUUID;
   const aiProvider: IAIProvider =
     overrides.aiProvider ?? new HermesAI(new HermesCompletionClient());
-  const adapterFactory = new MarketplaceAdapterFactory();
+  const olxHttpClient =
+    env.marketplaces.olx.adapterMode === 'real'
+      ? new FetchMarketplaceHttpClient({
+          defaultHeaders: env.marketplaces.olx.accessToken
+            ? { Authorization: `Bearer ${env.marketplaces.olx.accessToken}` }
+            : undefined,
+          timeoutMs: env.marketplaces.olx.requestTimeoutMs,
+          livePublishEnabled: env.marketplaces.olx.livePublishEnabled,
+        })
+      : undefined;
+  const adapterFactory = new MarketplaceAdapterFactory({
+    httpClients: olxHttpClient ? { olx: olxHttpClient } : undefined,
+  });
   // Notifiers are constructed (stubbed when unconfigured) so the graph is complete
   // and ready for future notification wiring; no consumer requires them yet.
   createEmailProvider();
