@@ -364,6 +364,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
               livePublishEnabled: env.marketplaces.olx.livePublishEnabled,
             })
         : undefined,
+    eventPublisher,
   });
   syncQueue.registerHandler((data) => syncHandler.handle(data));
 
