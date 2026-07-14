@@ -230,6 +230,9 @@ export class Product {
     if (price.currency !== this._sellingPrice.currency) {
       return Err(new ValidationError('costPrice currency must match sellingPrice'));
     }
+    if (this._sellingPrice.isLessThan(price)) {
+      return Err(new ValidationError('costPrice must be <= sellingPrice'));
+    }
     this._costPrice = price;
     this.touch();
     return Ok(undefined);

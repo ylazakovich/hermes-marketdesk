@@ -85,6 +85,13 @@ describe('Product price / description updates', () => {
     const product = unwrap(Product.create(baseProps()));
     expect(product.updateCostPrice(money(45)).isOk()).toBe(true);
     expect(product.costPrice.amount).toBeCloseTo(45);
+    expect(product.costPrice.currency).toBe('PLN');
+  });
+
+  it('rejects updating cost price above the current selling price', () => {
+    const product = unwrap(Product.create(baseProps()));
+    expect(product.updateCostPrice(money(90)).isErr()).toBe(true);
+    expect(product.costPrice.amount).toBeCloseTo(50);
   });
 
   it('allows updating selling price below cost', () => {

@@ -44,19 +44,35 @@ export class UpdateProductUseCase {
       if (r.isErr()) return r;
     }
 
+    let nextCostPrice: Money | null = null;
     if (dto.costPrice !== undefined) {
-      const currency = dto.currency ?? product.costPrice.currency;
-      const price = Money.of(dto.costPrice, currency);
+      const price = Money.of(dto.costPrice, dto.currency ?? product.costPrice.currency);
       if (price.isErr()) return price;
-      const r = product.updateCostPrice(price.value);
-      if (r.isErr()) return r;
+      nextCostPrice = price.value;
     }
 
+    let nextSellingPrice: Money | null = null;
     if (dto.sellingPrice !== undefined) {
-      const currency = dto.currency ?? product.sellingPrice.currency;
-      const price = Money.of(dto.sellingPrice, currency);
+      const price = Money.of(dto.sellingPrice, dto.currency ?? product.sellingPrice.currency);
       if (price.isErr()) return price;
-      const r = product.updateSellingPrice(price.value, dto.allowBelowCost ?? false);
+      nextSellingPrice = price.value;
+    }
+
+    if (nextCostPrice && nextSellingPrice) {
+      const sellFirst = !nextSellingPrice.isLessThan(product.costPrice);
+      const first = sellFirst
+        ? product.updateSellingPrice(nextSellingPrice, dto.allowBelowCost ?? false)
+        : product.updateCostPrice(nextCostPrice);
+      if (first.isErr()) return first;
+      const second = sellFirst
+        ? product.updateCostPrice(nextCostPrice)
+        : product.updateSellingPrice(nextSellingPrice, dto.allowBelowCost ?? false);
+      if (second.isErr()) return second;
+    } else if (nextCostPrice) {
+      const r = product.updateCostPrice(nextCostPrice);
+      if (r.isErr()) return r;
+    } else if (nextSellingPrice) {
+      const r = product.updateSellingPrice(nextSellingPrice, dto.allowBelowCost ?? false);
       if (r.isErr()) return r;
     }
 

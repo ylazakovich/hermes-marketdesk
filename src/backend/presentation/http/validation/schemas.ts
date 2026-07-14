@@ -46,7 +46,7 @@ export const updateProductSchema = z
     sellingPrice: z.number().nonnegative().optional(),
     currency: z.string().regex(/^[A-Z]{3}$/).optional(),
     condition: conditionEnum.optional(),
-    category: z.string().min(1).optional(),
+    category: z.string().trim().min(1).optional(),
     status: z.enum(PRODUCT_STATUS_LIST as [string, ...string[]]).optional(),
     tags: z.array(z.string()).optional(),
     images: z.array(z.string()).optional(),
