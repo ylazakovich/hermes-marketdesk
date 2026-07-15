@@ -149,16 +149,17 @@ describe('OLXAdapter', () => {
   });
 
   it('maps OLX statistics-shaped engagement counters from live advert sync responses', async () => {
-    const http = mockClient(() => ({
+    const http = mockClient((config) => ({
       status: 200,
-      data: {
-        data: {
-          id: 1085426829,
-          status: 'active',
-          public_url: 'https://www.olx.pl/d/oferta/airpods-1085426829',
-          statistics: { advert_views: '2', favorites_count: 0, contact_count: 0 },
-        },
-      },
+      data: config.url.endsWith('/statistics')
+        ? { data: { advert_views: '2', users_observing: 0, phone_views: 0 } }
+        : {
+            data: {
+              id: 1085426829,
+              status: 'active',
+              public_url: 'https://www.olx.pl/d/oferta/airpods-1085426829',
+            },
+          },
     }));
     const adapter = new OLXAdapter(http, fastOptions);
 
@@ -247,16 +248,20 @@ describe('OLXAdapter', () => {
 
     const adverts = await adapter.listOwnedListings({ pageSize: 50, statuses: ['active'] });
 
-    expect(calls).toHaveLength(2);
+    expect(calls.filter((call) => call.url.endsWith('/adverts'))).toHaveLength(2);
     expect(calls[0]).toMatchObject({
       method: 'GET',
       url: 'https://www.olx.pl/api/partner/adverts',
       query: { page: 1, limit: 50, status: 'active' },
     });
-    expect(calls[1]).toMatchObject({
+    expect(calls[2]).toMatchObject({
       method: 'GET',
       url: 'https://www.olx.pl/api/partner/adverts',
       query: { page: 2, limit: 50, status: 'active' },
+    });
+    expect(calls[1]).toMatchObject({
+      method: 'GET',
+      url: 'https://www.olx.pl/api/partner/adverts/10/statistics',
     });
     expect(adverts).toHaveLength(2);
     expect(adverts[0]).toMatchObject({
@@ -277,6 +282,34 @@ describe('OLXAdapter', () => {
       currency: 'PLN',
       category: 'Photography',
       imageUrls: ['https://img/lens.jpg'],
+    });
+  });
+
+  it('maps OLX Partner API images arrays from owned advert responses', async () => {
+    const http = mockClient(() => ({
+      status: 200,
+      data: {
+        data: [
+          {
+            id: 1085426829,
+            status: 'active',
+            title: 'AirPods 4',
+            description: 'Seller supplied description with enough detail.',
+            url: 'https://www.olx.pl/d/oferta/airpods-1085426829',
+            price: { value: '399', currency: 'PLN' },
+            images: [{ url: 'https://ireland.apollo.olxcdn.com/img-1.jpg' }],
+          },
+        ],
+        meta: { last_page: 1 },
+      },
+    }));
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    const adverts = await adapter.listOwnedListings();
+
+    expect(adverts[0]).toMatchObject({
+      externalListingId: '1085426829',
+      imageUrls: ['https://ireland.apollo.olxcdn.com/img-1.jpg'],
     });
   });
 

@@ -66,6 +66,23 @@ export interface AppOptions {
 
 const DEFAULT_CORS_ORIGIN = 'http://localhost:5173';
 
+export const HELMET_OPTIONS = {
+  contentSecurityPolicy: {
+    directives: {
+      imgSrc: [
+        "'self'",
+        'data:',
+        // OLX Partner API returns remote CDN URLs when importing owned adverts.
+        // Keep this allowlist narrow so the SPA can render imported product
+        // photos without weakening script/style policy.
+        'https://*.olxcdn.com',
+        'https://*.apollo.olxcdn.com',
+        'https://ireland.apollo.olxcdn.com',
+      ],
+    },
+  },
+} satisfies Parameters<typeof helmet>[0];
+
 function parseCorsAllowlist(
   originConfig: string | undefined,
   isProductionMode: boolean,
@@ -117,7 +134,7 @@ export function createCorsOptions(originConfig: string | undefined, isProd = isP
 export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
   const app = express();
 
-  app.use(helmet());
+  app.use(helmet(HELMET_OPTIONS));
   app.use(compression());
   // CORS is allowlist-based when credentials are enabled. We intentionally avoid
   // reflecting a user-controlled env value directly into `origin`, which CodeQL

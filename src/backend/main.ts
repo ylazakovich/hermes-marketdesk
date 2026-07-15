@@ -10,7 +10,7 @@ import pino from 'pino';
 import { env, isDevelopment, isTest } from './config/env.js';
 import { createPool, closePool } from './config/database.js';
 import { createRedisClient, closeRedis } from './config/redis.js';
-import { buildApp, createCorsOptions } from './presentation/http/app.js';
+import { buildApp, createCorsOptions, HELMET_OPTIONS } from './presentation/http/app.js';
 import { HermesLiveUpdates } from './presentation/websocket/HermesLiveUpdates.js';
 import { buildContainer, type AppContainer } from './config/di/index.js';
 
@@ -67,7 +67,7 @@ const startServer = async () => {
         'API layer failed to wire; starting health-only server',
       );
       app = express();
-      app.use(helmet());
+      app.use(helmet(HELMET_OPTIONS));
       app.use(compression());
       app.use(cors(createCorsOptions(env.cors.origin)));
       app.use(express.json({ limit: '10mb' }));

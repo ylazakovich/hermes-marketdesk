@@ -332,6 +332,16 @@ const token = signToken({ userId: 'u-1', workspaceId: 'ws-1' });
 const auth = (req: request.Test) => req.set('Authorization', `Bearer ${token}`);
 
 describe('Presentation API', () => {
+  it('allows OLX CDN images in the Content-Security-Policy', async () => {
+    const { app } = await buildTestApp();
+
+    const res = await request(app).get('/api/products');
+
+    expect(res.headers['content-security-policy']).toContain(
+      'img-src \'self\' data: https://*.olxcdn.com https://*.apollo.olxcdn.com https://ireland.apollo.olxcdn.com'
+    );
+  });
+
   describe('auth', () => {
     it('logs in with valid credentials and returns a token', async () => {
       const { app } = await buildTestApp();

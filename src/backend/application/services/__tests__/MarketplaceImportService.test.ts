@@ -148,7 +148,7 @@ describe('MarketplaceImportService', () => {
     expect(adapter.delist).not.toHaveBeenCalled();
   });
 
-  it('marks already imported adverts by marketplace external id and reports mapping warnings', async () => {
+  it('allows already imported adverts with partial remote data to be refreshed', async () => {
     const existing = unwrap(
       Listing.create({
         id: 'listing-1',
@@ -174,9 +174,13 @@ describe('MarketplaceImportService', () => {
       discovered: 1,
       new: 0,
       already_imported: 0,
-      changed: 0,
-      unsupported: 1,
+      changed: 1,
+      unsupported: 0,
       failed: 0,
+    });
+    expect(result.value.items[0]).toMatchObject({
+      status: 'changed',
+      proposedChanges: expect.arrayContaining(['views']),
     });
     expect(result.value.items[0].warnings).toEqual(
       expect.arrayContaining([

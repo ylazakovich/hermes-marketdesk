@@ -344,10 +344,10 @@ export class MarketplaceImportService {
         : [];
       let status: ImportPreviewItemStatus = 'new';
       if (warnings.some((warning) => warning.startsWith('duplicate_'))) status = 'failed';
-      else if (warnings.includes('missing_required_import_fields')) status = 'unsupported';
-      else if (remote.status === 'error') status = 'unsupported';
       else if (existing && proposedChanges.length > 0) status = 'changed';
       else if (existing) status = 'already_imported';
+      else if (warnings.includes('missing_required_import_fields')) status = 'unsupported';
+      else if (remote.status === 'error') status = 'unsupported';
 
       return {
         status,
