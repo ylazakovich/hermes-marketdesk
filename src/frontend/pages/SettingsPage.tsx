@@ -1,9 +1,13 @@
-// Workspace settings: profile (name/currency/timezone), Hermes autonomy tier,
-// appearance (theme), and notification preferences.
+// Workspace settings: visual settings shell with section navigation for general
+// preferences, Hermes autonomy, notifications, integrations, appearance, and security.
 import React, { useState } from 'react';
 import {
   Box,
   Button,
+  ButtonBase,
+  Chip,
+  IconButton,
+  InputAdornment,
   Divider,
   FormControlLabel,
   MenuItem,
@@ -14,18 +18,58 @@ import {
   Typography,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import AddIcon from '@mui/icons-material/Add';
+import SearchIcon from '@mui/icons-material/Search';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import NotificationsIcon from '@mui/icons-material/NotificationsNone';
+import StorefrontIcon from '@mui/icons-material/StorefrontOutlined';
+import KeyIcon from '@mui/icons-material/KeyOutlined';
+import PaletteIcon from '@mui/icons-material/PaletteOutlined';
+import TelegramIcon from '@mui/icons-material/Telegram';
+import SecurityIcon from '@mui/icons-material/SecurityOutlined';
+import TuneIcon from '@mui/icons-material/TuneOutlined';
 import type { AutonomyLevel, Workspace } from '@shared/types';
 import { AUTONOMY_LEVEL_LIST } from '@shared/constants';
+import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../state/hooks.js';
 import { setWorkspace, setAutonomyLevel } from '../state/slices/workspaceSlice.js';
 import type { WorkspaceState } from '../state/slices/workspaceSlice.js';
-import { setThemeMode, enqueueToast } from '../state/slices/uiSlice.js';
+import { setThemeMode, enqueueToast, toggleTheme } from '../state/slices/uiSlice.js';
 import { useUpdateWorkspace } from '../services/hooks/index.js';
 import { AUTONOMY_LABELS, AUTONOMY_DESCRIPTIONS } from '../utils/labels.js';
 import { PageHeader } from '../components/common/PageHeader.js';
 import { Card } from '../components/common/Card.js';
 
 const CURRENCIES = ['PLN', 'EUR', 'USD', 'GBP', 'CZK', 'UAH'];
+
+export type SettingsSection =
+  | 'general'
+  | 'hermes'
+  | 'notifications'
+  | 'marketplaces'
+  | 'apiKeys'
+  | 'appearance'
+  | 'telegram'
+  | 'security';
+
+export const settingsSections: Array<{ id: SettingsSection; label: string; caption: string; icon: React.ReactNode }> = [
+  { id: 'general', label: 'General', caption: 'Workspace basics', icon: <TuneIcon fontSize="small" /> },
+  { id: 'hermes', label: 'Hermes AI', caption: 'Autonomy and automation', icon: <AutoAwesomeIcon fontSize="small" /> },
+  { id: 'notifications', label: 'Notifications', caption: 'Channels by event', icon: <NotificationsIcon fontSize="small" /> },
+  { id: 'marketplaces', label: 'Marketplace Accounts', caption: 'Seller account health', icon: <StorefrontIcon fontSize="small" /> },
+  { id: 'apiKeys', label: 'API Keys', caption: 'Programmatic access', icon: <KeyIcon fontSize="small" /> },
+  { id: 'appearance', label: 'Appearance', caption: 'Theme and density', icon: <PaletteIcon fontSize="small" /> },
+  { id: 'telegram', label: 'Telegram', caption: 'Bot notifications', icon: <TelegramIcon fontSize="small" /> },
+  { id: 'security', label: 'Security', caption: 'Account protection', icon: <SecurityIcon fontSize="small" /> },
+];
+
+const notificationRows = [
+  'New sale',
+  'Competitor price change',
+  'Listing needs attention',
+  'Sync errors',
+  'Weekly performance report',
+];
 
 function errorMessage(err: unknown): string {
   if (err && typeof err === 'object') {
@@ -47,14 +91,15 @@ function toWorkspaceState(ws: Workspace): WorkspaceState {
 
 const SettingsPage: React.FC = () => {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const workspace = useAppSelector((s) => s.workspace);
   const themeMode = useAppSelector((s) => s.ui.themeMode);
 
+  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
   const [name, setName] = useState(workspace.name);
   const [currency, setCurrency] = useState(workspace.currency);
   const [timezone, setTimezone] = useState(workspace.timezone);
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [hermesNotifications, setHermesNotifications] = useState(true);
+  const [settingsSearch, setSettingsSearch] = useState('');
 
   const [updateWorkspace, { isLoading: saving }] = useUpdateWorkspace();
 
@@ -101,121 +146,230 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  return (
-    <Box>
-      <PageHeader title="Settings" subtitle="Manage your workspace, automation, and preferences." />
-
-      <Stack spacing={2.5} sx={{ maxWidth: 860 }}>
-        <Card title="Workspace" subtitle="General workspace details">
-          <Stack spacing={2}>
-            <TextField
-              label="Workspace name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              fullWidth
-            />
+  const renderSection = () => {
+    switch (activeSection) {
+      case 'general':
+        return (
+          <Stack spacing={2.25}>
+            <TextField label="Workspace name" value={name} onChange={(e) => setName(e.target.value)} fullWidth />
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-              <Select value={currency} onChange={(e) => setCurrency(e.target.value)} fullWidth>
+              <Select value={currency} onChange={(e) => setCurrency(e.target.value)} fullWidth aria-label="Default currency">
                 {CURRENCIES.map((c) => (
-                  <MenuItem key={c} value={c}>
-                    {c}
-                  </MenuItem>
+                  <MenuItem key={c} value={c}>{c} — {c === 'PLN' ? 'Polish złoty' : c}</MenuItem>
                 ))}
               </Select>
-              <TextField
-                label="Timezone"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                fullWidth
-              />
+              <TextField label="Timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} fullWidth />
             </Stack>
-            <Box>
+            <TextField
+              label="Language"
+              value="English"
+              fullWidth
+              disabled
+              helperText="Language preferences are coming soon and are not saved yet."
+            />
+            <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+              <Button
+                variant="outlined"
+                onClick={() => {
+                  setName(workspace.name);
+                  setCurrency(workspace.currency);
+                  setTimezone(workspace.timezone);
+                }}
+              >
+                Cancel
+              </Button>
               <Button variant="contained" onClick={handleSaveProfile} disabled={!dirty || saving}>
                 Save changes
               </Button>
-            </Box>
+            </Stack>
           </Stack>
-        </Card>
-
-        <Card
-          title="Hermes autonomy"
-          subtitle="Control how much the AI agent can do on its own"
-        >
+        );
+      case 'hermes':
+        return (
           <Stack spacing={1.5}>
             {AUTONOMY_LEVEL_LIST.map((level) => {
               const selected = workspace.autonomyLevel === level;
               return (
-                <Box
+                <ButtonBase
                   key={level}
                   onClick={() => handleAutonomy(level)}
+                  aria-pressed={selected}
                   sx={{
                     p: 2,
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                    border: (t) =>
-                      `2px solid ${selected ? t.palette.primary.main : t.palette.divider}`,
-                    bgcolor: selected ? 'action.selected' : 'transparent',
-                    transition: 'border-color 120ms ease',
+                    borderRadius: 2.5,
+                    width: '100%',
+                    display: 'block',
+                    textAlign: 'left',
+                    border: (t) => `2px solid ${selected ? t.palette.primary.main : t.palette.divider}`,
+                    bgcolor: selected ? 'action.selected' : 'background.paper',
                   }}
                 >
-                  <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                      {AUTONOMY_LABELS[level]}
-                    </Typography>
-                    {selected && (
-                      <CheckCircleIcon sx={{ fontSize: 18, color: 'primary.main' }} />
-                    )}
+                  <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ mb: 0.5 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{AUTONOMY_LABELS[level]}</Typography>
+                    {selected && <CheckCircleIcon sx={{ fontSize: 18, color: 'primary.main' }} />}
                   </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    {AUTONOMY_DESCRIPTIONS[level]}
-                  </Typography>
-                </Box>
+                  <Typography variant="body2" color="text.secondary">{AUTONOMY_DESCRIPTIONS[level]}</Typography>
+                </ButtonBase>
               );
             })}
           </Stack>
-        </Card>
-
-        <Card title="Appearance">
-          <FormControlLabel
-            control={
-              <Switch
-                checked={themeMode === 'dark'}
-                onChange={(e) => dispatch(setThemeMode(e.target.checked ? 'dark' : 'light'))}
-              />
-            }
-            label="Dark mode"
-          />
-        </Card>
-
-        <Card title="Notifications">
-          <Stack divider={<Divider />}>
-            <FormControlLabel
-              sx={{ py: 0.5, justifyContent: 'space-between', ml: 0 }}
-              labelPlacement="start"
-              control={
-                <Switch
-                  checked={emailNotifications}
-                  onChange={(e) => setEmailNotifications(e.target.checked)}
-                />
-              }
-              label="Email notifications"
-            />
-            <FormControlLabel
-              sx={{ py: 0.5, justifyContent: 'space-between', ml: 0 }}
-              labelPlacement="start"
-              control={
-                <Switch
-                  checked={hermesNotifications}
-                  onChange={(e) => setHermesNotifications(e.target.checked)}
-                />
-              }
-              label="Hermes suggestion alerts"
-            />
+        );
+      case 'notifications':
+        return (
+          <Stack spacing={1.5}>
+            <Typography variant="body2" color="text.secondary">
+              Per-event notification delivery is coming soon. The matrix is read-only until the backend can persist each event and channel independently.
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr auto' }, gap: 1, alignItems: 'center' }}>
+              {notificationRows.map((row) => (
+                <React.Fragment key={row}>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{row}</Typography>
+                  <Chip size="small" label="Not configurable yet" variant="outlined" />
+                </React.Fragment>
+              ))}
+            </Box>
           </Stack>
+        );
+      case 'appearance':
+        return (
+          <Stack spacing={2}>
+            <FormControlLabel
+              control={<Switch checked={themeMode === 'dark'} onChange={(e) => dispatch(setThemeMode(e.target.checked ? 'dark' : 'light'))} />}
+              label="Dark mode"
+            />
+            <Chip label="Density controls coming next" variant="outlined" sx={{ alignSelf: 'flex-start' }} />
+          </Stack>
+        );
+      case 'marketplaces':
+        return <Placeholder title="Marketplace account management" detail="Connect, reconnect, and inspect seller account health without exposing tokens." />;
+      case 'apiKeys':
+        return <Placeholder title="API key management" detail="List masked keys, generate one-time secrets, and revoke stale access." />;
+      case 'telegram':
+        return <Placeholder title="Telegram integration" detail="Configure bot username, chat ID, and Telegram delivery preferences." />;
+      case 'security':
+        return <Placeholder title="Security controls" detail="Password, two-factor authentication, and active sessions belong here." />;
+      default:
+        return null;
+    }
+  };
+
+  const activeMeta = settingsSections.find((section) => section.id === activeSection) ?? settingsSections[0];
+  const handleSettingsSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = settingsSearch.trim().toLowerCase();
+    const match = settingsSections.find(
+      (section) =>
+        section.label.toLowerCase().includes(query) || section.caption.toLowerCase().includes(query),
+    );
+    if (match) setActiveSection(match.id);
+  };
+
+  return (
+    <Box>
+      <PageHeader
+        title="Settings"
+        subtitle="Workspace and account preferences"
+        actions={
+          <Stack component="form" direction="row" spacing={1} onSubmit={handleSettingsSearch} flexWrap="wrap" useFlexGap>
+            <TextField
+              size="small"
+              placeholder="Search settings"
+              aria-label="Search settings"
+              value={settingsSearch}
+              onChange={(event) => setSettingsSearch(event.target.value)}
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" />
+                    </InputAdornment>
+                  ),
+                },
+              }}
+            />
+            <IconButton type="button" onClick={() => dispatch(toggleTheme())} aria-label="Toggle theme">
+              <PaletteIcon />
+            </IconButton>
+            <IconButton type="button" onClick={() => setActiveSection('notifications')} aria-label="Open notifications settings">
+              <NotificationsIcon />
+            </IconButton>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/products?newProduct=1')}>
+              New product
+            </Button>
+          </Stack>
+        }
+      />
+
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', md: '300px minmax(0, 1fr)' },
+          gap: 2.5,
+          alignItems: 'start',
+        }}
+      >
+        <Card title="Settings sections" subtitle="Choose what to configure" contentSx={{ p: 1.25 }}>
+          <SettingsSectionNavigation activeSection={activeSection} onSectionChange={setActiveSection} />
         </Card>
-      </Stack>
+
+        <Card
+          title={activeMeta.label}
+          subtitle={activeMeta.caption}
+          sx={{ borderRadius: 4 }}
+          contentSx={{ p: { xs: 2, md: 3 } }}
+        >
+          {renderSection()}
+        </Card>
+      </Box>
     </Box>
   );
 };
+
+export function SettingsSectionNavigation({
+  activeSection,
+  onSectionChange,
+}: {
+  activeSection: SettingsSection;
+  onSectionChange: (section: SettingsSection) => void;
+}) {
+  return (
+    <Stack spacing={0.75}>
+      {settingsSections.map((section) => {
+        const active = activeSection === section.id;
+        return (
+          <Button
+            key={section.id}
+            onClick={() => onSectionChange(section.id)}
+            startIcon={section.icon}
+            fullWidth
+            variant={active ? 'contained' : 'text'}
+            color={active ? 'primary' : 'inherit'}
+            sx={{ justifyContent: 'flex-start', textTransform: 'none', borderRadius: 2, py: 1.1 }}
+          >
+            <Box sx={{ textAlign: 'left', minWidth: 0 }}>
+              <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>{section.label}</Typography>
+              <Typography variant="caption" sx={{ opacity: active ? 0.9 : 0.68 }} noWrap>{section.caption}</Typography>
+            </Box>
+          </Button>
+        );
+      })}
+    </Stack>
+  );
+}
+
+function Placeholder({ title, detail }: { title: string; detail: string }) {
+  return (
+    <Stack spacing={2}>
+      <Box sx={{ p: 2, borderRadius: 3, bgcolor: 'action.hover', border: (t) => `1px dashed ${t.palette.divider}` }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{title}</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{detail}</Typography>
+      </Box>
+      <Divider />
+      <Typography variant="body2" color="text.secondary">
+        This section is visible in the settings navigation so the UI no longer looks empty while the backend contract is completed.
+      </Typography>
+    </Stack>
+  );
+}
 
 export default SettingsPage;
