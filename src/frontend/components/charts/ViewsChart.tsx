@@ -10,7 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import { useAnalyticsListings } from '../../services/hooks/index.js';
-import type { AnalyticsQueryParams } from '../../state/api/index.js';
+import type { AnalyticsQueryParams, ListingPerformance } from '../../state/api/index.js';
 import { formatNumber } from '../../utils/formatters.js';
 import { ChartState, useChartColors } from './chartShell.js';
 
@@ -18,6 +18,26 @@ export interface ViewsChartProps {
   params?: AnalyticsQueryParams;
   height?: number;
   topN?: number;
+}
+
+export function formatListingChartLabel(listing: ListingPerformance): string {
+  const productName = listing.productName?.trim();
+  const externalId = listing.marketplaceListingId?.trim();
+  const primary = productName || externalId || 'Untitled listing';
+  const parts = [listing.productSku, listing.marketplaceName, productName ? externalId : null]
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? `${primary} (${parts.join(' · ')})` : primary;
+}
+
+export function buildViewsChartData(listings: ListingPerformance[] | undefined, topN: number) {
+  return [...(listings ?? [])]
+    .sort((a, b) => b.views - a.views)
+    .slice(0, topN)
+    .map((m) => ({
+      label: formatListingChartLabel(m),
+      views: m.views,
+    }));
 }
 
 export const ViewsChart: React.FC<ViewsChartProps> = ({
@@ -28,15 +48,7 @@ export const ViewsChart: React.FC<ViewsChartProps> = ({
   const { data, isLoading, isError, error, refetch } = useAnalyticsListings(params ?? {});
   const colors = useChartColors();
 
-  // The listings-performance rows are keyed by listing/product, not marketplace,
-  // so top performers are labelled by product id.
-  const chartData = useMemo(() => {
-    const rows = [...(data ?? [])].sort((a, b) => b.views - a.views).slice(0, topN);
-    return rows.map((m) => ({
-      label: m.productId,
-      views: m.views,
-    }));
-  }, [data, topN]);
+  const chartData = useMemo(() => buildViewsChartData(data, topN), [data, topN]);
 
   return (
     <ChartState
