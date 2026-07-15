@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.8.0...hermes-marketdesk-v0.9.0) (2026-07-15)
+
+
+### ✨ Features
+
+* close MarketDesk product and AI tasks ([#162](https://github.com/ylazakovich/hermes-marketdesk/issues/162)) ([125081b](https://github.com/ylazakovich/hermes-marketdesk/commit/125081b9eb74fe03fb2a0fcaa66634808d1ee0f6))
+
+
+### 🐛 Bug Fixes
+
+* **dashboard:** realign overview layout ([5ea5c70](https://github.com/ylazakovich/hermes-marketdesk/commit/5ea5c7097ac352dbedd09a4a097785d1078d2e40))
+* **olx:** sync owned advert images and statistics ([c073ee3](https://github.com/ylazakovich/hermes-marketdesk/commit/c073ee30a05c574784b02f0d2d9a2e2dd1a45665))
+* **settings:** add sectioned settings shell ([8609684](https://github.com/ylazakovich/hermes-marketdesk/commit/860968483d7f9c21ee61397891999bbec921b83a))
+* **shell:** move profile control to sidebar ([348a586](https://github.com/ylazakovich/hermes-marketdesk/commit/348a586b4c84bd348fefdb00dfdbd36964864fd3))
+
 ## [0.8.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.7.0...hermes-marketdesk-v0.8.0) (2026-07-15)
 
 
