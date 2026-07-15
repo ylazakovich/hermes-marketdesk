@@ -17,6 +17,7 @@ MarketDesk is an integrated product and listing management system designed to si
 ## Tech Stack
 
 ### Backend
+
 - **Runtime**: Node.js 22+
 - **Language**: TypeScript with ES2020 target
 - **Framework**: Express.js 5
@@ -27,6 +28,7 @@ MarketDesk is an integrated product and listing management system designed to si
 - **Authentication**: JWT (bcryptjs password hashing)
 
 ### Frontend
+
 - **Framework**: React 19
 - **State Management**: Redux Toolkit
 - **Routing**: React Router v7
@@ -36,6 +38,7 @@ MarketDesk is an integrated product and listing management system designed to si
 - **Build Tool**: Vite 6
 
 ### Infrastructure
+
 - **Containerization**: Docker & Docker Compose
 - **Deployment**: Self-hosted on Hetzner VPS
 - **Architecture**: Layered (Domain, Application, Infrastructure, Presentation)
@@ -79,6 +82,10 @@ MarketDesk is an integrated product and listing management system designed to si
 ├── jest.config.js               # Jest testing configuration
 └── README.md                    # This file
 ```
+
+## Deployment Docs
+
+- [Caddy + Cloudflare VPS deployment](docs/deployment/caddy-cloudflare-vps.md) — production HTTPS reverse-proxy setup for the `hosting/domain provider → Cloudflare DNS → Caddy → VPS → MarketDesk` path.
 
 ## Design & Product Docs
 
@@ -187,6 +194,7 @@ curl http://localhost:3000/ready
 ```
 
 Expected response:
+
 ```json
 {
   "status": "ok",
@@ -212,6 +220,7 @@ npm run dev
 ```
 
 This will start:
+
 - Backend server on http://localhost:3000
 - Frontend dev server on http://localhost:5173
 
@@ -405,11 +414,13 @@ runs on the Vite dev server at `http://localhost:5173` and proxies `/api` to `:3
 See `.env.example` for all available configuration options.
 
 **Critical Variables**:
+
 - `DATABASE_URL` - PostgreSQL connection string
 - `REDIS_URL` - Redis connection string
 - `JWT_SECRET` - Secret key for JWT signing
 
 **Feature Flags**:
+
 - `ENABLE_BULK_OPERATIONS` - Enable bulk operation features
 - `ENABLE_PRICE_OPTIMIZATION` - Enable AI-based price optimization
 - `ENABLE_INVENTORY_SYNC` - Enable automatic inventory synchronization
@@ -439,6 +450,7 @@ The backend follows strict layering principles:
 ### Workspace Multi-Tenancy
 
 The platform is built with multi-tenancy in mind:
+
 - Each workspace is isolated
 - Users can belong to multiple workspaces
 - All data is scoped to workspace_id
