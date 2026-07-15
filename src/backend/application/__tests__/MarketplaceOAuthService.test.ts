@@ -3,7 +3,9 @@ import { InMemoryMarketplaceRepository, unwrap } from '../../domain/testkit/supp
 import {
   MarketplaceOAuthService,
   type MarketplaceAccountRecord,
+  type MarketplaceAppCredentialRecord,
   type MarketplaceOAuthServiceDeps,
+  type OlxOAuthAppCredentials,
   type OlxOAuthTokens,
 } from '../services/MarketplaceOAuthService';
 
@@ -39,6 +41,26 @@ class InMemoryAccountRepository {
       return null;
     }
     return this.upsert(input);
+  }
+}
+
+class InMemoryAppCredentialRepository {
+  readonly credentials = new Map<string, MarketplaceAppCredentialRecord>();
+
+  async findByMarketplaceId(marketplaceId: string): Promise<MarketplaceAppCredentialRecord | null> {
+    return this.credentials.get(marketplaceId) ?? null;
+  }
+
+  async upsert(input: Omit<MarketplaceAppCredentialRecord, 'createdAt' | 'updatedAt'>) {
+    const current = this.credentials.get(input.marketplaceId);
+    const now = new Date('2026-07-14T12:00:00.000Z');
+    const saved: MarketplaceAppCredentialRecord = {
+      ...input,
+      createdAt: current?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.credentials.set(input.marketplaceId, saved);
+    return saved;
   }
 }
 
@@ -84,6 +106,15 @@ function setup(refreshLock?: MarketplaceOAuthServiceDeps['refreshLock']) {
   marketplaceRepo.items.set(marketplace.id, marketplace);
 
   const accountRepo = new InMemoryAccountRepository();
+  const appCredentialRepo = new InMemoryAppCredentialRepository();
+  appCredentialRepo.credentials.set(marketplace.id, {
+    id: 'app-credentials-1',
+    marketplaceId: marketplace.id,
+    clientId: 'workspace-client-id',
+    encryptedClientSecret: { appPayload: { clientId: 'workspace-client-id', clientSecret: 'workspace-secret' } },
+    createdAt: new Date('2026-07-14T12:00:00.000Z'),
+    updatedAt: new Date('2026-07-14T12:00:00.000Z'),
+  });
   const stateStore = new InMemoryStateStore();
   const exchangeAuthorizationCode = jest.fn(async () => initialTokens);
   const refreshAccessToken = jest.fn(async () => ({
@@ -99,16 +130,22 @@ function setup(refreshLock?: MarketplaceOAuthServiceDeps['refreshLock']) {
     exchangeAuthorizationCode,
     refreshAccessToken,
   };
+  const oauthClientFactory = jest.fn((_credentials: OlxOAuthAppCredentials) => oauthClient);
   const vault = {
     encrypt: jest.fn((tokens: OlxOAuthTokens) => ({ payload: tokens })),
     decrypt: jest.fn((envelope: Record<string, unknown>) => envelope.payload as OlxOAuthTokens),
+    encryptAppCredentials: jest.fn((credentials: OlxOAuthAppCredentials) => ({ appPayload: credentials })),
+    decryptAppCredentials: jest.fn(
+      (envelope: Record<string, unknown>) => envelope.appPayload as OlxOAuthAppCredentials
+    ),
   };
   let nonce = 0;
   const service = new MarketplaceOAuthService({
     marketplaceRepo,
     accountRepo,
+    appCredentialRepo,
     stateStore,
-    oauthClient,
+    oauthClientFactory,
     credentialVault: vault,
     refreshLock,
     idGenerator: () => `account-${++nonce}`,
@@ -122,8 +159,10 @@ function setup(refreshLock?: MarketplaceOAuthServiceDeps['refreshLock']) {
     marketplaceRepo,
     marketplace,
     accountRepo,
+    appCredentialRepo,
     stateStore,
     oauthClient,
+    oauthClientFactory,
     exchangeAuthorizationCode,
     refreshAccessToken,
   };
@@ -143,6 +182,15 @@ describe('MarketplaceOAuthService', () => {
       providerKey: 'olx',
     });
     expect(marketplace.isConnected()).toBe(false);
+  });
+
+  it('requires workspace OLX application credentials before starting OAuth', async () => {
+    const { service, marketplace, appCredentialRepo } = setup();
+    appCredentialRepo.credentials.delete(marketplace.id);
+
+    await expect(service.start({ marketplaceId: marketplace.id, workspaceId: 'ws-1' })).rejects.toThrow(
+      'OLX application credentials are not configured for this workspace'
+    );
   });
 
   it('consumes state once, persists encrypted tokens, then marks OLX connected', async () => {
