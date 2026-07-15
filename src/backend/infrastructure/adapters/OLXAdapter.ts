@@ -149,26 +149,12 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
   protected async doUpdateListing(
     externalListingId: string,
     changes: Partial<Pick<ListingPublishInput, 'price' | 'description' | 'productName'>>,
-    current?: ListingPublishInput,
+    current: ListingPublishInput,
   ): Promise<void> {
-    let body: Record<string, unknown>;
-    if (current) {
-      const updated = { ...current, ...changes };
-      const categoryId = this.mapCategory(updated.category);
-      this.assertPublishDetails(categoryId);
-      body = this.buildAdvertPayload(updated, categoryId);
-    } else {
-      body = {};
-      if (changes.price !== undefined) {
-        body.price = {
-          value: changes.price,
-          currency: 'PLN',
-          negotiable: this.config.priceNegotiable ?? false,
-        };
-      }
-      if (changes.description !== undefined) body.description = changes.description;
-      if (changes.productName !== undefined) body.title = changes.productName;
-    }
+    const updated = { ...current, ...changes };
+    const categoryId = this.mapCategory(updated.category);
+    this.assertPublishDetails(categoryId);
+    const body = this.buildAdvertPayload(updated, categoryId);
     await this.http.request({
       method: 'PUT',
       url: `${this.baseUrl}/adverts/${externalListingId}`,

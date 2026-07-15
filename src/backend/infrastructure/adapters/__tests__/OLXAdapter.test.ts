@@ -475,7 +475,7 @@ describe('OLXAdapter', () => {
       realConfig,
     );
 
-    await adapter.updateListing('olx-1', { price: 299 });
+    await adapter.updateListing('olx-1', { price: 299 }, publishInput);
 
     expect((captured?.body as Record<string, unknown>).price).toEqual({
       value: 299,
@@ -528,7 +528,7 @@ describe('OLXAdapter', () => {
     const adapter = new OLXAdapter(http, fastOptions);
 
     await expect(
-      adapter.updateListing('olx-ok', { price: 10 }),
+      adapter.updateListing('olx-ok', { price: 10 }, publishInput),
     ).resolves.toBeUndefined();
     expect(calls).toBe(3);
   });
@@ -539,7 +539,7 @@ describe('OLXAdapter', () => {
     });
     const adapter = new OLXAdapter(http, { ...fastOptions, maxRetries: 1 });
     await expect(
-      adapter.updateListing('olx-1', { price: 10 }),
+      adapter.updateListing('olx-1', { price: 10 }, publishInput),
     ).rejects.toBeInstanceOf(MarketplaceRateLimitError);
   });
 
