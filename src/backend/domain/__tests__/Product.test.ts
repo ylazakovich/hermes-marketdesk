@@ -81,6 +81,19 @@ describe('Product status transitions (forward-only)', () => {
 });
 
 describe('Product price / description updates', () => {
+  it('updates cost price while preserving currency', () => {
+    const product = unwrap(Product.create(baseProps()));
+    expect(product.updateCostPrice(money(45)).isOk()).toBe(true);
+    expect(product.costPrice.amount).toBeCloseTo(45);
+    expect(product.costPrice.currency).toBe('PLN');
+  });
+
+  it('allows updating cost price above the current selling price as below-cost context', () => {
+    const product = unwrap(Product.create(baseProps()));
+    expect(product.updateCostPrice(money(90)).isOk()).toBe(true);
+    expect(product.costPrice.amount).toBeCloseTo(90);
+  });
+
   it('allows updating selling price below cost', () => {
     const product = unwrap(Product.create(baseProps()));
     expect(product.updateSellingPrice(money(10)).isOk()).toBe(true);

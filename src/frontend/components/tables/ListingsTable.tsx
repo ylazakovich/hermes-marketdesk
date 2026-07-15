@@ -4,7 +4,6 @@ import React from 'react';
 import {
   IconButton,
   Skeleton,
-  Stack,
   Table,
   TableBody,
   TableCell,
@@ -14,9 +13,6 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import VisibilityIcon from '@mui/icons-material/VisibilityOutlined';
-import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
-import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutlineOutlined';
 import ReplayIcon from '@mui/icons-material/Replay';
 import PublishIcon from '@mui/icons-material/Publish';
 import type { Listing } from '@shared/types';
@@ -165,28 +161,6 @@ export const ListingsTable: React.FC<ListingsTableProps> = ({
               ))}
         </TableBody>
       </Table>
-      {/* legend icons hint (kept subtle) */}
-      {!loading && (listings?.length ?? 0) > 0 && (
-        <Stack
-          direction="row"
-          spacing={2}
-          sx={{ px: 2, py: 1, color: 'text.disabled' }}
-          aria-hidden
-        >
-          <Stack direction="row" spacing={0.5} alignItems="center">
-            <VisibilityIcon fontSize="inherit" />
-            <Typography variant="caption">views</Typography>
-          </Stack>
-          <Stack direction="row" spacing={0.5} alignItems="center">
-            <FavoriteBorderIcon fontSize="inherit" />
-            <Typography variant="caption">watchers</Typography>
-          </Stack>
-          <Stack direction="row" spacing={0.5} alignItems="center">
-            <ChatBubbleOutlineIcon fontSize="inherit" />
-            <Typography variant="caption">messages</Typography>
-          </Stack>
-        </Stack>
-      )}
     </TableContainer>
   );
 };
