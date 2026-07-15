@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.6.0...hermes-marketdesk-v0.7.0) (2026-07-15)
+
+
+### ✨ Features
+
+* **olx:** preview owned advert imports ([#119](https://github.com/ylazakovich/hermes-marketdesk/issues/119)) ([6b4ac91](https://github.com/ylazakovich/hermes-marketdesk/commit/6b4ac91494610c46c171f75df72e1da0eb3327e8))
+
+
+### 🐛 Bug Fixes
+
+* **analytics:** label top listings by identity ([#122](https://github.com/ylazakovich/hermes-marketdesk/issues/122)) ([4859262](https://github.com/ylazakovich/hermes-marketdesk/commit/48592625b1757616f391cb24ba137d046bdae445))
+* **hermes:** allow dismiss without request body ([#116](https://github.com/ylazakovich/hermes-marketdesk/issues/116)) ([0317a53](https://github.com/ylazakovich/hermes-marketdesk/commit/0317a5340b77d39cf146be1dc8b489628d5cda45))
+* **listings:** remove detached metrics legend ([#123](https://github.com/ylazakovich/hermes-marketdesk/issues/123)) ([b0ca652](https://github.com/ylazakovich/hermes-marketdesk/commit/b0ca652746bbba4ea49e14913fc13fe958d48636))
+* **listings:** show product identity in listings ([#124](https://github.com/ylazakovich/hermes-marketdesk/issues/124)) ([4decc6f](https://github.com/ylazakovich/hermes-marketdesk/commit/4decc6fa411a3a2ad5911746d4722a3368e9deba))
+* **olx:** map live engagement counters ([#125](https://github.com/ylazakovich/hermes-marketdesk/issues/125)) ([7d20372](https://github.com/ylazakovich/hermes-marketdesk/commit/7d2037208aa1eaa3532df6d190351b9782389adf))
+
 ## [0.6.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.5.0...hermes-marketdesk-v0.6.0) (2026-07-15)
 
 
