@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.6.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.5.0...hermes-marketdesk-v0.6.0) (2026-07-15)
+
+
+### ✨ Features
+
+* **listings:** expose canonical marketplace links ([#111](https://github.com/ylazakovich/hermes-marketdesk/issues/111)) ([e7d086d](https://github.com/ylazakovich/hermes-marketdesk/commit/e7d086da187f9852e9294e17616c9769fe64533a))
+* **olx:** add import preview foundation ([#112](https://github.com/ylazakovich/hermes-marketdesk/issues/112)) ([83a1006](https://github.com/ylazakovich/hermes-marketdesk/commit/83a1006fa8ac91fbdf5aaaa7de78926f29b2978a))
+* **olx:** add OAuth and guarded real publishing ([#93](https://github.com/ylazakovich/hermes-marketdesk/issues/93)) ([a13125f](https://github.com/ylazakovich/hermes-marketdesk/commit/a13125fc2ce00fdb93501d9d4bcb434629ce465e))
+* **olx:** preserve unavailable engagement metrics ([#110](https://github.com/ylazakovich/hermes-marketdesk/issues/110)) ([d73402d](https://github.com/ylazakovich/hermes-marketdesk/commit/d73402de67f88a06cd2a71576802f391bdc0b4bc))
+* **olx:** reconcile remote advert statuses ([#108](https://github.com/ylazakovich/hermes-marketdesk/issues/108)) ([6a55338](https://github.com/ylazakovich/hermes-marketdesk/commit/6a55338c927a63b27a2330cc58fcfb9d143655f7))
+* **sync:** schedule marketplace sync modes safely ([#109](https://github.com/ylazakovich/hermes-marketdesk/issues/109)) ([6f06a5f](https://github.com/ylazakovich/hermes-marketdesk/commit/6f06a5f8e551778b5f1261979e453578e0598b3d))
+
+
+### 🐛 Bug Fixes
+
+* **analytics:** separate date range labels ([#104](https://github.com/ylazakovich/hermes-marketdesk/issues/104)) ([1188010](https://github.com/ylazakovich/hermes-marketdesk/commit/1188010db14ddc2cfc261baa9598d25be2ce9371))
+* **analytics:** show readable listing identity ([#105](https://github.com/ylazakovich/hermes-marketdesk/issues/105)) ([c93ad34](https://github.com/ylazakovich/hermes-marketdesk/commit/c93ad34afbbee2fda7a94ed05a5cb4b989687356))
+* **listings:** hide draft external urls ([#113](https://github.com/ylazakovich/hermes-marketdesk/issues/113)) ([3874f07](https://github.com/ylazakovich/hermes-marketdesk/commit/3874f071747cba9ddb6e8c58f9bc7781d1d2ff54))
+* **marketplaces:** clarify card status and sync settings ([#106](https://github.com/ylazakovich/hermes-marketdesk/issues/106)) ([14ad08c](https://github.com/ylazakovich/hermes-marketdesk/commit/14ad08cde92795eaa931199ec2d8d69a1ab2d4c2))
+* **olx:** use account oauth for sync jobs ([#107](https://github.com/ylazakovich/hermes-marketdesk/issues/107)) ([fbf7b86](https://github.com/ylazakovich/hermes-marketdesk/commit/fbf7b8642b8b2b584956cbdece24c1b1b75057db))
+* **pricing:** allow intentional below-cost sales ([#101](https://github.com/ylazakovich/hermes-marketdesk/issues/101)) ([c05700a](https://github.com/ylazakovich/hermes-marketdesk/commit/c05700a2a8d162f4dae52f20a65bb9ecbd7f12bb))
+* **products:** repair details editing and layout ([#102](https://github.com/ylazakovich/hermes-marketdesk/issues/102)) ([596f1ec](https://github.com/ylazakovich/hermes-marketdesk/commit/596f1ec216c1e332e81bd8de3dfca6d4eb6da10a))
+* **security:** enforce strict CORS production validation ([#86](https://github.com/ylazakovich/hermes-marketdesk/issues/86)) ([2c3bfac](https://github.com/ylazakovich/hermes-marketdesk/commit/2c3bfaca983eebedfba6fa3a65692ce10e07eb75))
+* **ui:** align primary action placement ([#103](https://github.com/ylazakovich/hermes-marketdesk/issues/103)) ([e463375](https://github.com/ylazakovich/hermes-marketdesk/commit/e463375d9b97560360eda09c94c1ef591962ebce))
+
+
+### ⚙️ CI
+
+* **release:** add emoji headings in release changelog ([#84](https://github.com/ylazakovich/hermes-marketdesk/issues/84)) ([1e5fda1](https://github.com/ylazakovich/hermes-marketdesk/commit/1e5fda1626a28dd057238b3e799ae52adafdf97e))
+
 ## [0.5.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.4.1...hermes-marketdesk-v0.5.0) (2026-07-14)
 
 
