@@ -240,6 +240,11 @@ export class Listing {
     this.touch();
   }
 
+  recordSyncStatusNote(message: string | null): void {
+    this._syncError = message;
+    this.touch();
+  }
+
   private touch(): void {
     this._updatedAt = new Date();
   }

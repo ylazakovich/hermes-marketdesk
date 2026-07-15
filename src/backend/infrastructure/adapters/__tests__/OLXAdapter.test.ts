@@ -7,7 +7,6 @@ import {
 } from '../MarketplaceHttpClient';
 import {
   MarketplaceAuthenticationError,
-  MarketplaceNotFoundError,
   MarketplaceRateLimitError,
   MarketplaceTransientError,
 } from '../MarketplaceError';
@@ -86,10 +85,61 @@ describe('OLXAdapter', () => {
     expect(synced).toEqual({
       externalListingId: '9',
       status: 'live',
+      remoteStatus: 'active',
       views: 0,
       watchers: 0,
       messages: 0,
     });
+  });
+
+  it.each<[string, string]>([
+    ['active', 'live'],
+    ['new', 'live'],
+    ['moderation', 'live'],
+    ['limited', 'live'],
+    ['expired', 'expired'],
+    ['removed', 'expired'],
+    ['deactivated', 'expired'],
+    ['rejected', 'error'],
+    ['blocked', 'error'],
+  ])('maps OLX remote status %s to local status %s', async (remoteStatus, localStatus) => {
+    const http = mockClient(() => ({
+      status: 200,
+      data: { data: { id: 9, status: remoteStatus } },
+    }));
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    const [synced] = await adapter.sync(['olx-9']);
+
+    expect(synced).toMatchObject({
+      externalListingId: '9',
+      status: localStatus,
+      remoteStatus,
+    });
+  });
+
+  it('returns a missing sync record for OLX 404 without hiding auth or transport failures', async () => {
+    const http = mockClient((config) => {
+      if (config.url.endsWith('/adverts/missing')) throw new HttpError(404, 'not found');
+      if (config.url.endsWith('/adverts/rate-limited')) throw new HttpError(429, 'rate limited');
+      return { status: 200, data: { data: { id: 'active', status: 'active' } } };
+    });
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    await expect(adapter.sync(['missing'])).resolves.toEqual([
+      {
+        externalListingId: 'missing',
+        status: 'expired',
+        remoteStatus: 'missing',
+        missing: true,
+        views: 0,
+        watchers: 0,
+        messages: 0,
+      },
+    ]);
+    await expect(adapter.sync(['rate-limited'])).rejects.toBeInstanceOf(
+      MarketplaceRateLimitError,
+    );
   });
 
   it('fails closed before a live publish when required OLX details are missing', async () => {
@@ -123,16 +173,14 @@ describe('OLXAdapter', () => {
     );
   });
 
-  it('normalizes 404 to MarketplaceNotFoundError', async () => {
+  it('returns null when fetching a missing OLX advert', async () => {
     const adapter = new OLXAdapter(
       mockClient(() => {
         throw new HttpError(404, 'missing');
       }),
       fastOptions,
     );
-    await expect(adapter.fetchListing('nope')).rejects.toBeInstanceOf(
-      MarketplaceNotFoundError,
-    );
+    await expect(adapter.fetchListing('nope')).resolves.toBeNull();
   });
 
   it('preserves sanitized provider validation details for a 400 response', async () => {

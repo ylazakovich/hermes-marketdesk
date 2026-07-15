@@ -22,6 +22,8 @@ export interface PublishResult {
 export interface SyncedListing {
   externalListingId: string;
   status: ListingStatus;
+  remoteStatus?: string;
+  missing?: boolean;
   views: number;
   watchers: number;
   messages: number;

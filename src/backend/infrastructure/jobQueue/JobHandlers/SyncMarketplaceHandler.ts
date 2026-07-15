@@ -14,6 +14,7 @@ import type { Listing } from '../../../domain/entities/Listing';
 import type { Marketplace } from '../../../domain/entities/Marketplace';
 import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
 import { InvalidStateError } from '../../../domain/shared/DomainError';
+import type { DomainEvent, IEventPublisher } from '../../../domain/ports/IEventPublisher';
 
 // Structural port for resolving an adapter by marketplace key. Satisfied by the
 // MarketplaceAdapterFactory without importing it here.
@@ -42,6 +43,7 @@ export interface SyncMarketplaceHandlerDeps {
   marketplaceStore?: MarketplaceSyncStore;
   accessTokens?: SyncMarketplaceAccessTokenProvider;
   authenticatedHttpClient?: (accessToken: string) => MarketplaceHttpClient;
+  eventPublisher?: IEventPublisher;
 }
 
 export interface SyncMarketplaceJobData {
@@ -102,11 +104,9 @@ export class SyncMarketplaceHandler {
     return this.adapters.create(data.marketplaceKey);
   }
 
-  // Write fetched engagement stats onto the matching listing aggregates.
-  // NOTE (deferred): listing STATUS reconciliation from the synced status
-  // (e.g. remote 'expired'/'error' -> local expire()/markError()) is not applied
-  // here yet — only the engagement counters + lastSyncAt are persisted. Status
-  // transitions are handled by the dedicated publish/relist/expire flows.
+  // Write fetched engagement stats and reconcile safe remote lifecycle states.
+  // Transient/unknown provider states are recorded as sync notes instead of
+  // forcing destructive local transitions.
   private async persistStats(
     marketplaceId: string,
     synced: SyncedListing[],
@@ -131,11 +131,100 @@ export class SyncMarketplaceHandler {
         watchers: s.watchers,
         messages: s.messages,
       });
+      await this.reconcileStatus(listing, s);
       updated.push(listing);
     }
 
     if (updated.length > 0) await store.saveAll(updated);
     return updated.length;
+  }
+
+  private async reconcileStatus(listing: Listing, synced: SyncedListing): Promise<void> {
+    const before = listing.status;
+    const remoteStatus = (synced.remoteStatus ?? synced.status).toLowerCase();
+    const transition = this.transitionForRemoteStatus(remoteStatus, synced);
+
+    if (transition === 'observe') {
+      listing.recordSyncStatusNote(`Remote status observed: ${remoteStatus}`);
+      return;
+    }
+    if (transition === 'unknown') {
+      listing.recordSyncStatusNote(`Unknown remote status observed: ${remoteStatus}`);
+      return;
+    }
+
+    let result;
+    if (transition === 'live') {
+      listing.recordSyncStatusNote(null);
+      if (listing.status !== 'live') result = listing.relist();
+    } else if (transition === 'expired') {
+      if (listing.status !== 'expired') result = listing.expire();
+      listing.recordSyncStatusNote(
+        synced.missing
+          ? 'Remote advert missing during sync'
+          : `Remote advert is ${remoteStatus}`,
+      );
+    } else if (transition === 'error') {
+      result = listing.markError(`Remote advert is ${remoteStatus}`);
+    }
+
+    if (result?.isErr()) {
+      listing.recordSyncStatusNote(
+        `Remote status ${remoteStatus} could not be applied from local status ${before}: ${result.error.message}`,
+      );
+      return;
+    }
+    if (before !== listing.status) {
+      await this.publishStatusChanged(listing, before, remoteStatus);
+    }
+  }
+
+  private transitionForRemoteStatus(
+    remoteStatus: string,
+    synced: SyncedListing,
+  ): 'live' | 'expired' | 'error' | 'observe' | 'unknown' {
+    if (synced.missing || remoteStatus === 'missing') return 'expired';
+    if (['active', 'activated', 'live', 'published'].includes(remoteStatus)) return 'live';
+    if (['new', 'moderation', 'pending', 'limited'].includes(remoteStatus)) return 'observe';
+    if (['expired', 'removed', 'deactivated', 'deleted', 'closed'].includes(remoteStatus)) {
+      return 'expired';
+    }
+    if (['rejected', 'blocked', 'error'].includes(remoteStatus)) return 'error';
+    if (synced.remoteStatus === undefined) {
+      switch (synced.status) {
+        case 'live':
+          return 'live';
+        case 'expired':
+          return 'expired';
+        case 'error':
+          return 'error';
+        case 'draft':
+          return 'observe';
+      }
+    }
+    return 'unknown';
+  }
+
+  private async publishStatusChanged(
+    listing: Listing,
+    previousStatus: string,
+    remoteStatus: string,
+  ): Promise<void> {
+    const event: DomainEvent = {
+      type: 'listing.remote_status_reconciled',
+      aggregateType: 'Listing',
+      aggregateId: listing.id,
+      payload: {
+        listingId: listing.id,
+        marketplaceId: listing.marketplaceId,
+        marketplaceListingId: listing.marketplaceListingId,
+        previousStatus,
+        status: listing.status,
+        remoteStatus,
+      },
+      occurredAt: new Date(),
+    };
+    await this.deps.eventPublisher?.publish(event);
   }
 
   private async recordMarketplaceSuccess(marketplaceId: string): Promise<boolean> {
