@@ -19,7 +19,8 @@ import type { MarketplaceKey } from '../../../../shared/types';
 import { Listing } from '../../../domain/entities/Listing';
 import { Marketplace } from '../../../domain/entities/Marketplace';
 import { Ok, Err } from '../../../domain/shared/Result';
-import { NotFoundError, ServiceUnavailableError } from '../../../domain/shared/DomainError';
+import { NotFoundError, ServiceUnavailableError, InvalidStateError } from '../../../domain/shared/DomainError';
+import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
 import { unwrap, money } from '../../../domain/testkit/support';
 
 function fakeAdapter(overrides: Partial<IMarketplaceAdapter> = {}): IMarketplaceAdapter {
@@ -123,6 +124,88 @@ describe('SyncMarketplaceHandler', () => {
     });
   });
 
+  it('uses the marketplace account access token for OLX sync jobs', async () => {
+    const synced: SyncedListing[] = [
+      { externalListingId: 'olx-1', status: 'live', views: 5, watchers: 1, messages: 0 },
+    ];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const create = jest.fn(() => adapter);
+    const tokenProvider = {
+      getValidAccessToken: jest.fn(async () => 'workspace-access-token'),
+    };
+    const authenticatedClient: MarketplaceHttpClient = { request: jest.fn() };
+    const clientFactory = jest.fn(() => authenticatedClient);
+    const handler = new SyncMarketplaceHandler(
+      { create },
+      { accessTokens: tokenProvider, authenticatedHttpClient: clientFactory }
+    );
+
+    await handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      externalListingIds: ['olx-1'],
+    });
+
+    expect(tokenProvider.getValidAccessToken).toHaveBeenCalledWith('m-1');
+    expect(clientFactory).toHaveBeenCalledWith('workspace-access-token');
+    expect(create).toHaveBeenCalledWith('olx', authenticatedClient);
+    expect(adapter.sync).toHaveBeenCalledWith(['olx-1']);
+  });
+
+  it('keeps non-OLX sync on the existing generic adapter path', async () => {
+    const adapter = fakeAdapter({ sync: jest.fn(async () => []) });
+    const create = jest.fn(() => adapter);
+    const tokenProvider = {
+      getValidAccessToken: jest.fn(async () => 'unused-token'),
+    };
+    const clientFactory = jest.fn(() => ({ request: jest.fn() }));
+    const handler = new SyncMarketplaceHandler(
+      { create },
+      { accessTokens: tokenProvider, authenticatedHttpClient: clientFactory }
+    );
+
+    await handler.handle({
+      marketplaceKey: 'allegro',
+      marketplaceId: 'm-2',
+      externalListingIds: ['allegro-1'],
+    });
+
+    expect(tokenProvider.getValidAccessToken).not.toHaveBeenCalled();
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith('allegro');
+  });
+
+  it('records marketplace error when OLX credentials are unavailable', async () => {
+    const create = jest.fn(() => fakeAdapter());
+    const tokenProvider = {
+      getValidAccessToken: jest.fn(async () => {
+        throw new InvalidStateError('OLX account is not connected');
+      }),
+    };
+    const marketplace = unwrap(
+      Marketplace.create({ id: 'm-1', workspaceId: 'w-1', key: 'olx', name: 'OLX' })
+    );
+    const marketplaceStore = {
+      findById: jest.fn(async () => marketplace),
+      save: jest.fn(async () => undefined),
+    };
+    const handler = new SyncMarketplaceHandler(
+      { create },
+      {
+        marketplaceStore,
+        accessTokens: tokenProvider,
+        authenticatedHttpClient: () => ({ request: jest.fn() }),
+      }
+    );
+
+    await expect(
+      handler.handle({ marketplaceKey: 'olx', marketplaceId: 'm-1', externalListingIds: [] })
+    ).rejects.toThrow('OLX account is not connected');
+    expect(create).not.toHaveBeenCalled();
+    expect(marketplace.errorCount).toBe(1);
+    expect(marketplaceStore.save).toHaveBeenCalled();
+  });
+
   it('persists fetched stats onto listings and records the marketplace sync (C5)', async () => {
     const synced: SyncedListing[] = [
       {
@@ -185,6 +268,244 @@ describe('SyncMarketplaceHandler', () => {
     expect(marketplaceStore.save).toHaveBeenCalled();
     expect(marketplace.errorCount).toBe(0); // reset on success
     expect(marketplace.lastSyncAt).not.toBeNull();
+  });
+
+  it('reconciles terminal remote lifecycle statuses and emits one transition event', async () => {
+    const synced: SyncedListing[] = [
+      {
+        externalListingId: 'ext-expired',
+        status: 'expired',
+        remoteStatus: 'removed',
+        views: 9,
+        watchers: 1,
+        messages: 0,
+      },
+      {
+        externalListingId: 'ext-rejected',
+        status: 'error',
+        remoteStatus: 'rejected',
+        views: 0,
+        watchers: 0,
+        messages: 0,
+      },
+    ];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const { resolver } = resolverFor(adapter);
+    const expired = unwrap(
+      Listing.create({
+        id: 'l-expired',
+        productId: 'p-1',
+        marketplaceId: 'm-1',
+        price: money(50),
+        status: 'live',
+        marketplaceListingId: 'ext-expired',
+        publishedAt: new Date(),
+      })
+    );
+    const rejected = unwrap(
+      Listing.create({
+        id: 'l-rejected',
+        productId: 'p-2',
+        marketplaceId: 'm-1',
+        price: money(50),
+        status: 'live',
+        marketplaceListingId: 'ext-rejected',
+        publishedAt: new Date(),
+      })
+    );
+    const events: DomainEvent[] = [];
+    const handler = new SyncMarketplaceHandler(resolver, {
+      listingStore: {
+        findByMarketplace: jest.fn(async () => [expired, rejected]),
+        saveAll: jest.fn(async () => undefined),
+      },
+      eventPublisher: { publish: jest.fn(async (event) => events.push(event)) },
+    });
+
+    await handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      externalListingIds: ['ext-expired', 'ext-rejected'],
+    });
+
+    expect(expired.status).toBe('expired');
+    expect(expired.syncError).toBe('Remote advert is removed');
+    expect(rejected.status).toBe('error');
+    expect(rejected.syncError).toBe('Remote advert is rejected');
+    expect(events.map((event) => event.type)).toEqual([
+      'listing.remote_status_reconciled',
+      'listing.remote_status_reconciled',
+    ]);
+  });
+
+  it('observes transient and unknown remote statuses without destructive transitions', async () => {
+    const synced: SyncedListing[] = [
+      {
+        externalListingId: 'ext-pending',
+        status: 'live',
+        remoteStatus: 'pending',
+        views: 1,
+        watchers: 0,
+        messages: 0,
+      },
+      {
+        externalListingId: 'ext-mystery',
+        status: 'draft',
+        remoteStatus: 'surprise_state',
+        views: 2,
+        watchers: 0,
+        messages: 0,
+      },
+    ];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const { resolver } = resolverFor(adapter);
+    const pending = unwrap(
+      Listing.create({
+        id: 'l-pending',
+        productId: 'p-1',
+        marketplaceId: 'm-1',
+        price: money(50),
+        status: 'live',
+        marketplaceListingId: 'ext-pending',
+        publishedAt: new Date(),
+      })
+    );
+    const unknown = unwrap(
+      Listing.create({
+        id: 'l-unknown',
+        productId: 'p-2',
+        marketplaceId: 'm-1',
+        price: money(50),
+        status: 'live',
+        marketplaceListingId: 'ext-mystery',
+        publishedAt: new Date(),
+      })
+    );
+    const publish = jest.fn(async () => undefined);
+    const handler = new SyncMarketplaceHandler(resolver, {
+      listingStore: {
+        findByMarketplace: jest.fn(async () => [pending, unknown]),
+        saveAll: jest.fn(async () => undefined),
+      },
+      eventPublisher: { publish },
+    });
+
+    await handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      externalListingIds: ['ext-pending', 'ext-mystery'],
+    });
+
+    expect(pending.status).toBe('live');
+    expect(pending.syncError).toBe('Remote status observed: pending');
+    expect(unknown.status).toBe('live');
+    expect(unknown.syncError).toBe('Unknown remote status observed: surprise_state');
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('treats repeated reconciled statuses as idempotent', async () => {
+    const synced: SyncedListing[] = [
+      {
+        externalListingId: 'ext-expired',
+        status: 'expired',
+        remoteStatus: 'expired',
+        views: 9,
+        watchers: 1,
+        messages: 0,
+      },
+    ];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const { resolver } = resolverFor(adapter);
+    const listing = unwrap(
+      Listing.create({
+        id: 'l-expired',
+        productId: 'p-1',
+        marketplaceId: 'm-1',
+        price: money(50),
+        status: 'expired',
+        marketplaceListingId: 'ext-expired',
+        publishedAt: new Date(),
+      })
+    );
+    const publish = jest.fn(async () => undefined);
+    const handler = new SyncMarketplaceHandler(resolver, {
+      listingStore: {
+        findByMarketplace: jest.fn(async () => [listing]),
+        saveAll: jest.fn(async () => undefined),
+      },
+      eventPublisher: { publish },
+    });
+
+    await handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      externalListingIds: ['ext-expired'],
+    });
+
+    expect(listing.status).toBe('expired');
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('resolves current marketplace listing ids when a scheduled sync job has an empty payload', async () => {
+    const synced: SyncedListing[] = [
+      { externalListingId: 'ext-1', status: 'live', views: 7, watchers: 1, messages: 0 },
+    ];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const { resolver } = resolverFor(adapter);
+    const listing = unwrap(
+      Listing.create({
+        id: 'l-1',
+        productId: 'p-1',
+        marketplaceId: 'm-1',
+        price: money(50),
+        status: 'live',
+        marketplaceListingId: 'ext-1',
+        publishedAt: new Date(),
+      })
+    );
+    const handler = new SyncMarketplaceHandler(resolver, {
+      listingStore: {
+        findByMarketplace: jest.fn(async () => [listing]),
+        saveAll: jest.fn(async () => undefined),
+      },
+    });
+
+    await handler.handle({ marketplaceKey: 'olx', marketplaceId: 'm-1', externalListingIds: [] });
+
+    expect(adapter.sync).toHaveBeenCalledWith(['ext-1']);
+  });
+
+  it('preserves existing engagement counters when OLX reports a metric as unavailable', async () => {
+    const synced: SyncedListing[] = [
+      { externalListingId: 'ext-1', status: 'live', views: null, watchers: 4, messages: null },
+    ];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const { resolver } = resolverFor(adapter);
+    const listing = unwrap(
+      Listing.create({
+        id: 'l-1',
+        productId: 'p-1',
+        marketplaceId: 'm-1',
+        price: money(50),
+        status: 'live',
+        marketplaceListingId: 'ext-1',
+        publishedAt: new Date(),
+      })
+    );
+    listing.recordSyncStats({ views: 10, watchers: 2, messages: 1 });
+    const handler = new SyncMarketplaceHandler(resolver, {
+      listingStore: {
+        findByMarketplace: jest.fn(async () => [listing]),
+        saveAll: jest.fn(async () => undefined),
+      },
+    });
+
+    await handler.handle({ marketplaceKey: 'olx', marketplaceId: 'm-1', externalListingIds: ['ext-1'] });
+
+    expect(listing.views).toBe(10);
+    expect(listing.watchers).toBe(4);
+    expect(listing.messages).toBe(1);
+    expect(listing.lastSyncAt).not.toBeNull();
   });
 
   it('records a marketplace sync error and rethrows when the adapter fails (C5)', async () => {

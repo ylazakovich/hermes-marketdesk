@@ -6,6 +6,7 @@ import { BaseMarketplaceAdapter, type MarketplaceAdapterOptions } from './BaseMa
 import {
   type MarketplaceHttpClient,
   StubMarketplaceHttpClient,
+  HttpError,
   type StubResponder,
   type HttpResponse,
 } from './MarketplaceHttpClient';
@@ -36,6 +37,28 @@ const OLX_CONDITION_MAP: Record<string, string> = {
   refurbished: 'used',
 };
 
+// Observed/supported OLX Partner advert lifecycle vocabulary. Transient states
+// remain non-destructive; unknown values are surfaced to the sync handler via
+// remoteStatus and must not force local state changes.
+const OLX_STATUS_TO_LOCAL: Record<string, SyncedListing['status']> = {
+  active: 'live',
+  activated: 'live',
+  live: 'live',
+  published: 'live',
+  new: 'live',
+  moderation: 'live',
+  pending: 'live',
+  limited: 'live',
+  expired: 'expired',
+  removed: 'expired',
+  deactivated: 'expired',
+  deleted: 'expired',
+  closed: 'expired',
+  rejected: 'error',
+  blocked: 'error',
+  error: 'error',
+};
+
 export interface OlxAdapterConfig {
   baseUrl?: string;
   requirePublishDetails?: boolean;
@@ -58,7 +81,7 @@ interface OlxAdvertResponse {
   url?: string | null;
   public_url?: string | null;
   external_url?: string | null;
-  metrics?: { views?: number; favorites?: number; messages?: number };
+  metrics?: { views?: unknown; favorites?: unknown; messages?: unknown };
 }
 
 interface OlxResponseEnvelope<T> {
@@ -165,27 +188,54 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
 
   protected async doSync(externalListingIds: string[]): Promise<SyncedListing[]> {
     const responses = await Promise.all(
-      externalListingIds.map((id) =>
-        this.http.request<OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>>({
-          method: 'GET',
-          url: `${this.baseUrl}/adverts/${id}`,
-        }),
-      ),
+      externalListingIds.map(async (id) => {
+        try {
+          const res = await this.http.request<
+            OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>
+          >({
+            method: 'GET',
+            url: `${this.baseUrl}/adverts/${id}`,
+          });
+          return this.toSyncedListing(this.unwrapAdvert(res.data));
+        } catch (error) {
+          if (error instanceof HttpError && error.status === 404) {
+            return this.missingSyncedListing(id);
+          }
+          throw error;
+        }
+      }),
     );
-    return responses.map((res) => this.toSyncedListing(this.unwrapAdvert(res.data)));
+    return responses;
   }
 
   protected async doFetchListing(
     externalListingId: string,
   ): Promise<SyncedListing | null> {
-    const res = await this.http.request<
-      OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse> | null
-    >({
-      method: 'GET',
-      url: `${this.baseUrl}/adverts/${externalListingId}`,
-    });
-    if (!res.data) return null;
-    return this.toSyncedListing(this.unwrapAdvert(res.data));
+    try {
+      const res = await this.http.request<
+        OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse> | null
+      >({
+        method: 'GET',
+        url: `${this.baseUrl}/adverts/${externalListingId}`,
+      });
+      if (!res.data) return null;
+      return this.toSyncedListing(this.unwrapAdvert(res.data));
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  private missingSyncedListing(externalListingId: string): SyncedListing {
+    return {
+      externalListingId,
+      status: 'expired',
+      remoteStatus: 'missing',
+      missing: true,
+      views: 0,
+      watchers: 0,
+      messages: 0,
+    };
   }
 
   private unwrapAdvert(
@@ -195,13 +245,15 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
   }
 
   private toSyncedListing(data: OlxAdvertResponse): SyncedListing {
+    const remoteStatus = String(data.status ?? 'unknown').toLowerCase();
     return {
       externalListingId: String(data.id),
       externalUrl: this.extractPublicUrl(data),
-      status: this.mapStatus(data.status),
-      views: data.metrics?.views ?? 0,
-      watchers: data.metrics?.favorites ?? 0,
-      messages: data.metrics?.messages ?? 0,
+      status: OLX_STATUS_TO_LOCAL[remoteStatus] ?? 'draft',
+      remoteStatus,
+      views: this.parseCounter(data.metrics?.views),
+      watchers: this.parseCounter(data.metrics?.favorites),
+      messages: this.parseCounter(data.metrics?.messages),
     };
   }
 
@@ -218,6 +270,13 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       }
     }
     return null;
+  }
+
+  private parseCounter(value: unknown): number | null {
+    if (value === undefined || value === null) return null;
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return Math.trunc(parsed);
   }
 
   private assertPublishDetails(categoryId: number | undefined): asserts categoryId is number {
