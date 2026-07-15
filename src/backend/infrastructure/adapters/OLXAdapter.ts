@@ -88,6 +88,7 @@ interface OlxAdvertResponse {
   external_url?: string | null;
   price?: { value?: number | string; currency?: string } | number | string | null;
   photos?: Array<{ url?: string | null }>;
+  images?: Array<{ url?: string | null }>;
   updated_at?: string | null;
   metrics?: { views?: unknown; favorites?: unknown; favourites?: unknown; watchers?: unknown; messages?: unknown };
   statistics?: Record<string, unknown>;
@@ -99,6 +100,12 @@ interface OlxAdvertListResponse {
   data: OlxAdvertResponse[];
   links?: { next?: string | null };
   meta?: { last_page?: number };
+}
+
+interface OlxAdvertStatisticsResponse extends Record<string, unknown> {
+  advert_views?: unknown;
+  phone_views?: unknown;
+  users_observing?: unknown;
 }
 
 interface OlxResponseEnvelope<T> {
@@ -213,7 +220,10 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
             method: 'GET',
             url: `${this.baseUrl}/adverts/${id}`,
           });
-          return this.toSyncedListing(this.unwrapAdvert(res.data));
+          const advert = this.unwrapAdvert(res.data);
+          return this.toSyncedListing(
+            this.withStatistics(advert, await this.fetchAdvertStatistics(id))
+          );
         } catch (error) {
           if (error instanceof HttpError && error.status === 404) {
             return this.missingSyncedListing(id);
@@ -236,7 +246,10 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
         url: `${this.baseUrl}/adverts/${externalListingId}`,
       });
       if (!res.data) return null;
-      return this.toSyncedListing(this.unwrapAdvert(res.data));
+      const advert = this.unwrapAdvert(res.data);
+      return this.toSyncedListing(
+        this.withStatistics(advert, await this.fetchAdvertStatistics(externalListingId))
+      );
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) return null;
       throw error;
@@ -268,7 +281,15 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
         url: `${this.baseUrl}/adverts`,
         query: { page, limit: pageSize, status },
       });
-      imported.push(...res.data.data.map((advert) => this.toImportedListing(advert)));
+      imported.push(
+        ...(await Promise.all(
+          res.data.data.map(async (advert) =>
+            this.toImportedListing(
+              this.withStatistics(advert, await this.fetchAdvertStatistics(String(advert.id)))
+            )
+          )
+        ))
+      );
       const lastPage = res.data.meta?.last_page;
       if (lastPage !== undefined ? page >= lastPage : !res.data.links?.next) break;
       page += 1;
@@ -280,6 +301,32 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     response: OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>,
   ): OlxAdvertResponse {
     return 'data' in response ? response.data : response;
+  }
+
+  private async fetchAdvertStatistics(
+    externalListingId: string,
+  ): Promise<OlxAdvertStatisticsResponse | null> {
+    try {
+      const res = await this.http.request<
+        OlxAdvertStatisticsResponse | OlxResponseEnvelope<OlxAdvertStatisticsResponse>
+      >({
+        method: 'GET',
+        url: `${this.baseUrl}/adverts/${externalListingId}/statistics`,
+      });
+      return ('data' in res.data ? res.data.data : res.data) as OlxAdvertStatisticsResponse;
+    } catch (error) {
+      if (error instanceof HttpError && (error.status === 404 || error.status === 403)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private withStatistics(
+    advert: OlxAdvertResponse,
+    statistics: OlxAdvertStatisticsResponse | null,
+  ): OlxAdvertResponse {
+    return statistics ? { ...advert, statistics } : advert;
   }
 
   private toSyncedListing(data: OlxAdvertResponse): SyncedListing {
@@ -310,7 +357,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       status: OLX_STATUS_TO_LOCAL[String(data.status ?? 'unknown').toLowerCase()] ?? 'draft',
       remoteStatus: data.status,
       category: typeof data.category === 'string' ? data.category : data.category?.name ?? null,
-      imageUrls: (data.photos ?? []).flatMap((photo) => (photo.url ? [photo.url] : [])),
+      imageUrls: this.extractImageUrls(data),
       remoteUpdatedAt: data.updated_at ? new Date(data.updated_at) : null,
       metrics: {
         views: views ?? undefined,
@@ -354,6 +401,12 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     };
   }
 
+  private extractImageUrls(data: OlxAdvertResponse): string[] {
+    return [...(data.photos ?? []), ...(data.images ?? [])].flatMap((image) =>
+      image.url ? [image.url] : []
+    );
+  }
+
   private extractCounter(data: OlxAdvertResponse, keys: string[]): number | null {
     for (const source of [data.metrics, data.statistics, data.stats, data.counters, data]) {
       if (!source) continue;
@@ -380,6 +433,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       'favorites_count',
       'favourites_count',
       'observed_count',
+      'users_observing',
     ]);
   }
 
@@ -390,6 +444,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       'messages_count',
       'contacts',
       'contact_count',
+      'phone_views',
       'replies',
       'leads',
     ]);
