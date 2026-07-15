@@ -484,6 +484,40 @@ describe('OLXAdapter', () => {
     });
   });
 
+  it('sends the complete OLX advert payload when updating one field', async () => {
+    let captured: HttpRequestConfig | undefined;
+    const adapter = new OLXAdapter(
+      mockClient((config) => {
+        captured = config;
+        return { status: 204, data: {} };
+      }),
+      fastOptions,
+      realConfig,
+    );
+
+    await adapter.updateListing(
+      'olx-1',
+      { productName: 'Improved Camera Title' },
+      publishInput,
+    );
+
+    expect(captured?.method).toBe('PUT');
+    expect(captured?.body).toEqual({
+      title: 'Improved Camera Title',
+      description: publishInput.description,
+      category_id: 99,
+      advertiser_type: 'private',
+      price: { value: 349.99, currency: 'PLN', negotiable: true },
+      images: [{ url: 'https://img/1.jpg' }, { url: 'https://img/2.jpg' }],
+      location: { city_id: 123, district_id: 456 },
+      contact: { name: 'Seller', phone: '000000000' },
+      attributes: [
+        { code: 'state', value: 'used' },
+        { code: 'delivery', value: 'inpost-s' },
+      ],
+    });
+  });
+
   it('retries retryable rate-limit failures then succeeds (idempotent updateListing)', async () => {
     let calls = 0;
     const http = mockClient(() => {

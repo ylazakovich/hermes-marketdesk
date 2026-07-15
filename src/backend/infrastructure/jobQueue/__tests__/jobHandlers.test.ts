@@ -647,7 +647,11 @@ describe('PublishListingHandler', () => {
     expect(tokenProvider.getValidAccessToken).toHaveBeenCalledWith('m-1');
     expect(clientFactory).toHaveBeenCalledWith('workspace-access-token');
     expect(create).toHaveBeenCalledWith('olx', authenticatedClient);
-    expect(updateListing).toHaveBeenCalledWith('olx-123', { productName: 'Better Widget', price: 44 });
+    expect(updateListing).toHaveBeenCalledWith(
+      'olx-123',
+      { productName: 'Better Widget', price: 44 },
+      input
+    );
     expect(result).toMatchObject({ listingId: 'l-oauth', finalized: true });
     expect(result.result.externalListingId).toBe('olx-123');
   });

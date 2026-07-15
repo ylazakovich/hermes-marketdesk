@@ -199,7 +199,8 @@ export class PublishListingHandler {
 
       await adapter.updateListing(
         state.externalListingId,
-        data.changes
+        data.changes,
+        data.input
       );
 
       return {
