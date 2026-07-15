@@ -18,13 +18,33 @@ export interface PublishResult {
   externalListingId: string;
   publishedAt: Date;
 }
-
 export interface SyncedListing {
   externalListingId: string;
+  externalUrl?: string | null;
   status: ListingStatus;
   views: number;
   watchers: number;
   messages: number;
+}
+
+export interface ImportedMarketplaceListing {
+  externalListingId: string;
+  externalUrl?: string | null;
+  title: string;
+  description?: string | null;
+  price?: number | null;
+  currency?: string | null;
+  status: ListingStatus;
+  remoteStatus?: string | null;
+  category?: string | null;
+  imageUrls: string[];
+  remoteUpdatedAt?: Date | null;
+  metrics?: { views?: number; watchers?: number; messages?: number };
+}
+
+export interface ImportDiscoveryOptions {
+  pageSize?: number;
+  statuses?: string[];
 }
 
 export interface IMarketplaceAdapter {
@@ -47,4 +67,7 @@ export interface IMarketplaceAdapter {
 
   // Fetch a single listing's current state.
   fetchListing(externalListingId: string): Promise<SyncedListing | null>;
+
+  // Read-only discovery of adverts owned by the connected marketplace account.
+  listOwnedListings(options?: ImportDiscoveryOptions): Promise<ImportedMarketplaceListing[]>;
 }
