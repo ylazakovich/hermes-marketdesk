@@ -36,6 +36,7 @@ async function withPoolTransaction<T>(
   callback: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
+  let releaseError: Error | undefined;
   try {
     await client.query('BEGIN');
     const result = await callback(client);
@@ -44,12 +45,13 @@ async function withPoolTransaction<T>(
   } catch (error) {
     try {
       await client.query('ROLLBACK');
-    } catch {
+    } catch (rollbackError) {
       // Preserve the original transaction failure; rollback failure is secondary.
+      releaseError = rollbackError instanceof Error ? rollbackError : new Error('Transaction rollback failed');
     }
     throw error;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 }
 
