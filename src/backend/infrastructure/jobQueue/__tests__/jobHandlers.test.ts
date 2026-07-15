@@ -657,7 +657,6 @@ describe('PublishListingHandler', () => {
       operationId: 'op-update',
       mode: 'update',
       listingUpdatedAt: '2026-07-15T11:00:00.000Z',
-      productUpdatedAt: '2026-07-15T12:00:00.000Z',
       marketplaceKey: 'olx',
       marketplaceId: 'm-1',
       listingId: 'l-oauth',

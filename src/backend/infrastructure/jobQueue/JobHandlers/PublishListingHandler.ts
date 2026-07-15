@@ -221,12 +221,14 @@ export class PublishListingHandler {
         throw new InvalidStateError('Update handler is missing the durable operation store');
       }
       const listingGeneration = new Date(data.listingUpdatedAt ?? '');
-      const productGeneration = new Date(data.productUpdatedAt);
+      const productGeneration = data.productUpdatedAt
+        ? new Date(data.productUpdatedAt)
+        : listingGeneration;
       if (
         !Number.isFinite(listingGeneration.getTime()) ||
-        !Number.isFinite(productGeneration.getTime())
+        (data.productUpdatedAt && !Number.isFinite(productGeneration.getTime()))
       ) {
-        throw new InvalidStateError('Update job is missing a valid listing/product generation');
+        throw new InvalidStateError('Update job has an invalid listing/product generation');
       }
       const updateGeneration = new Date(
         Math.max(listingGeneration.getTime(), productGeneration.getTime())
