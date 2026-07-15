@@ -50,13 +50,17 @@ describe('OLXAdapter', () => {
     let captured: HttpRequestConfig | undefined;
     const http = mockClient((config) => {
       captured = config;
-      return { status: 201, data: { data: { id: 123, status: 'active' } } };
+      return {
+        status: 201,
+        data: { data: { id: 123, status: 'active', url: 'https://www.olx.pl/d/oferta/camera-123' } },
+      };
     });
     const adapter = new OLXAdapter(http, fastOptions, realConfig);
 
     const result = await adapter.publish(publishInput);
 
     expect(result.externalListingId).toBe('123');
+    expect(result.externalUrl).toBe('https://www.olx.pl/d/oferta/camera-123');
     expect(result.publishedAt).toBeInstanceOf(Date);
     expect(captured?.method).toBe('POST');
     expect(captured?.url).toBe('https://www.olx.pl/api/partner/adverts');
@@ -77,7 +81,7 @@ describe('OLXAdapter', () => {
   it('maps a synced OLX ad to the domain SyncedListing shape', async () => {
     const http = mockClient(() => ({
       status: 200,
-      data: { data: { id: 9, status: 'active' } },
+      data: { data: { id: 9, status: 'active', public_url: 'https://www.olx.pl/d/oferta/olx-9' } },
     }));
     const adapter = new OLXAdapter(http, fastOptions);
 
@@ -85,11 +89,25 @@ describe('OLXAdapter', () => {
 
     expect(synced).toEqual({
       externalListingId: '9',
+      externalUrl: 'https://www.olx.pl/d/oferta/olx-9',
       status: 'live',
       views: 0,
       watchers: 0,
       messages: 0,
     });
+  });
+
+  it('rejects unsafe external URLs from OLX responses instead of guessing links', async () => {
+    const http = mockClient(() => ({
+      status: 200,
+      data: { data: { id: 9, status: 'active', url: 'http://evil.test/olx-9' } },
+    }));
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    const [synced] = await adapter.sync(['olx-9']);
+
+    expect(synced.externalListingId).toBe('9');
+    expect(synced.externalUrl).toBeNull();
   });
 
   it('fails closed before a live publish when required OLX details are missing', async () => {

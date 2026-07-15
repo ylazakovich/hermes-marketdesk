@@ -22,6 +22,7 @@ export class ListingService {
   async publishListing(
     listingId: string,
     externalListingId: string,
+    externalUrl: string | null = null,
     publishedAt: Date = new Date(),
     expiresAt: Date | null = null,
   ): Promise<Result<Listing>> {
@@ -42,6 +43,7 @@ export class ListingService {
       product,
       marketplace,
       externalListingId,
+      externalUrl,
       publishedAt,
       expiresAt,
     );
@@ -53,6 +55,7 @@ export class ListingService {
       productId: listing.productId,
       marketplaceId: listing.marketplaceId,
       externalListingId,
+      externalUrl,
     });
 
     return Ok(listing);

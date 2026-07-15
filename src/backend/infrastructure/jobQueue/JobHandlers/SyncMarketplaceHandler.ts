@@ -110,6 +110,9 @@ export class SyncMarketplaceHandler {
         watchers: s.watchers,
         messages: s.messages,
       });
+      if (s.externalUrl !== undefined) {
+        listing.recordExternalUrl(s.externalUrl);
+      }
       updated.push(listing);
     }
 

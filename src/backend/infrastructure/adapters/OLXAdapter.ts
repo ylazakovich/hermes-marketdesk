@@ -55,6 +55,9 @@ export interface OlxAdapterConfig {
 interface OlxAdvertResponse {
   id: string | number;
   status: string;
+  url?: string | null;
+  public_url?: string | null;
+  external_url?: string | null;
   metrics?: { views?: number; favorites?: number; messages?: number };
 }
 
@@ -127,6 +130,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     const advert = this.unwrapAdvert(res.data);
     return {
       externalListingId: String(advert.id),
+      externalUrl: this.extractPublicUrl(advert),
       publishedAt: new Date(),
     };
   }
@@ -193,11 +197,25 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
   private toSyncedListing(data: OlxAdvertResponse): SyncedListing {
     return {
       externalListingId: String(data.id),
+      externalUrl: this.extractPublicUrl(data),
       status: this.mapStatus(data.status),
       views: data.metrics?.views ?? 0,
       watchers: data.metrics?.favorites ?? 0,
       messages: data.metrics?.messages ?? 0,
     };
+  }
+
+  private extractPublicUrl(data: OlxAdvertResponse): string | null {
+    const candidate = data.url ?? data.public_url ?? data.external_url;
+    if (!candidate) return null;
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol !== 'https:') return null;
+      if (!/(^|\.)olx\.pl$/i.test(parsed.hostname)) return null;
+      return parsed.toString();
+    } catch {
+      return null;
+    }
   }
 
   private assertPublishDetails(categoryId: number | undefined): asserts categoryId is number {

@@ -117,8 +117,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_accounts_marketplace ON marketp
 CREATE TABLE IF NOT EXISTS listings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  marketplace_id UUID NOT NULL REFERENCES marketplaces(id),
+  marketplace_id UUID NOT NULL REFERENCES marketplaces(id) ON DELETE CASCADE,
   marketplace_listing_id VARCHAR(255),
+  external_url TEXT,
   price DECIMAL(10, 2) NOT NULL,
   status VARCHAR(50) DEFAULT 'draft',
   views INT DEFAULT 0,
@@ -146,6 +147,7 @@ CREATE TABLE IF NOT EXISTS marketplace_publish_attempts (
   marketplace_key VARCHAR(50) NOT NULL,
   status VARCHAR(20) NOT NULL,
   external_listing_id VARCHAR(255),
+  external_url TEXT,
   published_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
