@@ -15,7 +15,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { Redis } from 'ioredis';
 
-import { createPool } from '../database';
+import { createPool, withTransaction } from '../database';
 import { createRedisClient } from '../redis';
 
 // --- Infrastructure: persistence ---
@@ -131,10 +131,7 @@ class BullManagedQueue<T> implements ManagedQueue<T> {
     await this.queue.add(data, buildBullAddOptions(this.name, options));
   }
 
-  async scheduleRepeat(
-    data: T,
-    options: { jobId: string; everyMs: number },
-  ): Promise<void> {
+  async scheduleRepeat(data: T, options: { jobId: string; everyMs: number }): Promise<void> {
     await this.queue.add(data, {
       ...buildBullAddOptions(this.name, { jobId: options.jobId }),
       repeat: { every: options.everyMs },
@@ -146,7 +143,7 @@ class BullManagedQueue<T> implements ManagedQueue<T> {
     await Promise.all(
       jobs
         .filter((job) => job.id === jobId)
-        .map((job) => this.queue.raw.removeRepeatableByKey(job.key)),
+        .map((job) => this.queue.raw.removeRepeatableByKey(job.key))
     );
   }
 
@@ -255,18 +252,19 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     accountRepo: marketplaceAccountRepo,
     appCredentialRepo: marketplaceAppCredentialRepo,
     stateStore: new RedisMarketplaceOAuthStateStore(redis),
-    oauthClientFactory: ({ clientId, clientSecret }) => new OlxOAuthClient({
-      authorizationUrl: env.marketplaces.olx.authUrl,
-      tokenUrl: env.marketplaces.olx.tokenUrl,
-      clientId,
-      clientSecret,
-      redirectUri: env.marketplaces.olx.redirectUri,
-      scopes: env.marketplaces.olx.requiredScopes
-        .split(/[\s,]+/)
-        .map((scope) => scope.trim())
-        .filter(Boolean),
-      timeoutMs: env.marketplaces.olx.requestTimeoutMs,
-    }),
+    oauthClientFactory: ({ clientId, clientSecret }) =>
+      new OlxOAuthClient({
+        authorizationUrl: env.marketplaces.olx.authUrl,
+        tokenUrl: env.marketplaces.olx.tokenUrl,
+        clientId,
+        clientSecret,
+        redirectUri: env.marketplaces.olx.redirectUri,
+        scopes: env.marketplaces.olx.requiredScopes
+          .split(/[\s,]+/)
+          .map((scope) => scope.trim())
+          .filter(Boolean),
+        timeoutMs: env.marketplaces.olx.requestTimeoutMs,
+      }),
     credentialVault: new AesGcmCredentialVault(
       overrides.marketplaceCredentialsKey ?? env.marketplaceCredentialsKey
     ),
@@ -354,9 +352,14 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     approveEventUC,
     dismissEventUC
   );
-  const analyticsService = new AnalyticsApplicationService(productRepo, listingRepo, marketplaceRepo);
+  const analyticsService = new AnalyticsApplicationService(
+    productRepo,
+    listingRepo,
+    marketplaceRepo
+  );
   const marketplaceImportService = new MarketplaceImportService(
     marketplaceRepo,
+    productRepo,
     listingRepo,
     marketplaceAccountRepo,
     adapterFactory,
@@ -367,6 +370,16 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
         timeoutMs: env.marketplaces.olx.requestTimeoutMs,
         livePublishEnabled: false,
       }),
+    activityLogRepo,
+    idGenerator,
+    (work) =>
+      withTransaction((client) =>
+        work({
+          productRepo: new ProductRepository(undefined, client),
+          listingRepo: new ListingRepository(undefined, client),
+          activityLog: new ActivityLogRepository(undefined, client),
+        })
+      )
   );
 
   // 9. Register job handlers now that their collaborators exist. The publish

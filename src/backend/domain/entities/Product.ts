@@ -20,7 +20,7 @@ export interface CreateProductProps {
   sku: string;
   name: string;
   description: string;
-  costPrice: Money;
+  costPrice: Money | null;
   sellingPrice: Money;
   condition: ProductCondition;
   category: string;
@@ -40,7 +40,7 @@ export class Product {
     public readonly sku: string,
     private _name: string,
     private _description: string,
-    private _costPrice: Money,
+    private _costPrice: Money | null,
     private _sellingPrice: Money,
     private _condition: ProductCondition,
     private _category: string,
@@ -48,7 +48,7 @@ export class Product {
     private _tags: string[],
     private _images: string[],
     public readonly createdAt: Date,
-    private _updatedAt: Date,
+    private _updatedAt: Date
   ) {}
 
   static create(props: CreateProductProps): Result<Product> {
@@ -71,16 +71,14 @@ export class Product {
     const descriptionCheck = Product.validateDescription(props.description);
     if (descriptionCheck.isErr()) return descriptionCheck;
 
-    if (props.costPrice.isNegative()) {
+    if (props.costPrice && props.costPrice.isNegative()) {
       return Err(new ValidationError('costPrice must be >= 0'));
     }
     if (props.sellingPrice.isNegative()) {
       return Err(new ValidationError('sellingPrice must be >= 0'));
     }
-    if (props.costPrice.currency !== props.sellingPrice.currency) {
-      return Err(
-        new ValidationError('costPrice and sellingPrice must share a currency'),
-      );
+    if (props.costPrice && props.costPrice.currency !== props.sellingPrice.currency) {
+      return Err(new ValidationError('costPrice and sellingPrice must share a currency'));
     }
     const now = new Date();
     return Ok(
@@ -98,8 +96,8 @@ export class Product {
         props.tags ? [...props.tags] : [],
         props.images ? [...props.images] : [],
         props.createdAt ?? now,
-        props.updatedAt ?? now,
-      ),
+        props.updatedAt ?? now
+      )
     );
   }
 
@@ -119,7 +117,7 @@ export class Product {
       [...props.tags],
       [...props.images],
       props.createdAt,
-      props.updatedAt,
+      props.updatedAt
     );
   }
 
@@ -128,8 +126,8 @@ export class Product {
     if (len < PRODUCT_DESCRIPTION_MIN_LENGTH || len > PRODUCT_DESCRIPTION_MAX_LENGTH) {
       return Err(
         new ValidationError(
-          `description length must be between ${PRODUCT_DESCRIPTION_MIN_LENGTH} and ${PRODUCT_DESCRIPTION_MAX_LENGTH}`,
-        ),
+          `description length must be between ${PRODUCT_DESCRIPTION_MIN_LENGTH} and ${PRODUCT_DESCRIPTION_MAX_LENGTH}`
+        )
       );
     }
     return Ok(true);
@@ -142,7 +140,7 @@ export class Product {
   get description(): string {
     return this._description;
   }
-  get costPrice(): Money {
+  get costPrice(): Money | null {
     return this._costPrice;
   }
   get sellingPrice(): Money {
@@ -190,8 +188,8 @@ export class Product {
     if (to <= from) {
       return Err(
         new InvalidStateError(
-          `Illegal product status transition ${this._status} -> ${next} (forward-only)`,
-        ),
+          `Illegal product status transition ${this._status} -> ${next} (forward-only)`
+        )
       );
     }
     this._status = next;
@@ -215,7 +213,7 @@ export class Product {
     if (price.isNegative()) {
       return Err(new ValidationError('sellingPrice must be >= 0'));
     }
-    if (price.currency !== this._costPrice.currency) {
+    if (this._costPrice && price.currency !== this._costPrice.currency) {
       return Err(new ValidationError('sellingPrice currency must match costPrice'));
     }
     this._sellingPrice = price;
@@ -235,23 +233,28 @@ export class Product {
     return Ok(undefined);
   }
 
+  clearCostPrice(): void {
+    this._costPrice = null;
+    this.touch();
+  }
+
   // Applies coordinated price changes atomically so callers do not need to know
   // which update order avoids transient cost/selling invariant failures.
   updatePrices(
     costPrice: Money | null,
     sellingPrice: Money | null,
-    allowBelowCost = false,
+    allowBelowCost = false
   ): Result<void> {
     const nextCost = costPrice ?? this._costPrice;
     const nextSelling = sellingPrice ?? this._sellingPrice;
 
-    if (nextCost.isNegative()) {
+    if (nextCost && nextCost.isNegative()) {
       return Err(new ValidationError('costPrice must be >= 0'));
     }
     if (nextSelling.isNegative()) {
       return Err(new ValidationError('sellingPrice must be >= 0'));
     }
-    if (nextCost.currency !== nextSelling.currency) {
+    if (nextCost && nextCost.currency !== nextSelling.currency) {
       return Err(new ValidationError('costPrice and sellingPrice must share a currency'));
     }
     void allowBelowCost;

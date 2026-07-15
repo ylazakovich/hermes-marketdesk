@@ -15,14 +15,7 @@ import {
   MARKETPLACE_KEY_LIST,
 } from '../../../../shared/constants';
 
-const conditionEnum = z.enum([
-  'new',
-  'like_new',
-  'good',
-  'fair',
-  'poor',
-  'refurbished',
-]);
+const conditionEnum = z.enum(['new', 'like_new', 'good', 'fair', 'poor', 'refurbished', 'unknown']);
 
 export const createProductSchema = z.object({
   sku: z.string().min(1),
@@ -30,7 +23,10 @@ export const createProductSchema = z.object({
   description: z.string().min(1),
   costPrice: z.number().nonnegative(),
   sellingPrice: z.number().nonnegative(),
-  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/)
+    .optional(),
   condition: conditionEnum,
   category: z.string().min(1),
   tags: z.array(z.string()).optional(),
@@ -42,9 +38,12 @@ export const updateProductSchema = z
   .object({
     name: z.string().min(1).optional(),
     description: z.string().min(1).optional(),
-    costPrice: z.number().nonnegative().optional(),
+    costPrice: z.number().nonnegative().nullable().optional(),
     sellingPrice: z.number().nonnegative().optional(),
-    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
     condition: conditionEnum.optional(),
     category: z.string().trim().min(1).optional(),
     status: z.enum(PRODUCT_STATUS_LIST as [string, ...string[]]).optional(),
@@ -69,7 +68,10 @@ export const publishListingSchema = z.object({
 export const updateWorkspaceSchema = z
   .object({
     name: z.string().min(1).optional(),
-    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
     timezone: z.string().min(1).optional(),
     autonomyLevel: z.enum(AUTONOMY_LEVEL_LIST as [string, ...string[]]).optional(),
   })

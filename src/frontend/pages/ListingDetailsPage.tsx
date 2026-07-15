@@ -1,14 +1,7 @@
 // Product / listing detail: gallery, attributes, per-marketplace listings,
 // price editing (PricingForm), publish + relist actions, and price history.
 import React, { useState } from 'react';
-import {
-  Box,
-  Button,
-  Chip,
-  Divider,
-  Stack,
-  Typography,
-} from '@mui/material';
+import { Box, Button, Chip, Divider, Stack, Typography } from '@mui/material';
 import EditIcon from '@mui/icons-material/EditOutlined';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -63,10 +56,17 @@ const DetailRow: React.FC<{ label: string; children: React.ReactNode; strong?: b
       alignItems: 'baseline',
     }}
   >
-    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.4 }}>
+    <Typography
+      variant="caption"
+      color="text.secondary"
+      sx={{ textTransform: 'uppercase', letterSpacing: 0.4 }}
+    >
       {label}
     </Typography>
-    <Typography variant="body2" sx={{ fontWeight: strong ? 700 : 500, minWidth: 0, overflowWrap: 'anywhere' }}>
+    <Typography
+      variant="body2"
+      sx={{ fontWeight: strong ? 700 : 500, minWidth: 0, overflowWrap: 'anywhere' }}
+    >
       {children}
     </Typography>
   </Box>
@@ -91,7 +91,10 @@ const ListingDetailsPage: React.FC = () => {
 
   const [editOpen, setEditOpen] = useState(false);
   const [priceListing, setPriceListing] = useState<Listing | null>(null);
-  const [publishCandidate, setPublishCandidate] = useState<{ listing: Listing; preview: PublishListingPreview } | null>(null);
+  const [publishCandidate, setPublishCandidate] = useState<{
+    listing: Listing;
+    preview: PublishListingPreview;
+  } | null>(null);
   const [activeImage, setActiveImage] = useState(0);
 
   const listingItems = listings.data ?? [];
@@ -99,7 +102,7 @@ const ListingDetailsPage: React.FC = () => {
   const availableMarketplace =
     !listings.isLoading && !listings.isError
       ? marketplaces?.find(
-          (marketplace) => marketplace.connected && !listingMarketplaceIds.has(marketplace.id),
+          (marketplace) => marketplace.connected && !listingMarketplaceIds.has(marketplace.id)
         )
       : undefined;
   const primaryListing = listingItems[0];
@@ -126,8 +129,6 @@ const ListingDetailsPage: React.FC = () => {
     }
   };
 
-
-
   const handleCreateListing = async () => {
     if (!availableMarketplace) return;
     try {
@@ -135,7 +136,12 @@ const ListingDetailsPage: React.FC = () => {
         productId,
         marketplaceKey: availableMarketplace.key,
       }).unwrap();
-      dispatch(enqueueToast({ message: `${availableMarketplace.name} listing created.`, severity: 'success' }));
+      dispatch(
+        enqueueToast({
+          message: `${availableMarketplace.name} listing created.`,
+          severity: 'success',
+        })
+      );
     } catch (err) {
       dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
     }
@@ -353,7 +359,11 @@ const ListingDetailsPage: React.FC = () => {
                         {entry.reason ? ` · ${entry.reason}` : ''}
                       </Typography>
                     </Box>
-                    <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ whiteSpace: 'nowrap' }}
+                    >
                       {formatDateTime(entry.createdAt)}
                     </Typography>
                   </Stack>
@@ -364,12 +374,7 @@ const ListingDetailsPage: React.FC = () => {
         </Stack>
       </Box>
 
-      <Modal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        title="Edit product"
-        maxWidth="md"
-      >
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit product" maxWidth="md">
         <ProductForm
           initial={p}
           submitting={updating}
@@ -402,7 +407,8 @@ const ListingDetailsPage: React.FC = () => {
           </Typography>
           {publishCandidate?.preview.payload && (
             <Typography variant="body2" color="text.secondary">
-              Price: {publishCandidate.preview.payload.price} {publishCandidate.preview.payload.currency}
+              Price: {publishCandidate.preview.payload.price}{' '}
+              {publishCandidate.preview.payload.currency}
             </Typography>
           )}
         </Stack>
@@ -418,7 +424,7 @@ const ListingDetailsPage: React.FC = () => {
         {priceListing && (
           <PricingForm
             currentPrice={priceListing.price}
-            costPrice={p.costPrice}
+            costPrice={p.costPrice ?? undefined}
             currency={currency}
             submitting={pricing}
             onSubmit={handleUpdatePrice}

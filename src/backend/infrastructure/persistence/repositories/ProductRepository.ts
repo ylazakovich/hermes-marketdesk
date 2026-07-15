@@ -31,20 +31,17 @@ export class ProductRepository implements IProductRepository {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.id = $1`,
       [id],
-      this.queryClient,
+      this.queryClient
     );
     const row = rows[0];
     return row ? this.hydrate(row) : null;
   }
 
-  async findByIdForWorkspace(
-    id: string,
-    workspaceId: string,
-  ): Promise<Product | null> {
+  async findByIdForWorkspace(id: string, workspaceId: string): Promise<Product | null> {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.id = $1 AND p.workspace_id = $2`,
       [id, workspaceId],
-      this.queryClient,
+      this.queryClient
     );
     const row = rows[0];
     return row ? this.hydrate(row) : null;
@@ -54,7 +51,7 @@ export class ProductRepository implements IProductRepository {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.workspace_id = $1 ORDER BY p.created_at DESC`,
       [workspaceId],
-      this.queryClient,
+      this.queryClient
     );
     return Promise.all(rows.map((row) => this.hydrate(row)));
   }
@@ -63,7 +60,7 @@ export class ProductRepository implements IProductRepository {
     const { rows } = await query<ProductRow>(
       `${PRODUCT_SELECT} WHERE p.workspace_id = $1 AND p.sku = $2`,
       [workspaceId, sku],
-      this.queryClient,
+      this.queryClient
     );
     const row = rows[0];
     return row ? this.hydrate(row) : null;
@@ -87,7 +84,7 @@ export class ProductRepository implements IProductRepository {
     await query(
       `DELETE FROM products WHERE id = $1 AND workspace_id = $2`,
       [id, workspaceId],
-      this.queryClient,
+      this.queryClient
     );
   }
 
@@ -96,12 +93,12 @@ export class ProductRepository implements IProductRepository {
       query<ProductTagRow>(
         `SELECT tag FROM product_tags WHERE product_id = $1`,
         [row.id],
-        this.queryClient,
+        this.queryClient
       ),
       query<ProductImageRow>(
         `SELECT url, position FROM product_images WHERE product_id = $1 ORDER BY position ASC`,
         [row.id],
-        this.queryClient,
+        this.queryClient
       ),
     ]);
     return ProductMapper.toDomain(row, tags.rows, images.rows);
@@ -128,7 +125,7 @@ export class ProductRepository implements IProductRepository {
         product.sku,
         product.name,
         product.description,
-        product.costPrice.amount,
+        product.costPrice?.amount ?? null,
         product.sellingPrice.amount,
         product.condition,
         product.category,
@@ -136,7 +133,7 @@ export class ProductRepository implements IProductRepository {
         product.createdAt,
         product.updatedAt,
       ],
-      client,
+      client
     );
 
     // Child collections are replaced wholesale to keep the aggregate in sync.
@@ -145,7 +142,7 @@ export class ProductRepository implements IProductRepository {
       await query(
         `INSERT INTO product_tags (product_id, tag) VALUES ($1, $2)`,
         [product.id, tag],
-        client,
+        client
       );
     }
 
@@ -155,15 +152,13 @@ export class ProductRepository implements IProductRepository {
       await query(
         `INSERT INTO product_images (product_id, url, position) VALUES ($1, $2, $3)`,
         [product.id, url, position],
-        client,
+        client
       );
       position += 1;
     }
   }
 
-  private async runInTransaction(
-    fn: (client: PoolClient) => Promise<void>,
-  ): Promise<void> {
+  private async runInTransaction(fn: (client: PoolClient) => Promise<void>): Promise<void> {
     if (this.client) {
       await fn(this.client);
       return;

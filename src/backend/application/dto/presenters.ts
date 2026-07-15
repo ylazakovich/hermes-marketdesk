@@ -37,7 +37,7 @@ export function presentProduct(product: Product): ProductView {
     sku: product.sku,
     name: product.name,
     description: product.description,
-    costPrice: product.costPrice.amount,
+    costPrice: product.costPrice?.amount ?? null,
     sellingPrice: product.sellingPrice.amount,
     condition: product.condition,
     category: product.category,

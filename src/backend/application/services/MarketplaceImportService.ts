@@ -1,15 +1,33 @@
-import type { MarketplaceKey } from '../../../shared/types';
+import { randomUUID } from 'crypto';
+import type { MarketplaceKey, ProductCondition } from '../../../shared/types';
+import { Product } from '../../domain/entities/Product';
+import { Listing } from '../../domain/entities/Listing';
+import type { IProductRepository } from '../../domain/repositories/interfaces/IProductRepository';
 import type { IListingRepository } from '../../domain/repositories/interfaces/IListingRepository';
 import type { IMarketplaceRepository } from '../../domain/repositories/interfaces/IMarketplaceRepository';
+import type {
+  ActivityLogEntry,
+  IActivityLogRepository,
+} from '../../domain/repositories/interfaces/IActivityLogRepository';
+import { Money } from '../../domain/valueObjects/Money';
 import type {
   IMarketplaceAdapter,
   ImportedMarketplaceListing,
   ImportDiscoveryOptions,
 } from '../../domain/services/MarketplaceAdapter';
 import type { MarketplaceHttpClient } from '../../infrastructure/adapters/MarketplaceHttpClient';
-import type { MarketplaceAccountRepository } from './MarketplaceOAuthService';
+import type {
+  MarketplaceAccountRecord,
+  MarketplaceAccountRepository,
+} from './MarketplaceOAuthService';
+import type { IdGenerator } from '../ports/IdGenerator';
 import { Err, Ok, type Result } from '../../domain/shared/Result';
-import { GuardrailViolationError, NotFoundError } from '../../domain/shared/DomainError';
+import {
+  GuardrailViolationError,
+  InvalidStateError,
+  NotFoundError,
+  ValidationError,
+} from '../../domain/shared/DomainError';
 
 export interface ImportMarketplaceAdapterResolver {
   create(key: MarketplaceKey, http?: MarketplaceHttpClient): IMarketplaceAdapter;
@@ -24,7 +42,13 @@ export interface ImportPreviewInput extends ImportDiscoveryOptions {
   marketplaceId: string;
 }
 
-export type ImportPreviewItemStatus = 'new' | 'already_imported' | 'unsupported';
+export interface ImportApplyInput extends ImportPreviewInput {
+  externalListingIds?: string[];
+  actorId?: string;
+}
+
+export type ImportPreviewItemStatus =
+  'new' | 'already_imported' | 'changed' | 'unsupported' | 'failed';
 
 export interface ImportPreviewItem {
   status: ImportPreviewItemStatus;
@@ -34,6 +58,8 @@ export interface ImportPreviewItem {
   remoteStatus: string | null;
   warnings: string[];
   proposed: ImportedMarketplaceListing;
+  existingListingId?: string | null;
+  proposedChanges?: string[];
 }
 
 export interface ImportPreviewResult {
@@ -44,57 +70,285 @@ export interface ImportPreviewResult {
   items: ImportPreviewItem[];
 }
 
+interface ImportDiscoveryContext {
+  marketplace: NonNullable<Awaited<ReturnType<IMarketplaceRepository['findByIdForWorkspace']>>>;
+  account: MarketplaceAccountRecord;
+  remoteListings: ImportedMarketplaceListing[];
+  existingListings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>;
+  productsByListingId: Map<string, Product>;
+  failedItems: ImportPreviewItem[];
+}
+
+export interface MarketplaceImportRepositories {
+  productRepo: IProductRepository;
+  listingRepo: IListingRepository;
+  activityLog?: IActivityLogRepository;
+}
+
+export type MarketplaceImportUnitOfWork = <T>(
+  work: (repos: MarketplaceImportRepositories) => Promise<T>
+) => Promise<T>;
+
+export interface ImportApplyResult {
+  marketplaceId: string;
+  marketplaceKey: MarketplaceKey;
+  imported: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  results: Array<{
+    externalListingId: string;
+    status: 'imported' | 'updated' | 'skipped' | 'failed';
+    productId?: string;
+    listingId?: string;
+    reason?: string;
+  }>;
+}
+
+const EMPTY_TOTALS: ImportPreviewResult['totals'] = {
+  discovered: 0,
+  new: 0,
+  already_imported: 0,
+  changed: 0,
+  unsupported: 0,
+  failed: 0,
+};
+
+const IMPORT_TAG = 'imported:olx';
+const ADOPTED_TAG = 'adopted-existing-advert';
+const UNKNOWN_COST_TAG = 'cost-price:unknown';
+const UNKNOWN_CONDITION_TAG = 'condition:requires-confirmation';
+
 export class MarketplaceImportService {
   constructor(
     private readonly marketplaceRepo: IMarketplaceRepository,
+    private readonly productRepo: IProductRepository,
     private readonly listingRepo: IListingRepository,
     private readonly accountRepo: MarketplaceAccountRepository,
     private readonly adapters: ImportMarketplaceAdapterResolver,
     private readonly accessTokens: MarketplaceImportAccessTokenProvider,
     private readonly authenticatedHttpClient: (accessToken: string) => MarketplaceHttpClient,
+    private readonly activityLog?: IActivityLogRepository,
+    private readonly idGenerator: IdGenerator = randomUUID,
+    private readonly unitOfWork: MarketplaceImportUnitOfWork = async () => {
+      throw new InvalidStateError('MarketplaceImportService requires a transactional unit of work');
+    }
   ) {}
 
   async preview(input: ImportPreviewInput): Promise<Result<ImportPreviewResult>> {
+    const context = await this.discover(input);
+    if (context.isErr()) return context;
+    return Ok(
+      this.buildPreview(
+        context.value.marketplace.id,
+        context.value.marketplace.key,
+        context.value.remoteListings,
+        context.value.existingListings,
+        context.value.productsByListingId,
+        context.value.failedItems
+      )
+    );
+  }
+
+  async import(input: ImportApplyInput): Promise<Result<ImportApplyResult>> {
+    const context = await this.discover(input);
+    if (context.isErr()) return context;
+
+    const importAll = input.externalListingIds === undefined;
+    const selected = new Set(input.externalListingIds ?? []);
+    const preview = this.buildPreview(
+      context.value.marketplace.id,
+      context.value.marketplace.key,
+      context.value.remoteListings,
+      context.value.existingListings,
+      context.value.productsByListingId,
+      context.value.failedItems
+    );
+    const items = preview.items.filter((item) => importAll || selected.has(item.externalListingId));
+    const results: ImportApplyResult['results'] = [];
+
+    for (const item of items) {
+      if (item.status === 'unsupported' || item.status === 'failed') {
+        results.push({
+          externalListingId: item.externalListingId,
+          status: 'skipped',
+          reason: item.warnings.join(', ') || item.status,
+        });
+        continue;
+      }
+      if (item.status === 'already_imported' && item.proposedChanges?.length === 0) {
+        results.push({
+          externalListingId: item.externalListingId,
+          status: 'skipped',
+          listingId: item.existingListingId ?? undefined,
+          reason: 'already_imported',
+        });
+        continue;
+      }
+
+      try {
+        const existing = this.findUniqueExistingListing(
+          context.value.existingListings,
+          item.externalListingId
+        );
+        const saved = await this.unitOfWork(async (repos) => {
+          if (existing) {
+            await this.updateExistingListing(
+              existing,
+              item.proposed,
+              input.workspaceId,
+              context.value.account.id,
+              input.actorId,
+              repos
+            );
+            return { status: 'updated' as const, listingId: existing.id };
+          }
+
+          const { product, listing } = this.createImportedRecords(
+            input.workspaceId,
+            context.value.marketplace.id,
+            item.proposed
+          );
+          await repos.productRepo.save(product);
+          await repos.listingRepo.save(listing);
+          await repos.activityLog?.record(
+            this.activityEntry(
+              input.workspaceId,
+              listing.id,
+              input.actorId,
+              'olx_import_adopted',
+              this.auditMetadata(context.value.account.id, item.proposed, 'imported')
+            )
+          );
+          return { status: 'imported' as const, productId: product.id, listingId: listing.id };
+        });
+        results.push({
+          externalListingId: item.externalListingId,
+          status: saved.status,
+          productId: saved.productId,
+          listingId: saved.listingId,
+        });
+      } catch (error) {
+        results.push({
+          externalListingId: item.externalListingId,
+          status: 'failed',
+          reason: error instanceof Error ? error.message : 'unknown import error',
+        });
+      }
+    }
+
+    return Ok({
+      marketplaceId: context.value.marketplace.id,
+      marketplaceKey: context.value.marketplace.key,
+      imported: results.filter((r) => r.status === 'imported').length,
+      updated: results.filter((r) => r.status === 'updated').length,
+      skipped: results.filter((r) => r.status === 'skipped').length,
+      failed: results.filter((r) => r.status === 'failed').length,
+      results,
+    });
+  }
+
+  private async discover(input: ImportPreviewInput) {
     const marketplace = await this.marketplaceRepo.findByIdForWorkspace(
       input.marketplaceId,
-      input.workspaceId,
+      input.workspaceId
     );
     if (!marketplace) {
       return Err(new NotFoundError(`Marketplace not found: ${input.marketplaceId}`));
     }
     if (marketplace.key !== 'olx') {
-      return Err(new GuardrailViolationError('Import preview currently supports OLX only'));
+      return Err(new GuardrailViolationError('Import currently supports OLX only'));
     }
 
     const account = await this.accountRepo.findByMarketplaceId(marketplace.id);
     if (!account || account.status !== 'connected') {
-      return Err(new GuardrailViolationError('Connected OLX OAuth account is required for import preview'));
+      return Err(new GuardrailViolationError('Connected OLX OAuth account is required for import'));
     }
 
-    const accessToken = await this.accessTokens.getValidAccessToken(marketplace.id);
-    const adapter = this.adapters.create(marketplace.key, this.authenticatedHttpClient(accessToken));
-    const remoteListings = await adapter.listOwnedListings({
-      pageSize: input.pageSize,
-      statuses: input.statuses,
-    });
+    let accessToken: string;
+    try {
+      accessToken = await this.accessTokens.getValidAccessToken(marketplace.id);
+    } catch (error) {
+      return Err(
+        new ValidationError(
+          error instanceof Error ? error.message : 'Failed to prepare OLX access token'
+        )
+      );
+    }
+    const adapter = this.adapters.create(
+      marketplace.key,
+      this.authenticatedHttpClient(accessToken)
+    );
+    let discoveredListings: ImportedMarketplaceListing[];
+    try {
+      discoveredListings = await adapter.listOwnedListings({
+        pageSize: input.pageSize,
+        statuses: input.statuses,
+      });
+    } catch (error) {
+      return Err(
+        new ValidationError(
+          error instanceof Error ? error.message : 'Failed to discover owned adverts'
+        )
+      );
+    }
+    const { remoteListings, failedItems } = this.normalizeDiscoveredListings(discoveredListings);
     const existingListings = await this.listingRepo.findByMarketplace(marketplace.id);
-    const existingExternalIds = new Set(
+    const productsByListingId = await this.loadProductsByListingId(
+      existingListings,
+      input.workspaceId
+    );
+    return Ok({
+      marketplace,
+      account,
+      remoteListings,
+      existingListings,
+      productsByListingId,
+      failedItems,
+    });
+  }
+
+  private buildPreview(
+    marketplaceId: string,
+    marketplaceKey: MarketplaceKey,
+    remoteListings: ImportedMarketplaceListing[],
+    existingListings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>,
+    productsByListingId: Map<string, Product>,
+    failedItems: ImportPreviewItem[]
+  ): ImportPreviewResult {
+    const duplicateExistingExternalIds = this.duplicateExternalIds(
+      existingListings.flatMap((listing) => listing.marketplaceListingId ?? [])
+    );
+    const duplicateRemoteExternalIds = this.duplicateExternalIds(
+      remoteListings.map((listing) => listing.externalListingId)
+    );
+    const existingByExternalId = new Map(
       existingListings.flatMap((listing) =>
-        listing.marketplaceListingId ? [listing.marketplaceListingId] : [],
-      ),
+        listing.marketplaceListingId &&
+        !duplicateExistingExternalIds.has(listing.marketplaceListingId)
+          ? [[listing.marketplaceListingId, listing] as const]
+          : []
+      )
     );
 
     const items = remoteListings.map((remote): ImportPreviewItem => {
-      const warnings: string[] = [];
-      if (remote.price === null || remote.price === undefined) warnings.push('missing_price');
-      if (!remote.category) warnings.push('missing_category_mapping');
-      if (remote.imageUrls.length === 0) warnings.push('missing_photos');
+      const warnings = this.mappingWarnings(remote);
+      if (duplicateRemoteExternalIds.has(remote.externalListingId))
+        warnings.push('duplicate_remote_external_listing_id');
+      if (duplicateExistingExternalIds.has(remote.externalListingId))
+        warnings.push('duplicate_existing_external_listing_id');
+      const existing = existingByExternalId.get(remote.externalListingId);
+      const product = existing ? (productsByListingId.get(existing.id) ?? null) : null;
+      const proposedChanges = existing
+        ? this.proposedListingChanges(existing, product, remote)
+        : [];
+      let status: ImportPreviewItemStatus = 'new';
+      if (warnings.some((warning) => warning.startsWith('duplicate_'))) status = 'failed';
+      else if (warnings.includes('missing_required_import_fields')) status = 'unsupported';
+      else if (remote.status === 'error') status = 'unsupported';
+      else if (existing && proposedChanges.length > 0) status = 'changed';
+      else if (existing) status = 'already_imported';
 
-      const status: ImportPreviewItemStatus = existingExternalIds.has(remote.externalListingId)
-        ? 'already_imported'
-        : remote.status === 'error'
-          ? 'unsupported'
-          : 'new';
       return {
         status,
         externalListingId: remote.externalListingId,
@@ -103,8 +357,11 @@ export class MarketplaceImportService {
         remoteStatus: remote.remoteStatus ?? null,
         warnings,
         proposed: remote,
+        existingListingId: existing?.id ?? null,
+        proposedChanges,
       };
     });
+    items.push(...failedItems);
 
     const totals = items.reduce<ImportPreviewResult['totals']>(
       (acc, item) => {
@@ -112,15 +369,356 @@ export class MarketplaceImportService {
         acc[item.status] += 1;
         return acc;
       },
-      { discovered: 0, new: 0, already_imported: 0, unsupported: 0 },
+      { ...EMPTY_TOTALS }
     );
 
-    return Ok({
-      marketplaceId: marketplace.id,
-      marketplaceKey: marketplace.key,
-      readOnly: true,
-      totals,
-      items,
+    return { marketplaceId, marketplaceKey, readOnly: true, totals, items };
+  }
+
+  private normalizeDiscoveredListings(discoveredListings: ImportedMarketplaceListing[]): {
+    remoteListings: ImportedMarketplaceListing[];
+    failedItems: ImportPreviewItem[];
+  } {
+    const remoteListings: ImportedMarketplaceListing[] = [];
+    const failedItems: ImportPreviewItem[] = [];
+
+    discoveredListings.forEach((remote, index) => {
+      try {
+        this.assertImportedListingShape(remote);
+        remoteListings.push(remote);
+      } catch (error) {
+        const partial = remote as Partial<ImportedMarketplaceListing> | null | undefined;
+        const externalListingId = partial?.externalListingId?.trim() || `unmapped-${index + 1}`;
+        failedItems.push({
+          status: 'failed',
+          externalListingId,
+          externalUrl: partial?.externalUrl ?? null,
+          title: partial?.title ?? 'Unmapped OLX advert',
+          remoteStatus: partial?.remoteStatus ?? partial?.status ?? null,
+          warnings: [
+            'item_mapping_failed',
+            error instanceof Error ? error.message : 'Unable to map discovered advert',
+          ],
+          proposed: this.failedRemoteListingFallback(externalListingId, partial),
+          existingListingId: null,
+          proposedChanges: [],
+        });
+      }
     });
+
+    return { remoteListings, failedItems };
+  }
+
+  private assertImportedListingShape(remote: ImportedMarketplaceListing): void {
+    if (!remote || typeof remote !== 'object') {
+      throw new ValidationError('Discovered advert is not an object');
+    }
+    if (!remote.externalListingId?.trim()) {
+      throw new ValidationError('Discovered advert is missing externalListingId');
+    }
+    if (!remote.title?.trim()) {
+      throw new ValidationError(`Discovered advert ${remote.externalListingId} is missing title`);
+    }
+  }
+
+  private failedRemoteListingFallback(
+    externalListingId: string,
+    partial: Partial<ImportedMarketplaceListing> | null | undefined
+  ): ImportedMarketplaceListing {
+    return {
+      externalListingId,
+      externalUrl: partial?.externalUrl ?? null,
+      title: partial?.title ?? 'Unmapped OLX advert',
+      description: partial?.description ?? null,
+      price: partial?.price ?? null,
+      currency: partial?.currency ?? null,
+      status: partial?.status ?? 'error',
+      remoteStatus: partial?.remoteStatus ?? null,
+      category: partial?.category ?? null,
+      imageUrls: partial?.imageUrls ?? [],
+      remoteUpdatedAt: partial?.remoteUpdatedAt ?? null,
+      metrics: partial?.metrics ?? {},
+    };
+  }
+
+  private mappingWarnings(remote: ImportedMarketplaceListing): string[] {
+    const warnings: string[] = [];
+    if (remote.price === null || remote.price === undefined) warnings.push('missing_price');
+    if (!remote.currency) warnings.push('missing_currency');
+    if (!remote.category) warnings.push('missing_category_mapping');
+    if (!remote.description || remote.description.trim().length < 20)
+      warnings.push('missing_description');
+    if (!remote.imageUrls || remote.imageUrls.length === 0) warnings.push('missing_photos');
+    if (!remote.externalListingId?.trim()) warnings.push('missing_external_id');
+    warnings.push('unknown_cost_price');
+    warnings.push('unknown_condition_requires_confirmation');
+    if (
+      warnings.includes('missing_price') ||
+      warnings.includes('missing_currency') ||
+      warnings.includes('missing_category_mapping') ||
+      warnings.includes('missing_description') ||
+      warnings.includes('missing_external_id')
+    ) {
+      warnings.push('missing_required_import_fields');
+    }
+    return warnings;
+  }
+
+  private proposedListingChanges(
+    listing: Listing,
+    product: Product | null,
+    remote: ImportedMarketplaceListing
+  ): string[] {
+    const changes: string[] = [];
+    if (
+      remote.price !== null &&
+      remote.price !== undefined &&
+      listing.price.amount !== remote.price
+    ) {
+      changes.push('price');
+    }
+    if (listing.externalUrl !== (remote.externalUrl ?? null)) changes.push('external_url');
+    if (listing.status !== remote.status) changes.push('status');
+    if (remote.metrics?.views !== undefined && listing.views !== remote.metrics.views)
+      changes.push('views');
+    if (remote.metrics?.watchers !== undefined && listing.watchers !== remote.metrics.watchers)
+      changes.push('watchers');
+    if (remote.metrics?.messages !== undefined && listing.messages !== remote.metrics.messages)
+      changes.push('messages');
+    if (product) {
+      if (product.name !== remote.title) changes.push('product_title');
+      if ((remote.description ?? '') !== product.description) changes.push('product_description');
+      if (remote.category && product.category !== remote.category) changes.push('product_category');
+      if (!this.sameStringList([...product.images], remote.imageUrls))
+        changes.push('product_images');
+      if (
+        remote.price !== null &&
+        remote.price !== undefined &&
+        product.sellingPrice.amount !== remote.price
+      ) {
+        changes.push('product_selling_price');
+      }
+    }
+    return changes;
+  }
+
+  private createImportedRecords(
+    workspaceId: string,
+    marketplaceId: string,
+    remote: ImportedMarketplaceListing
+  ): { product: Product; listing: Listing } {
+    if (
+      remote.price === null ||
+      remote.price === undefined ||
+      !remote.currency ||
+      !remote.category
+    ) {
+      throw new ValidationError('Remote advert is missing required import fields');
+    }
+    const costPrice = null;
+    const sellingPrice = this.unwrapMoney(remote.price, remote.currency);
+    const now = new Date();
+    const product = Product.create({
+      id: this.idGenerator(),
+      workspaceId,
+      sku: `OLX-${workspaceId}-${remote.externalListingId}`,
+      name: remote.title,
+      description: remote.description ?? '',
+      costPrice,
+      sellingPrice,
+      condition: this.importedCondition(remote),
+      category: remote.category,
+      status: remote.status === 'live' ? 'active' : 'draft',
+      tags: [IMPORT_TAG, ADOPTED_TAG, UNKNOWN_COST_TAG, UNKNOWN_CONDITION_TAG],
+      images: remote.imageUrls,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (product.isErr()) throw product.error;
+    const listing = Listing.create({
+      id: this.idGenerator(),
+      productId: product.value.id,
+      marketplaceId,
+      marketplaceListingId: remote.externalListingId,
+      externalUrl: remote.externalUrl ?? null,
+      price: sellingPrice,
+      status: remote.status,
+      views: remote.metrics?.views ?? null,
+      watchers: remote.metrics?.watchers ?? null,
+      messages: remote.metrics?.messages ?? null,
+      publishedAt: remote.status === 'live' ? now : null,
+      lastSyncAt: now,
+      syncError: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (listing.isErr()) throw listing.error;
+    return { product: product.value, listing: listing.value };
+  }
+
+  private async updateExistingListing(
+    listing: Listing,
+    remote: ImportedMarketplaceListing,
+    workspaceId: string,
+    marketplaceAccountId: string,
+    actorId: string | undefined,
+    repos: MarketplaceImportRepositories
+  ): Promise<void> {
+    if (remote.price !== null && remote.price !== undefined) {
+      const price = this.unwrapMoney(remote.price, remote.currency ?? listing.price.currency);
+      const priceResult = listing.updatePrice(price);
+      if (priceResult.isErr()) throw priceResult.error;
+    }
+    const product = await repos.productRepo.findByIdForWorkspace(listing.productId, workspaceId);
+    if (remote.status === 'live' && product && !product.canPublish()) {
+      const statusRecorded = listing.recordImportedStatus(remote.status, product);
+      if (statusRecorded.isErr()) throw statusRecorded.error;
+    }
+    if (product) {
+      if (product.name !== remote.title) {
+        const renamed = product.rename(remote.title);
+        if (renamed.isErr()) throw renamed.error;
+      }
+      if (
+        remote.description !== undefined &&
+        remote.description !== null &&
+        product.description !== remote.description
+      ) {
+        const described = product.updateDescription(remote.description);
+        if (described.isErr()) throw described.error;
+      }
+      if (remote.category && product.category !== remote.category) {
+        const categorized = product.updateCategory(remote.category);
+        if (categorized.isErr()) throw categorized.error;
+      }
+      if (!this.sameStringList([...product.images], remote.imageUrls)) {
+        product.clearImages();
+        for (const imageUrl of remote.imageUrls) {
+          const added = product.addImage(imageUrl);
+          if (added.isErr()) throw added.error;
+        }
+      }
+      if (
+        remote.price !== null &&
+        remote.price !== undefined &&
+        product.sellingPrice.amount !== remote.price
+      ) {
+        const selling = this.unwrapMoney(
+          remote.price,
+          remote.currency ?? product.sellingPrice.currency
+        );
+        const priced = product.updateSellingPrice(selling);
+        if (priced.isErr()) throw priced.error;
+      }
+      await repos.productRepo.save(product);
+    }
+    listing.recordExternalUrl(remote.externalUrl ?? null);
+    const statusRecorded = listing.recordImportedStatus(remote.status, product ?? null);
+    if (statusRecorded.isErr()) throw statusRecorded.error;
+    listing.recordSyncStats(remote.metrics ?? {}, new Date());
+    listing.recordSyncStatusNote(null);
+    await repos.listingRepo.save(listing);
+    await repos.activityLog?.record(
+      this.activityEntry(
+        workspaceId,
+        listing.id,
+        actorId,
+        'olx_import_refreshed',
+        this.auditMetadata(marketplaceAccountId, remote, 'updated')
+      )
+    );
+  }
+
+  private importedCondition(_remote: ImportedMarketplaceListing): ProductCondition {
+    return 'unknown';
+  }
+
+  private async loadProductsByListingId(
+    listings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>,
+    workspaceId: string
+  ): Promise<Map<string, Product>> {
+    const entries = await Promise.all(
+      listings.map(async (listing) => {
+        const product = await this.productRepo.findByIdForWorkspace(listing.productId, workspaceId);
+        return product ? ([listing.id, product] as const) : null;
+      })
+    );
+    return new Map(entries.filter((entry): entry is [string, Product] => entry !== null));
+  }
+
+  private duplicateExternalIds(ids: string[]): Set<string> {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const id of ids) {
+      if (!id) continue;
+      if (seen.has(id)) duplicates.add(id);
+      seen.add(id);
+    }
+    return duplicates;
+  }
+
+  private findUniqueExistingListing(
+    listings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>,
+    externalListingId: string
+  ): Listing | null {
+    const matches = listings.filter(
+      (listing) => listing.marketplaceListingId === externalListingId
+    );
+    if (matches.length > 1) {
+      throw new ValidationError(`Duplicate local listing identity for ${externalListingId}`);
+    }
+    return matches[0] ?? null;
+  }
+
+  private sameStringList(left: string[], right: string[]): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+
+  private activityEntry(
+    workspaceId: string,
+    listingId: string,
+    actorId: string | undefined,
+    action: string,
+    metadata: Record<string, unknown>
+  ): ActivityLogEntry {
+    return {
+      id: this.idGenerator(),
+      workspaceId,
+      entityType: 'listing',
+      entityId: listingId,
+      actorType: actorId ? 'user' : 'hermes',
+      actorId,
+      action,
+      metadata,
+      createdAt: new Date(),
+    };
+  }
+
+  private syncNote(remote: ImportedMarketplaceListing): string {
+    return `imported_from_olx:${remote.externalListingId}; remote_status=${remote.remoteStatus ?? remote.status}; last_remote_update=${remote.remoteUpdatedAt?.toISOString?.() ?? 'unknown'}`;
+  }
+
+  private auditMetadata(
+    marketplaceAccountId: string | undefined,
+    remote: ImportedMarketplaceListing,
+    action: 'imported' | 'updated'
+  ): Record<string, unknown> {
+    return {
+      marketplace: 'olx',
+      marketplaceAccountId,
+      externalListingId: remote.externalListingId,
+      externalUrl: remote.externalUrl ?? null,
+      remoteStatus: remote.remoteStatus ?? remote.status,
+      remoteUpdatedAt: remote.remoteUpdatedAt?.toISOString?.() ?? null,
+      importedAt: new Date().toISOString(),
+      action,
+      readOnlyProviderOperation: true,
+    };
+  }
+
+  private unwrapMoney(amount: number, currency: string): Money {
+    const result = Money.of(amount, currency);
+    if (result.isErr()) throw result.error;
+    return result.value;
   }
 }

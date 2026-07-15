@@ -1,10 +1,5 @@
 // Human-readable labels for domain enums used across the UI.
-import type {
-  ProductCondition,
-  SyncMode,
-  AutonomyLevel,
-  HermesEventType,
-} from '@shared/types';
+import type { ProductCondition, SyncMode, AutonomyLevel, HermesEventType } from '@shared/types';
 
 export const CONDITION_LABELS: Record<ProductCondition, string> = {
   new: 'New',
@@ -13,6 +8,7 @@ export const CONDITION_LABELS: Record<ProductCondition, string> = {
   fair: 'Fair',
   poor: 'Poor',
   refurbished: 'Refurbished',
+  unknown: 'Requires confirmation',
 };
 
 export const CONDITION_LIST: readonly ProductCondition[] = [
@@ -22,6 +18,7 @@ export const CONDITION_LIST: readonly ProductCondition[] = [
   'fair',
   'poor',
   'refurbished',
+  'unknown',
 ];
 
 export const SYNC_MODE_LABELS: Record<SyncMode, string> = {

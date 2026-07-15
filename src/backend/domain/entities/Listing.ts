@@ -47,7 +47,7 @@ export class Listing {
     private _syncError: string | null,
     private _lastSyncAt: Date | null,
     public readonly createdAt: Date,
-    private _updatedAt: Date,
+    private _updatedAt: Date
   ) {}
 
   static create(props: CreateListingProps): Result<Listing> {
@@ -82,8 +82,8 @@ export class Listing {
         props.syncError ?? null,
         props.lastSyncAt ?? null,
         props.createdAt ?? now,
-        props.updatedAt ?? now,
-      ),
+        props.updatedAt ?? now
+      )
     );
   }
 
@@ -104,7 +104,7 @@ export class Listing {
       props.syncError,
       props.lastSyncAt,
       props.createdAt,
-      props.updatedAt,
+      props.updatedAt
     );
   }
 
@@ -172,29 +172,23 @@ export class Listing {
     externalListingId: string,
     externalUrl: string | null = null,
     publishedAt: Date = new Date(),
-    expiresAt: Date | null = null,
+    expiresAt: Date | null = null
   ): Result<void> {
     if (this._price.isZero() && this._status === 'draft') {
       // price must be set before publish (treat zero as "not set" for publish)
       return Err(new InvalidStateError('Listing price must be set before publish'));
     }
     if (!marketplace.isConnected()) {
-      return Err(
-        new InvalidStateError('Marketplace must be connected to publish a listing'),
-      );
+      return Err(new InvalidStateError('Marketplace must be connected to publish a listing'));
     }
     if (!product.canPublish()) {
-      return Err(
-        new InvalidStateError('Cannot publish a listing for a sold product'),
-      );
+      return Err(new InvalidStateError('Cannot publish a listing for a sold product'));
     }
     if (!externalListingId?.trim()) {
       return Err(new ValidationError('externalListingId is required to publish'));
     }
     if (!canTransition(this._status, 'live')) {
-      return Err(
-        new InvalidStateError(`Cannot publish from status ${this._status}`),
-      );
+      return Err(new InvalidStateError(`Cannot publish from status ${this._status}`));
     }
 
     this._status = 'live';
@@ -240,7 +234,7 @@ export class Listing {
 
   recordSyncStats(
     stats: { views?: number | null; watchers?: number | null; messages?: number | null },
-    at: Date = new Date(),
+    at: Date = new Date()
   ): void {
     if (stats.views !== undefined && stats.views !== null) this._views = stats.views;
     if (stats.watchers !== undefined && stats.watchers !== null) this._watchers = stats.watchers;
@@ -257,6 +251,20 @@ export class Listing {
   recordSyncStatusNote(message: string | null): void {
     this._syncError = message;
     this.touch();
+  }
+
+  recordImportedStatus(
+    status: ListingStatus,
+    product: Product | null,
+    at: Date = new Date()
+  ): Result<void> {
+    if (status === 'live' && product && !product.canPublish()) {
+      return Err(new InvalidStateError('Cannot mark listing live for a sold product'));
+    }
+    this._status = status;
+    this._publishedAt = status === 'live' ? (this._publishedAt ?? at) : this._publishedAt;
+    this.touch();
+    return Ok(undefined);
   }
 
   private touch(): void {

@@ -1,9 +1,20 @@
 import { MarketplaceImportService } from '../MarketplaceImportService';
 import { Marketplace } from '../../../domain/entities/Marketplace';
 import { Listing } from '../../../domain/entities/Listing';
-import type { IMarketplaceAdapter, ImportedMarketplaceListing } from '../../../domain/services/MarketplaceAdapter';
+import { Product } from '../../../domain/entities/Product';
+import type {
+  IMarketplaceAdapter,
+  ImportedMarketplaceListing,
+} from '../../../domain/services/MarketplaceAdapter';
 import type { MarketplaceAccountRecord } from '../MarketplaceOAuthService';
-import { unwrap, money } from '../../../domain/testkit/support';
+import {
+  InMemoryProductRepository,
+  InMemoryListingRepository,
+  InMemoryMarketplaceRepository,
+  money,
+  unwrap,
+} from '../../../domain/testkit/support';
+import { InMemoryActivityLogRepository, idFactory } from '../../testkit/support';
 
 const connectedAccount: MarketplaceAccountRecord = {
   id: 'account-1',
@@ -16,12 +27,14 @@ const connectedAccount: MarketplaceAccountRecord = {
   updatedAt: new Date('2026-07-15T00:00:00.000Z'),
 };
 
-function remoteListing(overrides: Partial<ImportedMarketplaceListing> = {}): ImportedMarketplaceListing {
+function remoteListing(
+  overrides: Partial<ImportedMarketplaceListing> = {}
+): ImportedMarketplaceListing {
   return {
     externalListingId: 'olx-1',
     externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
     title: 'Remote camera',
-    description: 'Existing OLX advert',
+    description: 'Existing OLX advert with enough seller supplied detail.',
     price: 100,
     currency: 'PLN',
     status: 'live',
@@ -29,11 +42,16 @@ function remoteListing(overrides: Partial<ImportedMarketplaceListing> = {}): Imp
     category: 'Electronics',
     imageUrls: ['https://img/1.jpg'],
     remoteUpdatedAt: new Date('2026-07-14T00:00:00.000Z'),
+    metrics: { views: 7, watchers: 2, messages: 1 },
     ...overrides,
   };
 }
 
-function createService(remote: ImportedMarketplaceListing[], existing: Listing[] = []) {
+function createService(
+  remote: ImportedMarketplaceListing[],
+  existing: Listing[] = [],
+  runUnitOfWork?: ConstructorParameters<typeof MarketplaceImportService>[9]
+) {
   const marketplace = unwrap(
     Marketplace.create({
       id: 'marketplace-1',
@@ -41,8 +59,14 @@ function createService(remote: ImportedMarketplaceListing[], existing: Listing[]
       key: 'olx',
       name: 'OLX',
       connected: true,
-    }),
+    })
   );
+  const marketplaceRepo = new InMemoryMarketplaceRepository();
+  marketplaceRepo.items.set(marketplace.id, marketplace);
+  const productRepo = new InMemoryProductRepository();
+  const listingRepo = new InMemoryListingRepository();
+  for (const listing of existing) listingRepo.items.set(listing.id, listing);
+  const activityLog = new InMemoryActivityLogRepository();
   const adapter = {
     getKey: () => 'olx',
     publish: jest.fn(),
@@ -55,39 +79,73 @@ function createService(remote: ImportedMarketplaceListing[], existing: Listing[]
   const create = jest.fn(() => adapter);
   const getValidAccessToken = jest.fn(async () => 'access-token');
   const authenticatedHttpClient = jest.fn(() => ({ request: jest.fn() }));
+  const defaultUnitOfWork: ConstructorParameters<typeof MarketplaceImportService>[9] = async (
+    work
+  ) => work({ productRepo, listingRepo, activityLog });
   const service = new MarketplaceImportService(
-    { findByIdForWorkspace: jest.fn(async () => marketplace) } as any,
-    { findByMarketplace: jest.fn(async () => existing) } as any,
+    marketplaceRepo,
+    productRepo,
+    listingRepo,
     { findByMarketplaceId: jest.fn(async () => connectedAccount) } as any,
     { create },
     { getValidAccessToken },
     authenticatedHttpClient,
+    activityLog,
+    idFactory('import'),
+    runUnitOfWork ?? defaultUnitOfWork
   );
-  return { service, adapter, create, getValidAccessToken, authenticatedHttpClient };
+  return {
+    service,
+    adapter,
+    create,
+    getValidAccessToken,
+    authenticatedHttpClient,
+    productRepo,
+    listingRepo,
+    activityLog,
+  };
 }
 
 describe('MarketplaceImportService', () => {
   it('builds a read-only preview using account-scoped OLX credentials', async () => {
-    const { service, adapter, create, getValidAccessToken, authenticatedHttpClient } = createService([
-      remoteListing(),
-    ]);
+    const { service, adapter, create, getValidAccessToken, authenticatedHttpClient } =
+      createService([remoteListing()]);
 
-    const result = await service.preview({ workspaceId: 'workspace-1', marketplaceId: 'marketplace-1' });
+    const result = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
 
     if (result.isErr()) throw result.error;
     const preview = result.value;
     expect(getValidAccessToken).toHaveBeenCalledWith('marketplace-1');
     expect(authenticatedHttpClient).toHaveBeenCalledWith('access-token');
     expect(create).toHaveBeenCalledWith('olx', expect.any(Object));
-    expect(adapter.listOwnedListings).toHaveBeenCalledWith({ pageSize: undefined, statuses: undefined });
+    expect(adapter.listOwnedListings).toHaveBeenCalledWith({
+      pageSize: undefined,
+      statuses: undefined,
+    });
     expect(preview.readOnly).toBe(true);
-    expect(preview.totals).toEqual({ discovered: 1, new: 1, already_imported: 0, unsupported: 0 });
+    expect(preview.totals).toEqual({
+      discovered: 1,
+      new: 1,
+      already_imported: 0,
+      changed: 0,
+      unsupported: 0,
+      failed: 0,
+    });
     expect(preview.items[0]).toMatchObject({
       status: 'new',
       externalListingId: 'olx-1',
       title: 'Remote camera',
-      warnings: [],
+      warnings: expect.arrayContaining([
+        'unknown_cost_price',
+        'unknown_condition_requires_confirmation',
+      ]),
     });
+    expect(adapter.publish).not.toHaveBeenCalled();
+    expect(adapter.updateListing).not.toHaveBeenCalled();
+    expect(adapter.delist).not.toHaveBeenCalled();
   });
 
   it('marks already imported adverts by marketplace external id and reports mapping warnings', async () => {
@@ -99,21 +157,288 @@ describe('MarketplaceImportService', () => {
         marketplaceListingId: 'olx-1',
         price: money(100),
         status: 'live',
-      }),
+      })
     );
     const { service } = createService(
       [remoteListing({ price: null, category: null, imageUrls: [] })],
-      [existing],
+      [existing]
     );
 
-    const result = await service.preview({ workspaceId: 'workspace-1', marketplaceId: 'marketplace-1' });
+    const result = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
 
     if (result.isErr()) throw result.error;
-    expect(result.value.totals).toEqual({ discovered: 1, new: 0, already_imported: 1, unsupported: 0 });
-    expect(result.value.items[0].warnings).toEqual([
-      'missing_price',
-      'missing_category_mapping',
-      'missing_photos',
+    expect(result.value.totals).toEqual({
+      discovered: 1,
+      new: 0,
+      already_imported: 0,
+      changed: 0,
+      unsupported: 1,
+      failed: 0,
+    });
+    expect(result.value.items[0].warnings).toEqual(
+      expect.arrayContaining([
+        'missing_price',
+        'missing_category_mapping',
+        'missing_photos',
+        'missing_required_import_fields',
+      ])
+    );
+  });
+
+  it('imports eligible selected adverts locally without provider mutations and records provenance', async () => {
+    const { service, productRepo, listingRepo, activityLog, adapter } = createService([
+      remoteListing(),
     ]);
+
+    const result = await service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+      externalListingIds: ['olx-1'],
+      actorId: 'user-1',
+    });
+
+    if (result.isErr()) throw result.error;
+    expect(result.value).toMatchObject({ imported: 1, updated: 0, skipped: 0, failed: 0 });
+    const products = await productRepo.findByWorkspace('workspace-1');
+    expect(products).toHaveLength(1);
+    expect(products[0].tags).toEqual(
+      expect.arrayContaining(['imported:olx', 'cost-price:unknown'])
+    );
+    expect(products[0].condition).toBe('unknown');
+    const listings = await listingRepo.findByMarketplace('marketplace-1');
+    expect(listings).toHaveLength(1);
+    expect(listings[0]).toMatchObject({
+      marketplaceListingId: 'olx-1',
+      externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
+    });
+    expect(listings[0].views).toBe(7);
+    expect(listings[0].syncError).toBeNull();
+    expect(activityLog.entries[0]).toMatchObject({
+      action: 'olx_import_adopted',
+      actorType: 'user',
+      actorId: 'user-1',
+      metadata: expect.objectContaining({
+        marketplace: 'olx',
+        marketplaceAccountId: 'account-1',
+        externalListingId: 'olx-1',
+        readOnlyProviderOperation: true,
+      }),
+    });
+    expect(adapter.publish).not.toHaveBeenCalled();
+    expect(adapter.updateListing).not.toHaveBeenCalled();
+    expect(adapter.delist).not.toHaveBeenCalled();
+  });
+
+  it('treats omitted selection as import all and explicit empty selection as import none', async () => {
+    const { service, productRepo } = createService([remoteListing()]);
+
+    const emptySelection = await service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+      externalListingIds: [],
+    });
+
+    if (emptySelection.isErr()) throw emptySelection.error;
+    expect(emptySelection.value).toMatchObject({ imported: 0, updated: 0, skipped: 0, failed: 0 });
+    expect(await productRepo.findByWorkspace('workspace-1')).toHaveLength(0);
+
+    const omittedSelection = await service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+
+    if (omittedSelection.isErr()) throw omittedSelection.error;
+    expect(omittedSelection.value).toMatchObject({
+      imported: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+    });
+  });
+
+  it('flags duplicate remote identities as failed preview items', async () => {
+    const { service } = createService([
+      remoteListing({ externalListingId: 'dup' }),
+      remoteListing({ externalListingId: 'dup', title: 'Duplicate camera' }),
+    ]);
+
+    const result = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+
+    if (result.isErr()) throw result.error;
+    expect(result.value.totals.failed).toBe(2);
+    expect(result.value.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalListingId: 'dup',
+          status: 'failed',
+          warnings: expect.arrayContaining(['duplicate_remote_external_listing_id']),
+        }),
+      ])
+    );
+  });
+
+  it('refreshes changed listing and product fields with account provenance', async () => {
+    const product = unwrap(
+      Product.create({
+        id: 'product-1',
+        workspaceId: 'workspace-1',
+        sku: 'SKU-1',
+        name: 'Old camera',
+        description: 'Old imported description with enough detail.',
+        costPrice: money(10),
+        sellingPrice: money(80),
+        condition: 'good',
+        category: 'Old category',
+        status: 'active',
+        images: ['https://img/old.jpg'],
+      })
+    );
+    const existing = unwrap(
+      Listing.create({
+        id: 'listing-1',
+        productId: product.id,
+        marketplaceId: 'marketplace-1',
+        marketplaceListingId: 'olx-1',
+        price: money(80),
+        status: 'draft',
+      })
+    );
+    const { service, productRepo, listingRepo, activityLog } = createService(
+      [remoteListing()],
+      [existing]
+    );
+    productRepo.items.set(product.id, product);
+
+    const preview = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+    if (preview.isErr()) throw preview.error;
+    expect(preview.value.items[0]).toMatchObject({
+      status: 'changed',
+      proposedChanges: expect.arrayContaining([
+        'price',
+        'status',
+        'product_title',
+        'product_description',
+        'product_category',
+        'product_images',
+        'product_selling_price',
+      ]),
+    });
+
+    const result = await service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+      externalListingIds: ['olx-1'],
+      actorId: 'user-1',
+    });
+
+    if (result.isErr()) throw result.error;
+    expect(result.value).toMatchObject({ imported: 0, updated: 1, skipped: 0, failed: 0 });
+    expect(productRepo.items.get(product.id)).toMatchObject({
+      name: 'Remote camera',
+      description: 'Existing OLX advert with enough seller supplied detail.',
+      category: 'Electronics',
+    });
+    expect(productRepo.items.get(product.id)?.sellingPrice.amount).toBe(100);
+    expect(productRepo.items.get(product.id)?.images).toEqual(['https://img/1.jpg']);
+    expect(listingRepo.items.get(existing.id)).toMatchObject({ status: 'live' });
+    expect(listingRepo.items.get(existing.id)?.syncError).toBeNull();
+    expect(activityLog.entries[0]).toMatchObject({
+      action: 'olx_import_refreshed',
+      metadata: expect.objectContaining({ marketplaceAccountId: 'account-1' }),
+    });
+  });
+
+  it('returns item-level failed preview entries for unmappable discovered adverts', async () => {
+    const { service } = createService([
+      remoteListing(),
+      { ...remoteListing({ externalListingId: '' }), title: '' },
+    ]);
+
+    const result = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+
+    if (result.isErr()) throw result.error;
+    expect(result.value.totals).toMatchObject({ discovered: 2, new: 1, failed: 1 });
+    expect(result.value.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'failed',
+          externalListingId: 'unmapped-2',
+          warnings: expect.arrayContaining(['item_mapping_failed']),
+        }),
+      ])
+    );
+  });
+
+  it('returns Result.Err when access token refresh fails', async () => {
+    const { service, getValidAccessToken } = createService([remoteListing()]);
+    getValidAccessToken.mockRejectedValueOnce(new Error('refresh failed'));
+
+    const result = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.message).toBe('refresh failed');
+  });
+
+  it('does not revive sold products from imported live status updates', async () => {
+    const product = unwrap(
+      Product.create({
+        id: 'product-1',
+        workspaceId: 'workspace-1',
+        sku: 'SKU-1',
+        name: 'Sold camera',
+        description: 'Sold imported description with enough detail.',
+        costPrice: money(10),
+        sellingPrice: money(80),
+        condition: 'good',
+        category: 'Electronics',
+        status: 'active',
+      })
+    );
+    const sold = product.transitionTo('sold');
+    if (sold.isErr()) throw sold.error;
+    const existing = unwrap(
+      Listing.create({
+        id: 'listing-1',
+        productId: product.id,
+        marketplaceId: 'marketplace-1',
+        marketplaceListingId: 'olx-1',
+        price: money(100),
+        status: 'draft',
+      })
+    );
+    const { service, productRepo, listingRepo } = createService([remoteListing()], [existing]);
+    productRepo.items.set(product.id, product);
+
+    const result = await service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+      externalListingIds: ['olx-1'],
+    });
+
+    if (result.isErr()) throw result.error;
+    expect(result.value).toMatchObject({ imported: 0, updated: 0, skipped: 0, failed: 1 });
+    expect(listingRepo.items.get(existing.id)?.status).toBe('draft');
+    expect(productRepo.items.get(product.id)).toMatchObject({
+      status: 'sold',
+      name: 'Sold camera',
+      description: 'Sold imported description with enough detail.',
+      category: 'Electronics',
+    });
+    expect(productRepo.items.get(product.id)?.sellingPrice.amount).toBe(80);
   });
 });
