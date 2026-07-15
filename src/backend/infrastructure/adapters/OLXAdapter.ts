@@ -214,16 +214,15 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     const responses = await Promise.all(
       externalListingIds.map(async (id) => {
         try {
-          const res = await this.http.request<
-            OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>
-          >({
-            method: 'GET',
-            url: `${this.baseUrl}/adverts/${id}`,
-          });
+          const [res, statistics] = await Promise.all([
+            this.http.request<OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>>({
+              method: 'GET',
+              url: `${this.baseUrl}/adverts/${id}`,
+            }),
+            this.fetchAdvertStatistics(id),
+          ]);
           const advert = this.unwrapAdvert(res.data);
-          return this.toSyncedListing(
-            this.withStatistics(advert, await this.fetchAdvertStatistics(id))
-          );
+          return this.toSyncedListing(this.withStatistics(advert, statistics));
         } catch (error) {
           if (error instanceof HttpError && error.status === 404) {
             return this.missingSyncedListing(id);
@@ -239,17 +238,16 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     externalListingId: string,
   ): Promise<SyncedListing | null> {
     try {
-      const res = await this.http.request<
-        OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse> | null
-      >({
-        method: 'GET',
-        url: `${this.baseUrl}/adverts/${externalListingId}`,
-      });
+      const [res, statistics] = await Promise.all([
+        this.http.request<OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse> | null>({
+          method: 'GET',
+          url: `${this.baseUrl}/adverts/${externalListingId}`,
+        }),
+        this.fetchAdvertStatistics(externalListingId),
+      ]);
       if (!res.data) return null;
       const advert = this.unwrapAdvert(res.data);
-      return this.toSyncedListing(
-        this.withStatistics(advert, await this.fetchAdvertStatistics(externalListingId))
-      );
+      return this.toSyncedListing(this.withStatistics(advert, statistics));
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) return null;
       throw error;
@@ -282,13 +280,10 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
         query: { page, limit: pageSize, status },
       });
       imported.push(
-        ...(await Promise.all(
-          res.data.data.map(async (advert) =>
-            this.toImportedListing(
-              this.withStatistics(advert, await this.fetchAdvertStatistics(String(advert.id)))
-            )
-          )
-        ))
+        ...(await this.mapWithConcurrency(res.data.data, 5, async (advert) => {
+          const statistics = await this.fetchAdvertStatistics(String(advert.id));
+          return this.toImportedListing(this.withStatistics(advert, statistics));
+        }))
       );
       const lastPage = res.data.meta?.last_page;
       if (lastPage !== undefined ? page >= lastPage : !res.data.links?.next) break;
@@ -308,17 +303,15 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
   ): Promise<OlxAdvertStatisticsResponse | null> {
     try {
       const res = await this.http.request<
-        OlxAdvertStatisticsResponse | OlxResponseEnvelope<OlxAdvertStatisticsResponse>
+        OlxAdvertStatisticsResponse | OlxResponseEnvelope<OlxAdvertStatisticsResponse> | null
       >({
         method: 'GET',
         url: `${this.baseUrl}/adverts/${externalListingId}/statistics`,
       });
+      if (!res.data) return null;
       return ('data' in res.data ? res.data.data : res.data) as OlxAdvertStatisticsResponse;
-    } catch (error) {
-      if (error instanceof HttpError && (error.status === 404 || error.status === 403)) {
-        return null;
-      }
-      throw error;
+    } catch {
+      return null;
     }
   }
 
@@ -408,7 +401,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
   }
 
   private extractCounter(data: OlxAdvertResponse, keys: string[]): number | null {
-    for (const source of [data.metrics, data.statistics, data.stats, data.counters, data]) {
+    for (const source of [data.statistics, data.metrics, data.stats, data.counters, data]) {
       if (!source) continue;
       for (const key of keys) {
         const value = (source as Record<string, unknown>)[key];
@@ -459,6 +452,20 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     if (!/^\d+$/.test(trimmed)) return null;
     const parsed = Number(trimmed);
     return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    mapper: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results: R[] = [];
+    for (let index = 0; index < items.length; index += limit) {
+      const batch = items.slice(index, index + limit);
+      results.push(...(await Promise.all(batch.map(mapper))));
+    }
+    return results;
   }
 
   private assertPublishDetails(categoryId: number | undefined): asserts categoryId is number {
