@@ -76,6 +76,7 @@ import { RunHermesUseCase } from '../../application/usecases/RunHermesUseCase';
 import { ApproveHermesEventUseCase } from '../../application/usecases/ApproveHermesEventUseCase';
 import { DismissHermesEventUseCase } from '../../application/usecases/DismissHermesEventUseCase';
 import { ProductApplicationService } from '../../application/services/ProductApplicationService';
+import { ProductAIDraftService } from '../../application/services/ProductAIDraftService';
 import { ListingApplicationService } from '../../application/services/ListingApplicationService';
 import { HermesApplicationService } from '../../application/services/HermesApplicationService';
 import { AnalyticsApplicationService } from '../../application/services/AnalyticsApplicationService';
@@ -340,6 +341,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     createProductUC,
     updateProductUC
   );
+  const productAIDraftService = new ProductAIDraftService();
   const listingService = new ListingApplicationService(
     listingRepo,
     publishListingUC,
@@ -446,6 +448,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
   // 10. Assemble AppDeps.
   const deps: AppDeps = {
     productService,
+    productAIDraftService,
     listingService,
     hermesService,
     analyticsService,

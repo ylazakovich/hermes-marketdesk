@@ -25,6 +25,8 @@ export class ListingService {
     externalUrl: string | null = null,
     publishedAt: Date = new Date(),
     expiresAt: Date | null = null,
+    remoteStatus: string | null = null,
+    remoteImageUrls: string[] = [],
   ): Promise<Result<Listing>> {
     const listing = await this.listingRepo.findById(listingId);
     if (!listing) return Err(new NotFoundError(`Listing not found: ${listingId}`));
@@ -46,8 +48,18 @@ export class ListingService {
       externalUrl,
       publishedAt,
       expiresAt,
+      remoteStatus,
     );
     if (published.isErr()) return published;
+
+    if (remoteImageUrls.length > 0) {
+      product.clearImages();
+      for (const imageUrl of remoteImageUrls) {
+        const added = product.addImage(imageUrl);
+        if (added.isErr()) return added;
+      }
+      await this.productRepo.save(product);
+    }
 
     await this.listingRepo.save(listing);
     await this.publish('listing.published', listing.id, {
@@ -56,6 +68,8 @@ export class ListingService {
       marketplaceId: listing.marketplaceId,
       externalListingId,
       externalUrl,
+      remoteStatus: listing.remoteStatus,
+      remoteImageCount: remoteImageUrls.length,
     });
 
     return Ok(listing);

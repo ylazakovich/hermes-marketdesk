@@ -19,7 +19,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { Product, ProductStatus } from '@shared/types';
 import { PRODUCT_STATUS_LIST } from '@shared/constants';
-import { useCreateProduct, useProducts } from '../services/hooks/index.js';
+import { useCreateProduct, useGenerateProductAIDraft, useProducts } from '../services/hooks/index.js';
 import type { ProductListParams } from '../state/api/index.js';
 import { useAppDispatch, useAppSelector } from '../state/hooks.js';
 import { enqueueToast } from '../state/slices/uiSlice.js';
@@ -52,11 +52,10 @@ const ProductsPage: React.FC = () => {
   const [tags, setTags] = useState<string[]>([]);
   const [priceMin, setPriceMin] = useState<string>('');
   const [priceMax, setPriceMax] = useState<string>('');
-  const queryParams = new URLSearchParams(location.search);
-  const [search, setSearch] = useState(queryParams.get('search') ?? '');
+  const [search, setSearch] = useState('');
   const [sort, setSort] = useState('-updatedAt');
   const [page, setPage] = useState(0);
-  const wizardOpen = queryParams.get('newProduct') === '1';
+  const wizardOpen = new URLSearchParams(location.search).get('newProduct') === '1';
 
   const openWizard = () => navigate('/products?newProduct=1');
   const closeWizard = () => navigate('/products', { replace: true });
@@ -72,6 +71,7 @@ const ProductsPage: React.FC = () => {
 
   const { data, isLoading, isFetching, isError, error, refetch } = useProducts(params);
   const [createProduct, { isLoading: creating }] = useCreateProduct();
+  const [generateProductAIDraft] = useGenerateProductAIDraft();
 
   const items = data?.items ?? [];
   const filtered = useMemo(() => {
@@ -241,6 +241,7 @@ const ProductsPage: React.FC = () => {
         <ProductWizardForm
           submitting={creating}
           onSubmit={handleCreate}
+          onGenerateAIDraft={(request) => generateProductAIDraft(request).unwrap()}
           onCancel={closeWizard}
         />
       </Modal>

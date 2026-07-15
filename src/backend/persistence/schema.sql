@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS listings (
   external_url TEXT,
   price DECIMAL(10, 2) NOT NULL,
   status VARCHAR(50) DEFAULT 'draft',
+  remote_status VARCHAR(100),
   views INT DEFAULT 0,
   watchers INT DEFAULT 0,
   messages INT DEFAULT 0,

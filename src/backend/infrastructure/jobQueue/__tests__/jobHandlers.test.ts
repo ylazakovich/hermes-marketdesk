@@ -688,7 +688,10 @@ describe('PublishListingHandler', () => {
       'l-3',
       'olx-99',
       publishResult.externalUrl,
-      publishResult.publishedAt
+      publishResult.publishedAt,
+      null,
+      null,
+      []
     );
     expect(result.finalized).toBe(true);
     // The handler must NOT double-emit; the finalizer owns the canonical event.
@@ -799,7 +802,10 @@ describe('PublishListingHandler', () => {
       'l-checkpoint',
       publishResult.externalListingId,
       publishResult.externalUrl,
-      publishResult.publishedAt
+      publishResult.publishedAt,
+      null,
+      null,
+      []
     );
   });
 
@@ -927,7 +933,10 @@ describe('PublishListingHandler', () => {
       'l-live',
       publishResult.externalListingId,
       publishResult.externalUrl,
-      publishResult.publishedAt
+      publishResult.publishedAt,
+      null,
+      null,
+      []
     );
   });
 
@@ -1050,7 +1059,10 @@ describe('PublishListingHandler', () => {
       'l-6',
       'olx-99',
       publishResult.externalUrl,
-      publishResult.publishedAt
+      publishResult.publishedAt,
+      null,
+      null,
+      []
     );
     expect(result.finalized).toBe(true);
   });

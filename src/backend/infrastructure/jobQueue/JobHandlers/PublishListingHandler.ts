@@ -104,7 +104,9 @@ export interface ListingFinalizer {
     externalListingId: string,
     externalUrl?: string | null,
     publishedAt?: Date,
-    expiresAt?: Date | null
+    expiresAt?: Date | null,
+    remoteStatus?: string | null,
+    remoteImageUrls?: string[]
   ): Promise<Result<Listing>>;
   // Optional idempotency probe: reports whether the listing was already published
   // (live + marketplaceListingId set) by a prior attempt. Lets the handler skip the
@@ -328,7 +330,10 @@ export class PublishListingHandler {
             data.listingId,
             result.externalListingId,
             result.externalUrl ?? null,
-            result.publishedAt
+            result.publishedAt,
+            null,
+            result.remoteStatus ?? null,
+            result.remoteImageUrls ?? []
           ),
         (attempt) => attempt.isOk(),
         (attempt) => (attempt.isErr() ? attempt.error : undefined)
