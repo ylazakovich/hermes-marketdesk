@@ -52,10 +52,11 @@ const ProductsPage: React.FC = () => {
   const [tags, setTags] = useState<string[]>([]);
   const [priceMin, setPriceMin] = useState<string>('');
   const [priceMax, setPriceMax] = useState<string>('');
-  const [search, setSearch] = useState('');
+  const queryParams = new URLSearchParams(location.search);
+  const [search, setSearch] = useState(queryParams.get('search') ?? '');
   const [sort, setSort] = useState('-updatedAt');
   const [page, setPage] = useState(0);
-  const wizardOpen = new URLSearchParams(location.search).get('newProduct') === '1';
+  const wizardOpen = queryParams.get('newProduct') === '1';
 
   const openWizard = () => navigate('/products?newProduct=1');
   const closeWizard = () => navigate('/products', { replace: true });
