@@ -115,6 +115,7 @@ export interface ListingFinalizer {
     externalListingId: string | null;
     externalUrl: string | null;
     publishedAt: Date | null;
+    updatedAt?: Date | null;
   } | null>;
 }
 
@@ -152,6 +153,62 @@ export class PublishListingHandler {
     // Backward-compatible fallback for jobs that were already queued before
     // operationId became part of the payload. New enqueue paths always set it.
     const operationId = data.operationId ?? data.listingId;
+    if (data.mode === 'update') {
+      const state = await this.listings?.getPublishState?.(data.listingId);
+      if (!state?.isPublished || !state.externalListingId) {
+        throw new InvalidStateError(
+          `Listing ${data.listingId} must be live with an external id before marketplace update`
+        );
+      }
+      if (
+        state.updatedAt &&
+        data.listingUpdatedAt &&
+        state.updatedAt.getTime() > new Date(data.listingUpdatedAt).getTime()
+      ) {
+        throw new InvalidStateError(
+          `Listing ${data.listingId} has changed since this marketplace update was queued`
+        );
+      }
+
+      let adapter: IMarketplaceAdapter;
+      if (data.marketplaceKey === 'olx') {
+        if (!this.accessTokens || !this.authenticatedHttpClient) {
+          throw new InvalidStateError('OLX update handler is missing OAuth dependencies');
+        }
+        if (!data.marketplaceId) {
+          throw new InvalidStateError('Update job is missing marketplaceId for OLX OAuth');
+        }
+        const accessToken = await retryTransientPhase(() =>
+          this.accessTokens!.getValidAccessToken(data.marketplaceId)
+        );
+        adapter = this.adapters.create(
+          data.marketplaceKey,
+          this.authenticatedHttpClient(accessToken)
+        );
+      } else {
+        adapter = this.adapters.create(data.marketplaceKey);
+      }
+
+      if (!Object.keys(data.changes).some((key) => ['productName', 'description', 'price'].includes(key))) {
+        throw new InvalidStateError('Update job changes must include productName, description, or price');
+      }
+
+      await adapter.updateListing(
+        state.externalListingId,
+        data.changes
+      );
+
+      return {
+        marketplaceKey: data.marketplaceKey,
+        listingId: data.listingId,
+        result: {
+          externalListingId: state.externalListingId,
+          externalUrl: state.externalUrl,
+          publishedAt: state.publishedAt ?? new Date(),
+        },
+        finalized: true,
+      };
+    }
     let checkpointOperationId = operationId;
     const checkpoint = await this.publishAttempts?.find(operationId);
     let checkpointFinalized = checkpoint?.status === 'finalized';

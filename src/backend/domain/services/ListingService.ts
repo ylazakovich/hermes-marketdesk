@@ -72,6 +72,7 @@ export class ListingService {
     externalListingId: string | null;
     externalUrl: string | null;
     publishedAt: Date | null;
+    updatedAt?: Date | null;
   } | null> {
     const listing = await this.listingRepo.findById(listingId);
     if (!listing) return null;
@@ -80,6 +81,7 @@ export class ListingService {
       externalListingId: listing.marketplaceListingId,
       externalUrl: listing.externalUrl,
       publishedAt: listing.publishedAt,
+      updatedAt: listing.updatedAt,
     };
   }
 
