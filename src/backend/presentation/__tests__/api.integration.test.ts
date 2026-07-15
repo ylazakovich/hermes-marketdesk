@@ -5,7 +5,9 @@
 
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
+import { z } from 'zod';
 import { buildApp, type AppDeps } from '../http/app';
+import { validateBody } from '../http/middleware/ValidationMiddleware';
 import { signToken } from '../http/middleware/AuthMiddleware';
 import type {
   IAuthUserStore,
@@ -578,6 +580,35 @@ describe('Presentation API', () => {
       expect(res.status).toBe(422);
       expect(res.body.success).toBe(false);
       expect(res.body.error.code).toBe('INVALID_STATE');
+    });
+
+    it('dismisses a pending event without requiring an explicit JSON body', async () => {
+      const { app } = await buildTestApp();
+      const res = await auth(request(app).post('/api/hermes/events/pending/dismiss'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('preserves explicit null bodies as validation failures', () => {
+      const schema = z.object({ actorId: z.string().optional() });
+      const req = { body: null } as any;
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+      const next = jest.fn();
+
+      validateBody(schema)(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({ code: 'VALIDATION_ERROR' }),
+        }),
+      );
+      expect(next).not.toHaveBeenCalled();
     });
 
     it('returns a 404 error envelope for an unknown event', async () => {
