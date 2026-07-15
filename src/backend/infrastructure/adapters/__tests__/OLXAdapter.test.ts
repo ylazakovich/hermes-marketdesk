@@ -148,6 +148,32 @@ describe('OLXAdapter', () => {
     });
   });
 
+  it('maps OLX statistics-shaped engagement counters from live advert sync responses', async () => {
+    const http = mockClient(() => ({
+      status: 200,
+      data: {
+        data: {
+          id: 1085426829,
+          status: 'active',
+          public_url: 'https://www.olx.pl/d/oferta/airpods-1085426829',
+          statistics: { advert_views: '2', favorites_count: 0, contact_count: 0 },
+        },
+      },
+    }));
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    const [synced] = await adapter.sync(['1085426829']);
+
+    expect(synced).toMatchObject({
+      externalListingId: '1085426829',
+      status: 'live',
+      remoteStatus: 'active',
+      views: 2,
+      watchers: 0,
+      messages: 0,
+    });
+  });
+
   it('discovers owned OLX adverts through paginated read-only list calls', async () => {
     const calls: HttpRequestConfig[] = [];
     const http = mockClient((config) => {
