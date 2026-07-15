@@ -33,6 +33,7 @@ interface MarketplaceUpdateOperation {
 
 interface ApplyChangeOutcome {
   marketplaceUpdates: MarketplaceUpdateOperation[];
+  skippedLiveListings?: Array<{ listingId: string; reason: string }>;
 }
 
 type MarketplaceUpdateChanges = NonNullable<PublishListingJob['changes']>;
@@ -91,7 +92,12 @@ export class ApproveHermesEventUseCase {
                 status: 'queued',
                 operations: applied.value.marketplaceUpdates,
               }
-            : { status: 'not_required' },
+            : (applied.value.skippedLiveListings?.length ?? 0) > 0
+              ? {
+                  status: 'retry_required',
+                  skippedLiveListings: applied.value.skippedLiveListings,
+                }
+              : { status: 'not_required' },
       },
       createdAt: event.resolvedAt ?? new Date(),
     });
@@ -231,15 +237,22 @@ export class ApproveHermesEventUseCase {
     changes: MarketplaceUpdateChanges
   ): Promise<Result<ApplyChangeOutcome>> {
     const operations: MarketplaceUpdateOperation[] = [];
+    const skippedLiveListings: Array<{ listingId: string; reason: string }> = [];
     const listings = await this.listingRepo.findByProduct(product.id);
     for (const listing of listings) {
       if (!listing.isLive() || !listing.marketplaceListingId) continue;
 
       const marketplace = await this.marketplaceRepo.findById(listing.marketplaceId);
-      if (!marketplace || !marketplace.isConnected()) continue;
+      if (!marketplace || !marketplace.isConnected()) {
+        skippedLiveListings.push({ listingId: listing.id, reason: 'marketplace_not_connected' });
+        continue;
+      }
       if (this.marketplaceAccountRepo) {
         const account = await this.marketplaceAccountRepo.findByMarketplaceId(marketplace.id);
-        if (!account || account.status !== 'connected') continue;
+        if (!account || account.status !== 'connected') {
+          skippedLiveListings.push({ listingId: listing.id, reason: 'marketplace_account_not_connected' });
+          continue;
+        }
       }
 
       const operationId = this.idGenerator();
@@ -266,7 +279,7 @@ export class ApproveHermesEventUseCase {
       );
       operations.push({ operationId, listingId: listing.id, marketplaceId: marketplace.id });
     }
-    return Ok({ marketplaceUpdates: operations });
+    return Ok({ marketplaceUpdates: operations, skippedLiveListings });
   }
 
   private async requireProduct(productId: string | null): Promise<Result<Product>> {

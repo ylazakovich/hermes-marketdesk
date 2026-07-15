@@ -115,6 +115,7 @@ export interface ListingFinalizer {
     externalListingId: string | null;
     externalUrl: string | null;
     publishedAt: Date | null;
+    updatedAt?: Date | null;
   } | null>;
 }
 
@@ -159,9 +160,21 @@ export class PublishListingHandler {
           `Listing ${data.listingId} must be live with an external id before marketplace update`
         );
       }
+      if (
+        state.updatedAt &&
+        data.listingUpdatedAt &&
+        state.updatedAt.getTime() > new Date(data.listingUpdatedAt).getTime()
+      ) {
+        throw new InvalidStateError(
+          `Listing ${data.listingId} has changed since this marketplace update was queued`
+        );
+      }
 
       let adapter: IMarketplaceAdapter;
-      if (data.marketplaceKey === 'olx' && this.accessTokens && this.authenticatedHttpClient) {
+      if (data.marketplaceKey === 'olx') {
+        if (!this.accessTokens || !this.authenticatedHttpClient) {
+          throw new InvalidStateError('OLX update handler is missing OAuth dependencies');
+        }
         if (!data.marketplaceId) {
           throw new InvalidStateError('Update job is missing marketplaceId for OLX OAuth');
         }
@@ -178,11 +191,7 @@ export class PublishListingHandler {
 
       await adapter.updateListing(
         state.externalListingId,
-        data.changes ?? {
-          productName: data.input.productName,
-          description: data.input.description,
-          price: data.input.price,
-        }
+        data.changes
       );
 
       return {

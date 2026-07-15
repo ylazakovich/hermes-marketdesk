@@ -30,7 +30,7 @@ export interface ListingPublishJobInput {
   imageUrls: string[];
 }
 
-export interface PublishListingJob {
+interface BasePublishListingJob {
   // Stable id for one logical publish/relist operation. Queue retries reuse it;
   // a later relist of the same listing receives a new id and checkpoint.
   operationId?: string;
@@ -41,8 +41,19 @@ export interface PublishListingJob {
   marketplaceId: string;
   listingId: string;
   input: ListingPublishJobInput;
+}
+
+export interface PublishOrRelistListingJob extends BasePublishListingJob {
+  mode?: 'publish' | 'relist';
   changes?: Partial<Pick<ListingPublishJobInput, 'price' | 'description' | 'productName'>>;
 }
+
+export interface UpdateListingJob extends BasePublishListingJob {
+  mode: 'update';
+  changes: Partial<Pick<ListingPublishJobInput, 'price' | 'description' | 'productName'>>;
+}
+
+export type PublishListingJob = PublishOrRelistListingJob | UpdateListingJob;
 
 export interface SyncMarketplaceJob {
   marketplaceKey: MarketplaceKey;

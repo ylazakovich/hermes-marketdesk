@@ -206,6 +206,49 @@ describe('ApproveHermesEventUseCase', () => {
     });
   });
 
+  it('queues marketplace updates for approved descriptions on live listings', async () => {
+    const { useCase, eventRepo, listingRepo, publishQueue, activityLog } = setup();
+    const liveListing = unwrap(
+      Listing.create({
+        id: 'lst-live-description',
+        productId: 'prod-1',
+        marketplaceId: 'mp-1',
+        marketplaceListingId: 'olx-desc',
+        price: money(100),
+        status: 'live',
+      })
+    );
+    listingRepo.items.set(liveListing.id, liveListing);
+    const description = 'A richer product description for buyers.';
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-description-live',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'listing_optimization',
+        severity: 'info',
+        title: 'Improve description',
+        proposedChange: {
+          kind: 'description',
+          field: 'description',
+          from: 'Old description',
+          to: description,
+        },
+      })
+    );
+    await eventRepo.save(event);
+
+    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+
+    expect(result.isOk()).toBe(true);
+    expect(publishQueue.jobs[0].data).toMatchObject({
+      mode: 'update',
+      listingId: 'lst-live-description',
+      changes: { description },
+    });
+    expect(activityLog.entries[0].metadata.marketplaceSync).toMatchObject({ status: 'queued' });
+  });
+
   it('keeps draft listings local-only for approved description changes', async () => {
     const { useCase, eventRepo, publishQueue, activityLog } = setup();
     const event = unwrap(
@@ -231,6 +274,44 @@ describe('ApproveHermesEventUseCase', () => {
     expect(result.isOk()).toBe(true);
     expect(publishQueue.jobs).toHaveLength(0);
     expect(activityLog.entries[0].metadata.marketplaceSync).toEqual({ status: 'not_required' });
+  });
+
+  it('records retry-required sync state when a live listing account is disconnected', async () => {
+    const { useCase, eventRepo, listingRepo, publishQueue, activityLog } = setup('missing');
+    const liveListing = unwrap(
+      Listing.create({
+        id: 'lst-live-disconnected',
+        productId: 'prod-1',
+        marketplaceId: 'mp-1',
+        marketplaceListingId: 'olx-missing-account',
+        price: money(100),
+        status: 'live',
+      })
+    );
+    listingRepo.items.set(liveListing.id, liveListing);
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-title-disconnected',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'listing_optimization',
+        severity: 'warning',
+        title: 'Improve title',
+        proposedChange: { kind: 'title', field: 'title', from: 'Lamp', to: 'Better Lamp' },
+      })
+    );
+    await eventRepo.save(event);
+
+    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+
+    expect(result.isOk()).toBe(true);
+    expect(publishQueue.jobs).toHaveLength(0);
+    expect(activityLog.entries[0].metadata.marketplaceSync).toEqual({
+      status: 'retry_required',
+      skippedLiveListings: [
+        { listingId: 'lst-live-disconnected', reason: 'marketplace_account_not_connected' },
+      ],
+    });
   });
 
   it('updates listing price locally and queues remote price update for live listings', async () => {
