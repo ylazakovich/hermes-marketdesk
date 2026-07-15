@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.8.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.7.0...hermes-marketdesk-v0.8.0) (2026-07-15)
+
+
+### ✨ Features
+
+* **olx:** import existing adverts ([#133](https://github.com/ylazakovich/hermes-marketdesk/issues/133)) ([7403716](https://github.com/ylazakovich/hermes-marketdesk/commit/74037161f96b53d83b16e84830b04d61d5d4d37b))
+* store OLX app credentials per workspace ([#129](https://github.com/ylazakovich/hermes-marketdesk/issues/129)) ([18d1661](https://github.com/ylazakovich/hermes-marketdesk/commit/18d16610abdf7b3f2ff5a1b628e56b10d5522c2e))
+
+
+### 🐛 Bug Fixes
+
+* **hermes:** sync approved suggestions to listings ([#131](https://github.com/ylazakovich/hermes-marketdesk/issues/131)) ([a487049](https://github.com/ylazakovich/hermes-marketdesk/commit/a48704961e4cb927d7e6fd1925a74e580c5c8d46))
+* **products:** show listing titles in product previews ([#130](https://github.com/ylazakovich/hermes-marketdesk/issues/130)) ([d6be8dc](https://github.com/ylazakovich/hermes-marketdesk/commit/d6be8dc906236849f5b0717a0c007776df8befec))
+
+
+### 📚 Documentation
+
+* **deployment:** add Caddy + Cloudflare VPS setup guide ([#134](https://github.com/ylazakovich/hermes-marketdesk/issues/134)) ([a199530](https://github.com/ylazakovich/hermes-marketdesk/commit/a199530411bb66bba051d12cabc3636549684aff))
+
+
+### 🧹 Chores
+
+* **deps:** lock file maintenance ([#136](https://github.com/ylazakovich/hermes-marketdesk/issues/136)) ([b90bbe9](https://github.com/ylazakovich/hermes-marketdesk/commit/b90bbe99a182728662166589e2c7a9220cd4ea52))
+* **deps:** update minor and patch updates ([#135](https://github.com/ylazakovich/hermes-marketdesk/issues/135)) ([4bf3af5](https://github.com/ylazakovich/hermes-marketdesk/commit/4bf3af5c866c0d0fc426364067ada76b1bacd412))
+
 ## [0.7.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.6.0...hermes-marketdesk-v0.7.0) (2026-07-15)
 
 
