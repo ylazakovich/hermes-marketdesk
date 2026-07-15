@@ -49,12 +49,19 @@ export const mainPreviewImageSx = {
 
 export function remoteMarketplacePresentation(listing: Listing | undefined, marketplaceName: string) {
   const label = listing?.remoteStatusLabel;
+  const isPending = listing?.isRemotePending === true;
   return {
     title: `${marketplaceName} listing`,
-    status: label ? `${label} on ${marketplaceName}` : `Not synced with ${marketplaceName}`,
-    explanation: listing?.isRemotePending
+    status: label
+      ? `${label} on ${marketplaceName}`
+      : isPending
+        ? `Pending on ${marketplaceName}`
+        : `Not synced with ${marketplaceName}`,
+    explanation: isPending
       ? `${marketplaceName} is still moderating or activating this listing. Metrics may be unavailable until it becomes active.`
-      : `Current listing status reported by ${marketplaceName}. This is separate from the product status in MarketDesk.`,
+      : label
+        ? `Current listing status reported by ${marketplaceName}. This is separate from the product status in MarketDesk.`
+        : `${marketplaceName} has not reported a listing status yet.`,
     externalUrl: listing?.externalUrl,
   };
 }

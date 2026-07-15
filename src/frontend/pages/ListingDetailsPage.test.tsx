@@ -68,6 +68,29 @@ describe('ListingDetailsPage presentation', () => {
     );
   });
 
+  it('keeps pending and not-yet-synced provider states internally consistent', () => {
+    expect(
+      remoteMarketplacePresentation(
+        { ...listing, remoteStatusLabel: undefined, isRemotePending: true },
+        'OLX',
+      ),
+    ).toMatchObject({
+      status: 'Pending on OLX',
+      explanation:
+        'OLX is still moderating or activating this listing. Metrics may be unavailable until it becomes active.',
+    });
+
+    expect(
+      remoteMarketplacePresentation(
+        { ...listing, remoteStatusLabel: undefined, isRemotePending: false },
+        'OLX',
+      ),
+    ).toMatchObject({
+      status: 'Not synced with OLX',
+      explanation: 'OLX has not reported a listing status yet.',
+    });
+  });
+
   it('shows only pending Hermes recommendations for the current product', () => {
     const events = [
       event('current', 'product-1', 'pending_review'),
