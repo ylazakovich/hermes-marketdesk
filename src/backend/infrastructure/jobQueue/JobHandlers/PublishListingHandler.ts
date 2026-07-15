@@ -12,7 +12,11 @@ import type { IEventPublisher } from '../../../domain/ports/IEventPublisher';
 import type { Result } from '../../../domain/shared/Result';
 import type { Listing } from '../../../domain/entities/Listing';
 import { InvalidStateError, ServiceUnavailableError } from '../../../domain/shared/DomainError';
-import type { PublishListingJob } from '../../../application/ports/IJobQueue';
+import type {
+  ListingPublishJobInput,
+  ListingUpdateJobChanges,
+  PublishListingJob,
+} from '../../../application/ports/IJobQueue';
 
 export type PublishListingJobData = PublishListingJob;
 
@@ -55,6 +59,37 @@ async function retryTransientPhase<T>(
     await sleep(50 * 2 ** (attempt - 1));
   }
   return lastValue as T;
+}
+
+const UPDATE_CHANGE_KEYS = ['productName', 'description', 'price'] as const;
+
+function isUpdateChangeKey(key: string): key is (typeof UPDATE_CHANGE_KEYS)[number] {
+  return (UPDATE_CHANGE_KEYS as readonly string[]).includes(key);
+}
+
+function validatedUpdateChanges(changes: unknown): ListingUpdateJobChanges {
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+    throw new InvalidStateError('Update job changes must be an object');
+  }
+  const record = changes as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length === 0 || keys.some((key) => !isUpdateChangeKey(key))) {
+    throw new InvalidStateError(
+      'Update job changes may only include productName, description, or price'
+    );
+  }
+  if ('productName' in record && typeof record.productName !== 'string') {
+    throw new InvalidStateError('Update job productName must be a string');
+  }
+  if ('description' in record && typeof record.description !== 'string') {
+    throw new InvalidStateError('Update job description must be a string');
+  }
+  if ('price' in record && (typeof record.price !== 'number' || !Number.isFinite(record.price))) {
+    throw new InvalidStateError('Update job price must be a finite number');
+  }
+  return Object.fromEntries(
+    UPDATE_CHANGE_KEYS.filter((key) => key in record).map((key) => [key, record[key]])
+  ) as unknown as ListingUpdateJobChanges;
 }
 
 export interface PublishAttemptCheckpoint {
@@ -120,6 +155,7 @@ export interface ListingFinalizer {
     externalUrl: string | null;
     publishedAt: Date | null;
     updatedAt?: Date | null;
+    currentInput?: ListingPublishJobInput;
   } | null>;
 }
 
@@ -158,19 +194,25 @@ export class PublishListingHandler {
     // operationId became part of the payload. New enqueue paths always set it.
     const operationId = data.operationId ?? data.listingId;
     if (data.mode === 'update') {
+      const changes = validatedUpdateChanges(data.changes);
       const state = await this.listings?.getPublishState?.(data.listingId);
       if (!state?.isPublished || !state.externalListingId) {
         throw new InvalidStateError(
           `Listing ${data.listingId} must be live with an external id before marketplace update`
         );
       }
+      if (!state.currentInput) {
+        throw new InvalidStateError(
+          `Listing ${data.listingId} update state is missing the current product snapshot`
+        );
+      }
       if (
-        state.updatedAt &&
-        data.listingUpdatedAt &&
-        state.updatedAt.getTime() > new Date(data.listingUpdatedAt).getTime()
+        ('productName' in changes && changes.productName !== state.currentInput.productName) ||
+        ('description' in changes && changes.description !== state.currentInput.description) ||
+        ('price' in changes && changes.price !== state.currentInput.price)
       ) {
         throw new InvalidStateError(
-          `Listing ${data.listingId} has changed since this marketplace update was queued`
+          `Listing ${data.listingId} or its product has changed since this marketplace update was queued`
         );
       }
 
@@ -193,15 +235,7 @@ export class PublishListingHandler {
         adapter = this.adapters.create(data.marketplaceKey);
       }
 
-      if (!Object.keys(data.changes).some((key) => ['productName', 'description', 'price'].includes(key))) {
-        throw new InvalidStateError('Update job changes must include productName, description, or price');
-      }
-
-      await adapter.updateListing(
-        state.externalListingId,
-        data.changes,
-        data.input
-      );
+      await adapter.updateListing(state.externalListingId, changes, state.currentInput);
 
       return {
         marketplaceKey: data.marketplaceKey,

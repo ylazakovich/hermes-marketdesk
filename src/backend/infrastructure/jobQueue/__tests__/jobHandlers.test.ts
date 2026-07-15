@@ -19,7 +19,11 @@ import type { MarketplaceKey } from '../../../../shared/types';
 import { Listing } from '../../../domain/entities/Listing';
 import { Marketplace } from '../../../domain/entities/Marketplace';
 import { Ok, Err } from '../../../domain/shared/Result';
-import { NotFoundError, ServiceUnavailableError, InvalidStateError } from '../../../domain/shared/DomainError';
+import {
+  NotFoundError,
+  ServiceUnavailableError,
+  InvalidStateError,
+} from '../../../domain/shared/DomainError';
 import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
 import { unwrap, money } from '../../../domain/testkit/support';
 
@@ -504,7 +508,11 @@ describe('SyncMarketplaceHandler', () => {
       },
     });
 
-    await handler.handle({ marketplaceKey: 'olx', marketplaceId: 'm-1', externalListingIds: ['ext-1'] });
+    await handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-1',
+      externalListingIds: ['ext-1'],
+    });
 
     expect(listing.views).toBe(10);
     expect(listing.watchers).toBe(4);
@@ -620,11 +628,13 @@ describe('PublishListingHandler', () => {
     };
     const authenticatedClient = { request: jest.fn() };
     const clientFactory = jest.fn(() => authenticatedClient);
+    const currentInput = { ...input, productName: 'Better Widget', price: 44 };
     const getPublishState = jest.fn(async () => ({
       isPublished: true,
       externalListingId: 'olx-123',
       externalUrl: 'https://www.olx.pl/d/oferta/olx-123',
       publishedAt: new Date('2026-07-10T00:00:00.000Z'),
+      currentInput,
     }));
     const handler = new PublishListingHandler(
       { create },
@@ -640,7 +650,7 @@ describe('PublishListingHandler', () => {
       marketplaceKey: 'olx',
       marketplaceId: 'm-1',
       listingId: 'l-oauth',
-      input,
+      input: { ...input, category: 'stale-category' },
       changes: { productName: 'Better Widget', price: 44 },
     });
 
@@ -650,10 +660,62 @@ describe('PublishListingHandler', () => {
     expect(updateListing).toHaveBeenCalledWith(
       'olx-123',
       { productName: 'Better Widget', price: 44 },
-      input
+      currentInput
     );
     expect(result).toMatchObject({ listingId: 'l-oauth', finalized: true });
     expect(result.result.externalListingId).toBe('olx-123');
+  });
+
+  it('rejects a stale update snapshot instead of overwriting newer product data', async () => {
+    const updateListing = jest.fn(async () => undefined);
+    const adapter = fakeAdapter({ updateListing });
+    const handler = new PublishListingHandler(
+      { create: jest.fn(() => adapter) },
+      undefined,
+      {
+        publishListing: jest.fn(),
+        getPublishState: jest.fn(async () => ({
+          isPublished: true,
+          externalListingId: 'olx-123',
+          externalUrl: null,
+          publishedAt: new Date('2026-07-10T00:00:00.000Z'),
+          currentInput: { ...input, productName: 'Newest Widget' },
+        })),
+      },
+      { getValidAccessToken: jest.fn(async () => 'token') },
+      () => ({ request: jest.fn() })
+    );
+
+    await expect(
+      handler.handle({
+        operationId: 'op-stale-update',
+        mode: 'update',
+        marketplaceKey: 'olx',
+        marketplaceId: 'm-1',
+        listingId: 'l-stale',
+        input,
+        changes: { productName: 'Older Widget' },
+      })
+    ).rejects.toThrow('product has changed since this marketplace update was queued');
+    expect(updateListing).not.toHaveBeenCalled();
+  });
+
+  it('rejects undeclared runtime fields in persisted update jobs', async () => {
+    const create = jest.fn(() => fakeAdapter());
+    const handler = new PublishListingHandler({ create });
+
+    await expect(
+      handler.handle({
+        operationId: 'op-invalid-update',
+        mode: 'update',
+        marketplaceKey: 'olx',
+        marketplaceId: 'm-1',
+        listingId: 'l-invalid',
+        input,
+        changes: { productName: 'Widget', category: 'forbidden' } as never,
+      })
+    ).rejects.toThrow('may only include productName, description, or price');
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('works without an event publisher', async () => {
