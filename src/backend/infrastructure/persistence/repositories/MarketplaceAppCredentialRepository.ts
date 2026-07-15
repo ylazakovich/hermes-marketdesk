@@ -72,4 +72,12 @@ export class MarketplaceAppCredentialRepository implements MarketplaceAppCredent
     if (!row) throw new Error('Marketplace app credential upsert returned no row');
     return MarketplaceAppCredentialMapper.toRecord(row);
   }
+
+  async deleteByMarketplaceId(marketplaceId: string): Promise<void> {
+    await query(
+      'DELETE FROM marketplace_app_credentials WHERE marketplace_id = $1',
+      [marketplaceId],
+      this.queryClient,
+    );
+  }
 }

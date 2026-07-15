@@ -43,6 +43,7 @@ export interface MarketplaceOAuthStateContext {
   marketplaceId: string;
   workspaceId: string;
   providerKey: MarketplaceKey;
+  appCredentialRevision: string;
   expiresAt: Date;
 }
 
@@ -60,6 +61,7 @@ export interface OlxOAuthClientPort {
 export interface OlxOAuthAppCredentials {
   clientId: string;
   clientSecret: string;
+  credentialRevision?: string;
 }
 
 export interface MarketplaceAppCredentialRecord {
@@ -76,6 +78,7 @@ export interface MarketplaceAppCredentialRepository {
   upsert(
     credentials: Omit<MarketplaceAppCredentialRecord, 'createdAt' | 'updatedAt'>
   ): Promise<MarketplaceAppCredentialRecord>;
+  deleteByMarketplaceId(marketplaceId: string): Promise<void>;
 }
 
 export interface MarketplaceCredentialVault {
@@ -192,6 +195,10 @@ export class MarketplaceOAuthService {
       marketplaceId: marketplace.id,
       workspaceId: marketplace.workspaceId,
       providerKey: marketplace.key,
+      appCredentialRevision: requireValue(
+        appCredentials.credentialRevision ?? '',
+        'OLX application credential revision'
+      ),
       expiresAt,
     });
 
@@ -223,6 +230,11 @@ export class MarketplaceOAuthService {
     );
 
     const appCredentials = await this.requireAppCredentials(marketplace.id);
+    if (appCredentials.credentialRevision !== context.appCredentialRevision) {
+      throw new InvalidStateError(
+        'OLX application credentials changed while authorization was pending; start a new connection'
+      );
+    }
 
     let tokens: OlxOAuthTokens;
     try {
@@ -312,6 +324,11 @@ export class MarketplaceOAuthService {
     const marketplace = await this.requireOwnedOlxMarketplace(input.marketplaceId, input.workspaceId);
     const clientId = requireValue(input.clientId, 'OLX application client ID');
     const clientSecret = requireValue(input.clientSecret, 'OLX application client secret');
+
+    // Credentials identify the OAuth application. Existing account tokens were
+    // issued to the previous application and must not survive a rotation.
+    await this.disconnect({ marketplaceId: marketplace.id, workspaceId: marketplace.workspaceId });
+
     const saved = await this.deps.appCredentialRepo.upsert({
       id: this.deps.idGenerator(),
       marketplaceId: marketplace.id,
@@ -345,6 +362,23 @@ export class MarketplaceOAuthService {
       providerKey: marketplace.key,
       clientId: credentials?.clientId,
       updatedAt: credentials?.updatedAt.toISOString(),
+    };
+  }
+
+  async removeAppCredentials(input: {
+    marketplaceId: string;
+    workspaceId: string;
+  }): Promise<MarketplaceAppCredentialStatus> {
+    const marketplace = await this.requireOwnedOlxMarketplace(
+      input.marketplaceId,
+      input.workspaceId
+    );
+    await this.disconnect({ marketplaceId: marketplace.id, workspaceId: marketplace.workspaceId });
+    await this.deps.appCredentialRepo.deleteByMarketplaceId(marketplace.id);
+    return {
+      configured: false,
+      marketplaceId: marketplace.id,
+      providerKey: marketplace.key,
     };
   }
 
@@ -463,7 +497,7 @@ export class MarketplaceOAuthService {
       const decrypted = this.deps.credentialVault.decryptAppCredentials(saved.encryptedClientSecret);
       const clientId = requireValue(decrypted.clientId, 'OLX application client ID');
       const clientSecret = requireValue(decrypted.clientSecret, 'OLX application client secret');
-      return { clientId, clientSecret };
+      return { clientId, clientSecret, credentialRevision: saved.updatedAt.toISOString() };
     } catch (error) {
       if (error instanceof ValidationError || error instanceof ConfigurationError) throw error;
       throw new ConfigurationError('OLX application credentials cannot be decrypted');

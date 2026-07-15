@@ -138,6 +138,14 @@ export class MarketplaceController {
     ok(res, result);
   };
 
+  removeAppCredentials = async (req: Request, res: Response): Promise<void> => {
+    const result = await this.oauth.removeAppCredentials({
+      marketplaceId: routeParam(req.params.id),
+      workspaceId: req.user!.workspaceId!,
+    });
+    ok(res, result);
+  };
+
   importPreview = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const result = await this.imports.preview({
       marketplaceId: routeParam(req.params.id),

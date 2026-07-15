@@ -62,6 +62,10 @@ class InMemoryAppCredentialRepository {
     this.credentials.set(input.marketplaceId, saved);
     return saved;
   }
+
+  async deleteByMarketplaceId(marketplaceId: string): Promise<void> {
+    this.credentials.delete(marketplaceId);
+  }
 }
 
 class InMemoryStateStore {
@@ -170,7 +174,7 @@ function setup(refreshLock?: MarketplaceOAuthServiceDeps['refreshLock']) {
 
 describe('MarketplaceOAuthService', () => {
   it('starts OLX OAuth without marking the marketplace connected', async () => {
-    const { service, marketplace, stateStore } = setup();
+    const { service, marketplace, stateStore, oauthClientFactory } = setup();
 
     const result = await service.start({ marketplaceId: marketplace.id, workspaceId: 'ws-1' });
 
@@ -180,17 +184,29 @@ describe('MarketplaceOAuthService', () => {
       marketplaceId: marketplace.id,
       workspaceId: 'ws-1',
       providerKey: 'olx',
+      appCredentialRevision: '2026-07-14T12:00:00.000Z',
     });
+    expect(oauthClientFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 'workspace-client-id',
+        clientSecret: 'workspace-secret',
+      })
+    );
     expect(marketplace.isConnected()).toBe(false);
   });
 
   it('requires workspace OLX application credentials before starting OAuth', async () => {
-    const { service, marketplace, appCredentialRepo } = setup();
+    const { service, marketplace, appCredentialRepo, stateStore, oauthClientFactory, oauthClient } = setup();
     appCredentialRepo.credentials.delete(marketplace.id);
 
     await expect(service.start({ marketplaceId: marketplace.id, workspaceId: 'ws-1' })).rejects.toThrow(
       'OLX application credentials are not configured for this workspace'
     );
+    expect(stateStore.values.size).toBe(0);
+    expect(oauthClientFactory).not.toHaveBeenCalled();
+    expect(oauthClient.buildAuthorizationUrl).not.toHaveBeenCalled();
+    expect(oauthClient.exchangeAuthorizationCode).not.toHaveBeenCalled();
+    expect(oauthClient.refreshAccessToken).not.toHaveBeenCalled();
   });
 
   it('consumes state once, persists encrypted tokens, then marks OLX connected', async () => {
@@ -213,6 +229,25 @@ describe('MarketplaceOAuthService', () => {
     await expect(
       service.complete({ providerKey: 'olx', code: 'again', state: 'oauth-state' })
     ).rejects.toMatchObject({ code: 'INVALID_STATE' });
+  });
+
+  it('rejects callback when OLX app credentials rotated after authorization started', async () => {
+    const { service, marketplace, appCredentialRepo, oauthClient } = setup();
+    await service.start({ marketplaceId: marketplace.id, workspaceId: 'ws-1' });
+    const saved = appCredentialRepo.credentials.get(marketplace.id)!;
+    appCredentialRepo.credentials.set(marketplace.id, {
+      ...saved,
+      clientId: 'rotated-client-id',
+      encryptedClientSecret: {
+        appPayload: { clientId: 'rotated-client-id', clientSecret: 'rotated-secret' },
+      },
+      updatedAt: new Date('2026-07-14T12:05:00.000Z'),
+    });
+
+    await expect(
+      service.complete({ providerKey: 'olx', code: 'authorization-code', state: 'oauth-state' })
+    ).rejects.toThrow('OLX application credentials changed while authorization was pending');
+    expect(oauthClient.exchangeAuthorizationCode).not.toHaveBeenCalled();
   });
 
   it('reports app-authoritative connection state without exposing credentials', async () => {
@@ -238,7 +273,7 @@ describe('MarketplaceOAuthService', () => {
   });
 
   it('refreshes an expired access token and persists refresh-token rotation', async () => {
-    const { service, marketplace, accountRepo, refreshAccessToken } = setup();
+    const { service, marketplace, accountRepo, refreshAccessToken, oauthClientFactory } = setup();
     await accountRepo.upsert({
       id: 'account-1',
       marketplaceId: marketplace.id,
@@ -257,9 +292,36 @@ describe('MarketplaceOAuthService', () => {
 
     expect(accessToken).toBe('refreshed-access-token');
     expect(refreshAccessToken).toHaveBeenCalledWith('refresh-token');
+    expect(oauthClientFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 'workspace-client-id',
+        clientSecret: 'workspace-secret',
+      })
+    );
     const saved = accountRepo.accounts.get(marketplace.id)!;
     const savedTokens = saved.credentials.payload as OlxOAuthTokens;
     expect(savedTokens.refreshToken).toBe('rotated-refresh-token');
+  });
+
+  it('does not refresh when workspace app credentials are missing', async () => {
+    const { service, marketplace, accountRepo, appCredentialRepo, oauthClientFactory, refreshAccessToken } = setup();
+    await accountRepo.upsert({
+      id: 'account-missing-app-credentials',
+      marketplaceId: marketplace.id,
+      handle: 'OLX account',
+      credentials: {
+        payload: { ...initialTokens, expiresAt: new Date('2026-07-14T11:59:00.000Z') },
+      },
+      status: 'connected',
+      scopes: ['basic'],
+    });
+    appCredentialRepo.credentials.delete(marketplace.id);
+
+    await expect(service.getValidAccessToken(marketplace.id)).rejects.toThrow(
+      'OLX application credentials are not configured for this workspace'
+    );
+    expect(oauthClientFactory).not.toHaveBeenCalled();
+    expect(refreshAccessToken).not.toHaveBeenCalled();
   });
 
   it('does not resurrect credentials when the account changes before refresh persistence', async () => {
@@ -307,6 +369,58 @@ describe('MarketplaceOAuthService', () => {
     const status = await service.check({ marketplaceId: marketplace.id, workspaceId: 'ws-1' });
     expect(status.connected).toBe(false);
     expect(status.account?.status).toBe('disconnected');
+  });
+
+  it('clears existing account tokens when app credentials are rotated', async () => {
+    const { service, marketplace, accountRepo, appCredentialRepo } = setup();
+    marketplace.connect();
+    await accountRepo.upsert({
+      id: 'account-existing',
+      marketplaceId: marketplace.id,
+      handle: 'OLX account',
+      credentials: { payload: initialTokens },
+      status: 'connected',
+      scopes: ['basic'],
+    });
+
+    const result = await service.saveAppCredentials({
+      marketplaceId: marketplace.id,
+      workspaceId: 'ws-1',
+      clientId: 'new-client-id',
+      clientSecret: 'new-secret',
+    });
+
+    expect(result).toMatchObject({ configured: true, clientId: 'new-client-id' });
+    expect(accountRepo.accounts.get(marketplace.id)).toMatchObject({
+      status: 'disconnected',
+      credentials: {},
+    });
+    expect(marketplace.isConnected()).toBe(false);
+    expect(appCredentialRepo.credentials.get(marketplace.id)).toMatchObject({
+      clientId: 'new-client-id',
+    });
+  });
+
+  it('removes app credentials only after clearing account tokens', async () => {
+    const { service, marketplace, accountRepo, appCredentialRepo } = setup();
+    marketplace.connect();
+    await accountRepo.upsert({
+      id: 'account-existing',
+      marketplaceId: marketplace.id,
+      handle: 'OLX account',
+      credentials: { payload: initialTokens },
+      status: 'connected',
+      scopes: ['basic'],
+    });
+
+    const result = await service.removeAppCredentials({ marketplaceId: marketplace.id, workspaceId: 'ws-1' });
+
+    expect(result).toMatchObject({ configured: false, marketplaceId: marketplace.id });
+    expect(accountRepo.accounts.get(marketplace.id)).toMatchObject({
+      status: 'disconnected',
+      credentials: {},
+    });
+    expect(appCredentialRepo.credentials.has(marketplace.id)).toBe(false);
   });
 
   it('re-reads credentials while holding the refresh lock', async () => {
