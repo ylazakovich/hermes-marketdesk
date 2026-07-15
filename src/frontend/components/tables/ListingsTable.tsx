@@ -36,7 +36,7 @@ export interface ListingsTableProps {
   emptyAction?: React.ReactNode;
 }
 
-const HEAD_CELLS = ['Marketplace', 'Status', 'Price', 'Views', 'Watchers', 'Messages', ''];
+const HEAD_CELLS = ['Listing', 'Status', 'Price', 'Views', 'Watchers', 'Messages', ''];
 
 export const ListingsTable: React.FC<ListingsTableProps> = ({
   listings,
@@ -98,6 +98,14 @@ export const ListingsTable: React.FC<ListingsTableProps> = ({
                 >
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {listing.productName?.trim() || 'Untitled product'}
+                    </Typography>
+                    {listing.productSku && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        SKU {listing.productSku}
+                      </Typography>
+                    )}
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                       {resolveMarketplaceName
                         ? resolveMarketplaceName(listing.marketplaceId)
                         : listing.marketplaceId}
