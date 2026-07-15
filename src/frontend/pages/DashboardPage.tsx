@@ -1,6 +1,6 @@
 // Workspace overview: KPI tiles, revenue trend, marketplace summary, quick
 // actions, recent Hermes activity, and products needing attention.
-import React from 'react';
+import React, { useState } from 'react';
 import { Box, Button, Chip, Stack, TextField, Typography } from '@mui/material';
 import PaidIcon from '@mui/icons-material/PaidOutlined';
 import StorefrontIcon from '@mui/icons-material/StorefrontOutlined';
@@ -37,7 +37,7 @@ function marketplaceStatus(marketplace: Marketplace): { label: string; color: 's
 
 const quickActions = [
   { label: 'Add product', path: '/products?newProduct=1', icon: <AddIcon fontSize="small" /> },
-  { label: 'Sync all', path: '/marketplaces', icon: <SyncIcon fontSize="small" /> },
+  { label: 'Manage marketplaces', path: '/marketplaces', icon: <SyncIcon fontSize="small" /> },
   { label: 'Run Hermes', path: '/hermes', icon: <AutoAwesomeIcon fontSize="small" /> },
   { label: 'View analytics', path: '/analytics', icon: <AnalyticsIcon fontSize="small" /> },
 ];
@@ -53,6 +53,7 @@ const DashboardPage: React.FC = () => {
   const marketplaces = useMarketplaces();
 
   const ov = overview.data;
+  const [globalSearch, setGlobalSearch] = useState('');
   const marketplaceRows = marketplaces.data ?? [];
   const connectedMarketplaces = marketplaceRows.filter((m) => m.connected).length;
   const totalCapacity = marketplaceRows.reduce((sum, m) => sum + (m.capacity ?? 0), 0);
@@ -62,23 +63,51 @@ const DashboardPage: React.FC = () => {
       ? ((cur - prev) / prev) * 100
       : undefined;
 
+  const handleGlobalSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = globalSearch.trim();
+    navigate(query ? `/products?search=${encodeURIComponent(query)}` : '/products');
+  };
+
+  const marketplaceError = marketplaces.error
+    ? marketplaces.error instanceof Error
+      ? marketplaces.error.message
+      : 'Unable to load marketplaces.'
+    : 'Unable to load marketplaces.';
+
   return (
     <Box>
       <PageHeader
         title="Dashboard"
         subtitle="Monitor products, marketplaces, and Hermes work from one command center."
         actions={
-          <TextField
-            size="small"
-            placeholder="Search products, listings, events..."
-            aria-label="Global search"
-            slotProps={{
-              input: {
-                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} fontSize="small" />,
-              },
-            }}
-            sx={{ minWidth: { xs: '100%', sm: 320 } }}
-          />
+          <Stack
+            component="form"
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={1}
+            onSubmit={handleGlobalSearch}
+            sx={{ width: { xs: '100%', sm: 'auto' } }}
+          >
+            <TextField
+              size="small"
+              placeholder="Search products, listings, events..."
+              aria-label="Global search"
+              value={globalSearch}
+              onChange={(event) => setGlobalSearch(event.target.value)}
+              slotProps={{
+                input: {
+                  startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} fontSize="small" />,
+                },
+              }}
+              sx={{ minWidth: { xs: '100%', sm: 320 } }}
+            />
+            <Button type="submit" variant="outlined" sx={{ textTransform: 'none' }}>
+              Search
+            </Button>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/products?newProduct=1')}>
+              New product
+            </Button>
+          </Stack>
         }
       />
 
@@ -142,6 +171,17 @@ const DashboardPage: React.FC = () => {
         <Card title="Marketplace overview" subtitle="Connected sales channels and sync health">
           {marketplaces.isLoading ? (
             <LoadingSkeleton lines={4} height={52} />
+          ) : marketplaces.isError ? (
+            <EmptyState
+              title="Marketplaces failed to load"
+              description={marketplaceError}
+              action={
+                <Button variant="outlined" size="small" onClick={() => marketplaces.refetch()}>
+                  Retry
+                </Button>
+              }
+              compact
+            />
           ) : marketplaceRows.length === 0 ? (
             <EmptyState title="No marketplaces configured" compact />
           ) : (
