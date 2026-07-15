@@ -22,7 +22,7 @@ export class ProductApplicationService {
   constructor(
     private readonly productRepo: IProductRepository,
     private readonly createProductUseCase: CreateProductUseCase,
-    private readonly updateProductUseCase: UpdateProductUseCase,
+    private readonly updateProductUseCase: UpdateProductUseCase
   ) {}
 
   async createProduct(dto: CreateProductDTO): Promise<Result<ProductView>> {
@@ -41,9 +41,7 @@ export class ProductApplicationService {
     return product ? presentProduct(product) : null;
   }
 
-  async listProducts(
-    query: ListProductsQueryDTO,
-  ): Promise<Result<PaginatedResponse<ProductView>>> {
+  async listProducts(query: ListProductsQueryDTO): Promise<Result<PaginatedResponse<ProductView>>> {
     const validated = this.pricingValidator.validateListQuery(query);
     if (validated.isErr()) return validated;
     const q = validated.value;
@@ -78,9 +76,7 @@ export class ProductApplicationService {
 
   private sort(products: Product[], sort?: SortKey[]): Product[] {
     if (!sort || sort.length === 0) {
-      return [...products].sort(
-        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-      );
+      return [...products].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
     }
     return [...products].sort((a, b) => {
       for (const key of sort) {
@@ -100,7 +96,10 @@ export class ProductApplicationService {
       case 'sellingPrice':
         return a.sellingPrice.minorUnits - b.sellingPrice.minorUnits;
       case 'costPrice':
-        return a.costPrice.minorUnits - b.costPrice.minorUnits;
+        return (
+          (a.costPrice?.minorUnits ?? Number.POSITIVE_INFINITY) -
+          (b.costPrice?.minorUnits ?? Number.POSITIVE_INFINITY)
+        );
       case 'status':
         return a.status.localeCompare(b.status);
       case 'createdAt':

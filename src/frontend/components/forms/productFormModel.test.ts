@@ -1,6 +1,7 @@
 import {
   emptyProductValues,
   marginWarning,
+  productToValues,
   toProductSubmissionValues,
   validateProductValues,
 } from './productFormModel';
@@ -39,10 +40,26 @@ describe('productFormModel below-cost pricing', () => {
     expect(toProductSubmissionValues(values).allowBelowCost).toBe(true);
   });
 
-  it('does not mark profitable submissions as below-cost', () => {
-    const values = { ...validValues(), sellingPrice: 799 };
+  it('preserves blank imported cost prices through edit submission', () => {
+    const values = productToValues({
+      id: 'product-1',
+      workspaceId: 'workspace-1',
+      sku: 'OLX-workspace-1-olx-1',
+      name: 'Imported camera',
+      description: 'Imported description with enough detail.',
+      costPrice: null,
+      sellingPrice: 100,
+      condition: 'unknown',
+      category: 'Electronics',
+      status: 'active',
+      tags: [],
+      images: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
 
-    expect(marginWarning(values)).toBeNull();
-    expect(toProductSubmissionValues(values).allowBelowCost).toBeUndefined();
+    expect(values.costPrice).toBeNull();
+    expect(validateProductValues(values)).toEqual({});
+    expect(toProductSubmissionValues(values).costPrice).toBeNull();
   });
 });

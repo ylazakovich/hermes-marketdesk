@@ -7,14 +7,7 @@
 // String-literal unions (single source of truth for the domain vocabulary)
 // ============================================================================
 
-export type MarketplaceKey =
-  | 'olx'
-  | 'allegro'
-  | 'vinted'
-  | 'facebook'
-  | 'ebay'
-  | 'etsy'
-  | 'amazon';
+export type MarketplaceKey = 'olx' | 'allegro' | 'vinted' | 'facebook' | 'ebay' | 'etsy' | 'amazon';
 
 export type SyncMode = 'realtime' | 'hourly' | 'manual';
 
@@ -23,12 +16,7 @@ export type MarketplaceAccountStatus = 'connected' | 'disconnected' | 'error';
 export type ProductStatus = 'draft' | 'active' | 'attention' | 'sold';
 
 export type ProductCondition =
-  | 'new'
-  | 'like_new'
-  | 'good'
-  | 'fair'
-  | 'poor'
-  | 'refurbished';
+  'new' | 'like_new' | 'good' | 'fair' | 'poor' | 'refurbished' | 'unknown';
 
 export type ListingStatus = 'live' | 'draft' | 'expired' | 'error';
 
@@ -146,7 +134,7 @@ export interface Product {
   sku: string;
   name: string;
   description: string;
-  costPrice: number;
+  costPrice: number | null;
   sellingPrice: number;
   condition: ProductCondition;
   category: string;

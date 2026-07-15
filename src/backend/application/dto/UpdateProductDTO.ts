@@ -12,7 +12,7 @@ export interface UpdateProductDTO {
   workspaceId: string;
   name?: string;
   description?: string;
-  costPrice?: number;
+  costPrice?: number | null;
   sellingPrice?: number;
   currency?: string;
   condition?: ProductCondition;

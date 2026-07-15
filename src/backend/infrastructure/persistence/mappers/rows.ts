@@ -10,7 +10,7 @@ export interface ProductRow {
   sku: string;
   name: string;
   description: string;
-  cost_price: string | number;
+  cost_price: string | number | null;
   selling_price: string | number;
   condition: string;
   category: string;

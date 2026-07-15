@@ -5,7 +5,10 @@ import { Listing } from '../../domain/entities/Listing';
 import type { IProductRepository } from '../../domain/repositories/interfaces/IProductRepository';
 import type { IListingRepository } from '../../domain/repositories/interfaces/IListingRepository';
 import type { IMarketplaceRepository } from '../../domain/repositories/interfaces/IMarketplaceRepository';
-import type { IActivityLogRepository } from '../../domain/repositories/interfaces/IActivityLogRepository';
+import type {
+  ActivityLogEntry,
+  IActivityLogRepository,
+} from '../../domain/repositories/interfaces/IActivityLogRepository';
 import { Money } from '../../domain/valueObjects/Money';
 import type {
   IMarketplaceAdapter,
@@ -13,10 +16,18 @@ import type {
   ImportDiscoveryOptions,
 } from '../../domain/services/MarketplaceAdapter';
 import type { MarketplaceHttpClient } from '../../infrastructure/adapters/MarketplaceHttpClient';
-import type { MarketplaceAccountRepository } from './MarketplaceOAuthService';
+import type {
+  MarketplaceAccountRecord,
+  MarketplaceAccountRepository,
+} from './MarketplaceOAuthService';
 import type { IdGenerator } from '../ports/IdGenerator';
 import { Err, Ok, type Result } from '../../domain/shared/Result';
-import { GuardrailViolationError, NotFoundError, ValidationError } from '../../domain/shared/DomainError';
+import {
+  GuardrailViolationError,
+  InvalidStateError,
+  NotFoundError,
+  ValidationError,
+} from '../../domain/shared/DomainError';
 
 export interface ImportMarketplaceAdapterResolver {
   create(key: MarketplaceKey, http?: MarketplaceHttpClient): IMarketplaceAdapter;
@@ -37,11 +48,7 @@ export interface ImportApplyInput extends ImportPreviewInput {
 }
 
 export type ImportPreviewItemStatus =
-  | 'new'
-  | 'already_imported'
-  | 'changed'
-  | 'unsupported'
-  | 'failed';
+  'new' | 'already_imported' | 'changed' | 'unsupported' | 'failed';
 
 export interface ImportPreviewItem {
   status: ImportPreviewItemStatus;
@@ -62,6 +69,25 @@ export interface ImportPreviewResult {
   totals: Record<ImportPreviewItemStatus, number> & { discovered: number };
   items: ImportPreviewItem[];
 }
+
+interface ImportDiscoveryContext {
+  marketplace: NonNullable<Awaited<ReturnType<IMarketplaceRepository['findByIdForWorkspace']>>>;
+  account: MarketplaceAccountRecord;
+  remoteListings: ImportedMarketplaceListing[];
+  existingListings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>;
+  productsByListingId: Map<string, Product>;
+  failedItems: ImportPreviewItem[];
+}
+
+export interface MarketplaceImportRepositories {
+  productRepo: IProductRepository;
+  listingRepo: IListingRepository;
+  activityLog?: IActivityLogRepository;
+}
+
+export type MarketplaceImportUnitOfWork = <T>(
+  work: (repos: MarketplaceImportRepositories) => Promise<T>
+) => Promise<T>;
 
 export interface ImportApplyResult {
   marketplaceId: string;
@@ -104,27 +130,41 @@ export class MarketplaceImportService {
     private readonly authenticatedHttpClient: (accessToken: string) => MarketplaceHttpClient,
     private readonly activityLog?: IActivityLogRepository,
     private readonly idGenerator: IdGenerator = randomUUID,
+    private readonly unitOfWork: MarketplaceImportUnitOfWork = async () => {
+      throw new InvalidStateError('MarketplaceImportService requires a transactional unit of work');
+    }
   ) {}
 
   async preview(input: ImportPreviewInput): Promise<Result<ImportPreviewResult>> {
     const context = await this.discover(input);
     if (context.isErr()) return context;
-    return Ok(this.buildPreview(context.value.marketplace.id, context.value.marketplace.key, context.value.remoteListings, context.value.existingListings, []));
+    return Ok(
+      this.buildPreview(
+        context.value.marketplace.id,
+        context.value.marketplace.key,
+        context.value.remoteListings,
+        context.value.existingListings,
+        context.value.productsByListingId,
+        context.value.failedItems
+      )
+    );
   }
 
   async import(input: ImportApplyInput): Promise<Result<ImportApplyResult>> {
     const context = await this.discover(input);
     if (context.isErr()) return context;
 
+    const importAll = input.externalListingIds === undefined;
     const selected = new Set(input.externalListingIds ?? []);
     const preview = this.buildPreview(
       context.value.marketplace.id,
       context.value.marketplace.key,
       context.value.remoteListings,
       context.value.existingListings,
-      [],
+      context.value.productsByListingId,
+      context.value.failedItems
     );
-    const items = preview.items.filter((item) => selected.size === 0 || selected.has(item.externalListingId));
+    const items = preview.items.filter((item) => importAll || selected.has(item.externalListingId));
     const results: ImportApplyResult['results'] = [];
 
     for (const item of items) {
@@ -147,42 +187,46 @@ export class MarketplaceImportService {
       }
 
       try {
-        const existing = context.value.existingListings.find(
-          (listing) => listing.marketplaceListingId === item.externalListingId,
+        const existing = this.findUniqueExistingListing(
+          context.value.existingListings,
+          item.externalListingId
         );
-        if (existing) {
-          await this.updateExistingListing(existing, item.proposed, input.workspaceId, input.actorId);
-          results.push({
-            externalListingId: item.externalListingId,
-            status: 'updated',
-            listingId: existing.id,
-          });
-          continue;
-        }
+        const saved = await this.unitOfWork(async (repos) => {
+          if (existing) {
+            await this.updateExistingListing(
+              existing,
+              item.proposed,
+              input.workspaceId,
+              context.value.account.id,
+              input.actorId,
+              repos
+            );
+            return { status: 'updated' as const, listingId: existing.id };
+          }
 
-        const { product, listing } = this.createImportedRecords(
-          input.workspaceId,
-          context.value.marketplace.id,
-          item.proposed,
-        );
-        await this.productRepo.save(product);
-        await this.listingRepo.save(listing);
-        await this.activityLog?.record({
-          id: this.idGenerator(),
-          workspaceId: input.workspaceId,
-          entityType: 'listing',
-          entityId: listing.id,
-          actorType: input.actorId ? 'user' : 'hermes',
-          actorId: input.actorId,
-          action: 'olx_import_adopted',
-          metadata: this.auditMetadata(context.value.account.id, item.proposed, 'imported'),
-          createdAt: new Date(),
+          const { product, listing } = this.createImportedRecords(
+            input.workspaceId,
+            context.value.marketplace.id,
+            item.proposed
+          );
+          await repos.productRepo.save(product);
+          await repos.listingRepo.save(listing);
+          await repos.activityLog?.record(
+            this.activityEntry(
+              input.workspaceId,
+              listing.id,
+              input.actorId,
+              'olx_import_adopted',
+              this.auditMetadata(context.value.account.id, item.proposed, 'imported')
+            )
+          );
+          return { status: 'imported' as const, productId: product.id, listingId: listing.id };
         });
         results.push({
           externalListingId: item.externalListingId,
-          status: 'imported',
-          productId: product.id,
-          listingId: listing.id,
+          status: saved.status,
+          productId: saved.productId,
+          listingId: saved.listingId,
         });
       } catch (error) {
         results.push({
@@ -207,7 +251,7 @@ export class MarketplaceImportService {
   private async discover(input: ImportPreviewInput) {
     const marketplace = await this.marketplaceRepo.findByIdForWorkspace(
       input.marketplaceId,
-      input.workspaceId,
+      input.workspaceId
     );
     if (!marketplace) {
       return Err(new NotFoundError(`Marketplace not found: ${input.marketplaceId}`));
@@ -221,14 +265,47 @@ export class MarketplaceImportService {
       return Err(new GuardrailViolationError('Connected OLX OAuth account is required for import'));
     }
 
-    const accessToken = await this.accessTokens.getValidAccessToken(marketplace.id);
-    const adapter = this.adapters.create(marketplace.key, this.authenticatedHttpClient(accessToken));
-    const remoteListings = await adapter.listOwnedListings({
-      pageSize: input.pageSize,
-      statuses: input.statuses,
-    });
+    let accessToken: string;
+    try {
+      accessToken = await this.accessTokens.getValidAccessToken(marketplace.id);
+    } catch (error) {
+      return Err(
+        new ValidationError(
+          error instanceof Error ? error.message : 'Failed to prepare OLX access token'
+        )
+      );
+    }
+    const adapter = this.adapters.create(
+      marketplace.key,
+      this.authenticatedHttpClient(accessToken)
+    );
+    let discoveredListings: ImportedMarketplaceListing[];
+    try {
+      discoveredListings = await adapter.listOwnedListings({
+        pageSize: input.pageSize,
+        statuses: input.statuses,
+      });
+    } catch (error) {
+      return Err(
+        new ValidationError(
+          error instanceof Error ? error.message : 'Failed to discover owned adverts'
+        )
+      );
+    }
+    const { remoteListings, failedItems } = this.normalizeDiscoveredListings(discoveredListings);
     const existingListings = await this.listingRepo.findByMarketplace(marketplace.id);
-    return Ok({ marketplace, account, remoteListings, existingListings });
+    const productsByListingId = await this.loadProductsByListingId(
+      existingListings,
+      input.workspaceId
+    );
+    return Ok({
+      marketplace,
+      account,
+      remoteListings,
+      existingListings,
+      productsByListingId,
+      failedItems,
+    });
   }
 
   private buildPreview(
@@ -236,20 +313,38 @@ export class MarketplaceImportService {
     marketplaceKey: MarketplaceKey,
     remoteListings: ImportedMarketplaceListing[],
     existingListings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>,
-    failedItems: ImportPreviewItem[],
+    productsByListingId: Map<string, Product>,
+    failedItems: ImportPreviewItem[]
   ): ImportPreviewResult {
+    const duplicateExistingExternalIds = this.duplicateExternalIds(
+      existingListings.flatMap((listing) => listing.marketplaceListingId ?? [])
+    );
+    const duplicateRemoteExternalIds = this.duplicateExternalIds(
+      remoteListings.map((listing) => listing.externalListingId)
+    );
     const existingByExternalId = new Map(
       existingListings.flatMap((listing) =>
-        listing.marketplaceListingId ? [[listing.marketplaceListingId, listing] as const] : [],
-      ),
+        listing.marketplaceListingId &&
+        !duplicateExistingExternalIds.has(listing.marketplaceListingId)
+          ? [[listing.marketplaceListingId, listing] as const]
+          : []
+      )
     );
 
     const items = remoteListings.map((remote): ImportPreviewItem => {
       const warnings = this.mappingWarnings(remote);
+      if (duplicateRemoteExternalIds.has(remote.externalListingId))
+        warnings.push('duplicate_remote_external_listing_id');
+      if (duplicateExistingExternalIds.has(remote.externalListingId))
+        warnings.push('duplicate_existing_external_listing_id');
       const existing = existingByExternalId.get(remote.externalListingId);
-      const proposedChanges = existing ? this.proposedListingChanges(existing, remote) : [];
+      const product = existing ? (productsByListingId.get(existing.id) ?? null) : null;
+      const proposedChanges = existing
+        ? this.proposedListingChanges(existing, product, remote)
+        : [];
       let status: ImportPreviewItemStatus = 'new';
-      if (warnings.includes('missing_required_import_fields')) status = 'unsupported';
+      if (warnings.some((warning) => warning.startsWith('duplicate_'))) status = 'failed';
+      else if (warnings.includes('missing_required_import_fields')) status = 'unsupported';
       else if (remote.status === 'error') status = 'unsupported';
       else if (existing && proposedChanges.length > 0) status = 'changed';
       else if (existing) status = 'already_imported';
@@ -274,10 +369,76 @@ export class MarketplaceImportService {
         acc[item.status] += 1;
         return acc;
       },
-      { ...EMPTY_TOTALS },
+      { ...EMPTY_TOTALS }
     );
 
     return { marketplaceId, marketplaceKey, readOnly: true, totals, items };
+  }
+
+  private normalizeDiscoveredListings(discoveredListings: ImportedMarketplaceListing[]): {
+    remoteListings: ImportedMarketplaceListing[];
+    failedItems: ImportPreviewItem[];
+  } {
+    const remoteListings: ImportedMarketplaceListing[] = [];
+    const failedItems: ImportPreviewItem[] = [];
+
+    discoveredListings.forEach((remote, index) => {
+      try {
+        this.assertImportedListingShape(remote);
+        remoteListings.push(remote);
+      } catch (error) {
+        const partial = remote as Partial<ImportedMarketplaceListing> | null | undefined;
+        const externalListingId = partial?.externalListingId?.trim() || `unmapped-${index + 1}`;
+        failedItems.push({
+          status: 'failed',
+          externalListingId,
+          externalUrl: partial?.externalUrl ?? null,
+          title: partial?.title ?? 'Unmapped OLX advert',
+          remoteStatus: partial?.remoteStatus ?? partial?.status ?? null,
+          warnings: [
+            'item_mapping_failed',
+            error instanceof Error ? error.message : 'Unable to map discovered advert',
+          ],
+          proposed: this.failedRemoteListingFallback(externalListingId, partial),
+          existingListingId: null,
+          proposedChanges: [],
+        });
+      }
+    });
+
+    return { remoteListings, failedItems };
+  }
+
+  private assertImportedListingShape(remote: ImportedMarketplaceListing): void {
+    if (!remote || typeof remote !== 'object') {
+      throw new ValidationError('Discovered advert is not an object');
+    }
+    if (!remote.externalListingId?.trim()) {
+      throw new ValidationError('Discovered advert is missing externalListingId');
+    }
+    if (!remote.title?.trim()) {
+      throw new ValidationError(`Discovered advert ${remote.externalListingId} is missing title`);
+    }
+  }
+
+  private failedRemoteListingFallback(
+    externalListingId: string,
+    partial: Partial<ImportedMarketplaceListing> | null | undefined
+  ): ImportedMarketplaceListing {
+    return {
+      externalListingId,
+      externalUrl: partial?.externalUrl ?? null,
+      title: partial?.title ?? 'Unmapped OLX advert',
+      description: partial?.description ?? null,
+      price: partial?.price ?? null,
+      currency: partial?.currency ?? null,
+      status: partial?.status ?? 'error',
+      remoteStatus: partial?.remoteStatus ?? null,
+      category: partial?.category ?? null,
+      imageUrls: partial?.imageUrls ?? [],
+      remoteUpdatedAt: partial?.remoteUpdatedAt ?? null,
+      metrics: partial?.metrics ?? {},
+    };
   }
 
   private mappingWarnings(remote: ImportedMarketplaceListing): string[] {
@@ -285,7 +446,8 @@ export class MarketplaceImportService {
     if (remote.price === null || remote.price === undefined) warnings.push('missing_price');
     if (!remote.currency) warnings.push('missing_currency');
     if (!remote.category) warnings.push('missing_category_mapping');
-    if (!remote.description || remote.description.trim().length < 20) warnings.push('missing_description');
+    if (!remote.description || remote.description.trim().length < 20)
+      warnings.push('missing_description');
     if (!remote.imageUrls || remote.imageUrls.length === 0) warnings.push('missing_photos');
     if (!remote.externalListingId?.trim()) warnings.push('missing_external_id');
     warnings.push('unknown_cost_price');
@@ -302,34 +464,64 @@ export class MarketplaceImportService {
     return warnings;
   }
 
-  private proposedListingChanges(listing: Listing, remote: ImportedMarketplaceListing): string[] {
+  private proposedListingChanges(
+    listing: Listing,
+    product: Product | null,
+    remote: ImportedMarketplaceListing
+  ): string[] {
     const changes: string[] = [];
-    if (remote.price !== null && remote.price !== undefined && listing.price.amount !== remote.price) {
+    if (
+      remote.price !== null &&
+      remote.price !== undefined &&
+      listing.price.amount !== remote.price
+    ) {
       changes.push('price');
     }
     if (listing.externalUrl !== (remote.externalUrl ?? null)) changes.push('external_url');
     if (listing.status !== remote.status) changes.push('status');
-    if (remote.metrics?.views !== undefined && listing.views !== remote.metrics.views) changes.push('views');
-    if (remote.metrics?.watchers !== undefined && listing.watchers !== remote.metrics.watchers) changes.push('watchers');
-    if (remote.metrics?.messages !== undefined && listing.messages !== remote.metrics.messages) changes.push('messages');
+    if (remote.metrics?.views !== undefined && listing.views !== remote.metrics.views)
+      changes.push('views');
+    if (remote.metrics?.watchers !== undefined && listing.watchers !== remote.metrics.watchers)
+      changes.push('watchers');
+    if (remote.metrics?.messages !== undefined && listing.messages !== remote.metrics.messages)
+      changes.push('messages');
+    if (product) {
+      if (product.name !== remote.title) changes.push('product_title');
+      if ((remote.description ?? '') !== product.description) changes.push('product_description');
+      if (remote.category && product.category !== remote.category) changes.push('product_category');
+      if (!this.sameStringList([...product.images], remote.imageUrls))
+        changes.push('product_images');
+      if (
+        remote.price !== null &&
+        remote.price !== undefined &&
+        product.sellingPrice.amount !== remote.price
+      ) {
+        changes.push('product_selling_price');
+      }
+    }
     return changes;
   }
 
   private createImportedRecords(
     workspaceId: string,
     marketplaceId: string,
-    remote: ImportedMarketplaceListing,
+    remote: ImportedMarketplaceListing
   ): { product: Product; listing: Listing } {
-    if (remote.price === null || remote.price === undefined || !remote.currency || !remote.category) {
+    if (
+      remote.price === null ||
+      remote.price === undefined ||
+      !remote.currency ||
+      !remote.category
+    ) {
       throw new ValidationError('Remote advert is missing required import fields');
     }
-    const costPrice = this.unwrapMoney(0, remote.currency);
+    const costPrice = null;
     const sellingPrice = this.unwrapMoney(remote.price, remote.currency);
     const now = new Date();
     const product = Product.create({
       id: this.idGenerator(),
       workspaceId,
-      sku: `OLX-${remote.externalListingId}`,
+      sku: `OLX-${workspaceId}-${remote.externalListingId}`,
       name: remote.title,
       description: remote.description ?? '',
       costPrice,
@@ -356,7 +548,7 @@ export class MarketplaceImportService {
       messages: remote.metrics?.messages ?? null,
       publishedAt: remote.status === 'live' ? now : null,
       lastSyncAt: now,
-      syncError: this.syncNote(remote),
+      syncError: null,
       createdAt: now,
       updatedAt: now,
     });
@@ -368,35 +560,138 @@ export class MarketplaceImportService {
     listing: Listing,
     remote: ImportedMarketplaceListing,
     workspaceId: string,
-    actorId?: string,
+    marketplaceAccountId: string,
+    actorId: string | undefined,
+    repos: MarketplaceImportRepositories
   ): Promise<void> {
     if (remote.price !== null && remote.price !== undefined) {
       const price = this.unwrapMoney(remote.price, remote.currency ?? listing.price.currency);
       const priceResult = listing.updatePrice(price);
       if (priceResult.isErr()) throw priceResult.error;
     }
+    const product = await repos.productRepo.findByIdForWorkspace(listing.productId, workspaceId);
+    if (remote.status === 'live' && product && !product.canPublish()) {
+      const statusRecorded = listing.recordImportedStatus(remote.status, product);
+      if (statusRecorded.isErr()) throw statusRecorded.error;
+    }
+    if (product) {
+      if (product.name !== remote.title) {
+        const renamed = product.rename(remote.title);
+        if (renamed.isErr()) throw renamed.error;
+      }
+      if (
+        remote.description !== undefined &&
+        remote.description !== null &&
+        product.description !== remote.description
+      ) {
+        const described = product.updateDescription(remote.description);
+        if (described.isErr()) throw described.error;
+      }
+      if (remote.category && product.category !== remote.category) {
+        const categorized = product.updateCategory(remote.category);
+        if (categorized.isErr()) throw categorized.error;
+      }
+      if (!this.sameStringList([...product.images], remote.imageUrls)) {
+        product.clearImages();
+        for (const imageUrl of remote.imageUrls) {
+          const added = product.addImage(imageUrl);
+          if (added.isErr()) throw added.error;
+        }
+      }
+      if (
+        remote.price !== null &&
+        remote.price !== undefined &&
+        product.sellingPrice.amount !== remote.price
+      ) {
+        const selling = this.unwrapMoney(
+          remote.price,
+          remote.currency ?? product.sellingPrice.currency
+        );
+        const priced = product.updateSellingPrice(selling);
+        if (priced.isErr()) throw priced.error;
+      }
+      await repos.productRepo.save(product);
+    }
     listing.recordExternalUrl(remote.externalUrl ?? null);
+    const statusRecorded = listing.recordImportedStatus(remote.status, product ?? null);
+    if (statusRecorded.isErr()) throw statusRecorded.error;
     listing.recordSyncStats(remote.metrics ?? {}, new Date());
-    listing.recordSyncStatusNote(this.syncNote(remote));
-    await this.listingRepo.save(listing);
-    await this.activityLog?.record({
-      id: this.idGenerator(),
-      workspaceId,
-      entityType: 'listing',
-      entityId: listing.id,
-      actorType: actorId ? 'user' : 'hermes',
-      actorId,
-      action: 'olx_import_refreshed',
-      metadata: this.auditMetadata(undefined, remote, 'updated'),
-      createdAt: new Date(),
-    });
+    listing.recordSyncStatusNote(null);
+    await repos.listingRepo.save(listing);
+    await repos.activityLog?.record(
+      this.activityEntry(
+        workspaceId,
+        listing.id,
+        actorId,
+        'olx_import_refreshed',
+        this.auditMetadata(marketplaceAccountId, remote, 'updated')
+      )
+    );
   }
 
   private importedCondition(_remote: ImportedMarketplaceListing): ProductCondition {
-    // Product.condition is required by the current schema. The import marks this
-    // placeholder explicitly with UNKNOWN_CONDITION_TAG and audit metadata so the
-    // seller can confirm it rather than treating it as provider truth.
-    return 'good';
+    return 'unknown';
+  }
+
+  private async loadProductsByListingId(
+    listings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>,
+    workspaceId: string
+  ): Promise<Map<string, Product>> {
+    const entries = await Promise.all(
+      listings.map(async (listing) => {
+        const product = await this.productRepo.findByIdForWorkspace(listing.productId, workspaceId);
+        return product ? ([listing.id, product] as const) : null;
+      })
+    );
+    return new Map(entries.filter((entry): entry is [string, Product] => entry !== null));
+  }
+
+  private duplicateExternalIds(ids: string[]): Set<string> {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const id of ids) {
+      if (!id) continue;
+      if (seen.has(id)) duplicates.add(id);
+      seen.add(id);
+    }
+    return duplicates;
+  }
+
+  private findUniqueExistingListing(
+    listings: Awaited<ReturnType<IListingRepository['findByMarketplace']>>,
+    externalListingId: string
+  ): Listing | null {
+    const matches = listings.filter(
+      (listing) => listing.marketplaceListingId === externalListingId
+    );
+    if (matches.length > 1) {
+      throw new ValidationError(`Duplicate local listing identity for ${externalListingId}`);
+    }
+    return matches[0] ?? null;
+  }
+
+  private sameStringList(left: string[], right: string[]): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+
+  private activityEntry(
+    workspaceId: string,
+    listingId: string,
+    actorId: string | undefined,
+    action: string,
+    metadata: Record<string, unknown>
+  ): ActivityLogEntry {
+    return {
+      id: this.idGenerator(),
+      workspaceId,
+      entityType: 'listing',
+      entityId: listingId,
+      actorType: actorId ? 'user' : 'hermes',
+      actorId,
+      action,
+      metadata,
+      createdAt: new Date(),
+    };
   }
 
   private syncNote(remote: ImportedMarketplaceListing): string {
@@ -406,7 +701,7 @@ export class MarketplaceImportService {
   private auditMetadata(
     marketplaceAccountId: string | undefined,
     remote: ImportedMarketplaceListing,
-    action: 'imported' | 'updated',
+    action: 'imported' | 'updated'
   ): Record<string, unknown> {
     return {
       marketplace: 'olx',

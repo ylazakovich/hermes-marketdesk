@@ -6,19 +6,14 @@ import { toDate, toNumber, unwrapPersisted } from './support';
 
 export const ProductMapper = {
   // Reconstitute a Product aggregate from its own row plus its child rows.
-  toDomain(
-    row: ProductRow,
-    tagRows: ProductTagRow[],
-    imageRows: ProductImageRow[],
-  ): Product {
-    const costPrice = unwrapPersisted(Money.of(toNumber(row.cost_price), row.currency));
-    const sellingPrice = unwrapPersisted(
-      Money.of(toNumber(row.selling_price), row.currency),
-    );
+  toDomain(row: ProductRow, tagRows: ProductTagRow[], imageRows: ProductImageRow[]): Product {
+    const costPrice =
+      row.cost_price === null
+        ? null
+        : unwrapPersisted(Money.of(toNumber(row.cost_price), row.currency));
+    const sellingPrice = unwrapPersisted(Money.of(toNumber(row.selling_price), row.currency));
     const tags = tagRows.map((t) => t.tag);
-    const images = [...imageRows]
-      .sort((a, b) => a.position - b.position)
-      .map((i) => i.url);
+    const images = [...imageRows].sort((a, b) => a.position - b.position).map((i) => i.url);
 
     return Product.reconstitute({
       id: row.id,

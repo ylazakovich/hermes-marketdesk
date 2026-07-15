@@ -28,6 +28,11 @@ function parseNumber(raw: string): number {
   return Number(raw);
 }
 
+function parseOptionalNumber(raw: string): number | null {
+  if (raw.trim() === '') return null;
+  return Number(raw);
+}
+
 export const NameSkuFields: React.FC<ProductFieldsProps> = ({ values, errors, onChange }) => (
   <Stack spacing={2}>
     <TextField
@@ -90,7 +95,8 @@ export const DescriptionTagsFields: React.FC<ProductFieldsProps> = ({
       onChange={(e) => onChange('description', e.target.value)}
       error={Boolean(errors.description)}
       helperText={
-        errors.description ?? `${values.description.trim().length}/${PRODUCT_DESCRIPTION_MAX_LENGTH}`
+        errors.description ??
+        `${values.description.trim().length}/${PRODUCT_DESCRIPTION_MAX_LENGTH}`
       }
     />
     <Autocomplete
@@ -117,8 +123,8 @@ export const PriceFields: React.FC<ProductFieldsProps> = ({ values, errors, onCh
       label="Cost price"
       type="number"
       fullWidth
-      value={Number.isNaN(values.costPrice) ? '' : values.costPrice}
-      onChange={(e) => onChange('costPrice', parseNumber(e.target.value))}
+      value={values.costPrice === null || Number.isNaN(values.costPrice) ? '' : values.costPrice}
+      onChange={(e) => onChange('costPrice', parseOptionalNumber(e.target.value))}
       error={Boolean(errors.costPrice)}
       helperText={errors.costPrice}
       inputProps={{ min: 0, step: '0.01' }}

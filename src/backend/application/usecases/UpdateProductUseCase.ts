@@ -16,7 +16,7 @@ export class UpdateProductUseCase {
   constructor(
     private readonly productRepo: IProductRepository,
     private readonly eventPublisher: IEventPublisher,
-    private readonly validator: ProductValidator = new ProductValidator(),
+    private readonly validator: ProductValidator = new ProductValidator()
   ) {}
 
   async execute(input: UpdateProductDTO): Promise<Result<Product>> {
@@ -26,10 +26,7 @@ export class UpdateProductUseCase {
 
     // Tenant-scoped load: a product in another workspace reads as not-found so a
     // cross-tenant id cannot be mutated (S2).
-    const product = await this.productRepo.findByIdForWorkspace(
-      dto.productId,
-      dto.workspaceId,
-    );
+    const product = await this.productRepo.findByIdForWorkspace(dto.productId, dto.workspaceId);
     if (!product) {
       return Err(new NotFoundError(`Product not found: ${dto.productId}`));
     }
@@ -44,11 +41,19 @@ export class UpdateProductUseCase {
       if (r.isErr()) return r;
     }
 
+    let clearCostPrice = false;
     let nextCostPrice: Money | null = null;
     if (dto.costPrice !== undefined) {
-      const price = Money.of(dto.costPrice, dto.currency ?? product.costPrice.currency);
-      if (price.isErr()) return price;
-      nextCostPrice = price.value;
+      if (dto.costPrice === null) {
+        clearCostPrice = true;
+      } else {
+        const price = Money.of(
+          dto.costPrice,
+          dto.currency ?? product.costPrice?.currency ?? product.sellingPrice.currency
+        );
+        if (price.isErr()) return price;
+        nextCostPrice = price.value;
+      }
     }
 
     let nextSellingPrice: Money | null = null;
@@ -61,9 +66,10 @@ export class UpdateProductUseCase {
     const priceUpdate = product.updatePrices(
       nextCostPrice,
       nextSellingPrice,
-      dto.allowBelowCost ?? false,
+      dto.allowBelowCost ?? false
     );
     if (priceUpdate.isErr()) return priceUpdate;
+    if (clearCostPrice) product.clearCostPrice();
 
     if (dto.condition !== undefined) {
       const r = product.updateCondition(dto.condition);

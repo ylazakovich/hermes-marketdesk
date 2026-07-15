@@ -15,21 +15,16 @@ import type { ProductStatus, ProductCondition } from '../../../shared/types';
 import type { CreateProductDTO } from '../dto/CreateProductDTO';
 import type { UpdateProductDTO } from '../dto/UpdateProductDTO';
 
-const CONDITIONS = ['new', 'like_new', 'good', 'fair', 'poor', 'refurbished'] as const;
+const CONDITIONS = ['new', 'like_new', 'good', 'fair', 'poor', 'refurbished', 'unknown'] as const;
 
 const conditionSchema = z.enum(CONDITIONS);
-const currencySchema = z
-  .string()
-  .regex(/^[A-Z]{3}$/, 'currency must be an ISO-4217 code');
+const currencySchema = z.string().regex(/^[A-Z]{3}$/, 'currency must be an ISO-4217 code');
 
 const createProductSchema = z.object({
   workspaceId: z.string().trim().min(1, 'workspaceId is required'),
   sku: z.string().trim().min(1, 'sku is required'),
   name: z.string().trim().min(1, 'name is required'),
-  description: z
-    .string()
-    .min(PRODUCT_DESCRIPTION_MIN_LENGTH)
-    .max(PRODUCT_DESCRIPTION_MAX_LENGTH),
+  description: z.string().min(PRODUCT_DESCRIPTION_MIN_LENGTH).max(PRODUCT_DESCRIPTION_MAX_LENGTH),
   costPrice: z.number().finite().nonnegative(),
   sellingPrice: z.number().finite().nonnegative(),
   currency: currencySchema.optional(),
@@ -51,12 +46,14 @@ const updateProductSchema = z
       .min(PRODUCT_DESCRIPTION_MIN_LENGTH)
       .max(PRODUCT_DESCRIPTION_MAX_LENGTH)
       .optional(),
-    costPrice: z.number().finite().nonnegative().optional(),
+    costPrice: z.number().finite().nonnegative().nullable().optional(),
     sellingPrice: z.number().finite().nonnegative().optional(),
     currency: currencySchema.optional(),
     condition: conditionSchema.optional(),
     category: z.string().trim().min(1, 'category is required').optional(),
-    status: z.enum(PRODUCT_STATUS_LIST as unknown as [ProductStatus, ...ProductStatus[]]).optional(),
+    status: z
+      .enum(PRODUCT_STATUS_LIST as unknown as [ProductStatus, ...ProductStatus[]])
+      .optional(),
     tags: z.array(z.string().trim().min(1)).optional(),
     images: z.array(z.string().trim().min(1)).optional(),
     allowBelowCost: z.boolean().optional(),
@@ -74,7 +71,7 @@ const updateProductSchema = z
       dto.tags !== undefined ||
       dto.images !== undefined ||
       dto.allowBelowCost !== undefined,
-    { message: 'at least one field must be provided to update' },
+    { message: 'at least one field must be provided to update' }
   );
 
 function firstIssue(error: z.ZodError): string {

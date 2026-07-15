@@ -47,7 +47,7 @@ export class HermesDecisionEngine {
     private readonly eventRepo: IEventRepository,
     private readonly eventPublisher: IEventPublisher,
     private readonly aiProvider: IAIProvider,
-    private readonly idFactory: IdFactory,
+    private readonly idFactory: IdFactory
   ) {}
 
   async run(workspace: Workspace): Promise<HermesEvent[]> {
@@ -74,7 +74,7 @@ export class HermesDecisionEngine {
         let decision = this.determineAutonomy(
           workspace.autonomyLevel,
           suggestion.type,
-          suggestion.severity,
+          suggestion.severity
         );
 
         if (
@@ -108,7 +108,7 @@ export class HermesDecisionEngine {
   determineAutonomy(
     autonomyLevel: AutonomyLevel,
     eventType: HermesEventType,
-    severity: HermesSeverity,
+    severity: HermesSeverity
   ): AutonomyDecision {
     if (autonomyLevel === 'suggest_only') {
       return 'pending_review';
@@ -122,9 +122,7 @@ export class HermesDecisionEngine {
     }
 
     if (autonomyLevel === 'balanced') {
-      return BALANCED_SAFE_EVENT_TYPES.includes(eventType)
-        ? 'auto_apply'
-        : 'pending_review';
+      return BALANCED_SAFE_EVENT_TYPES.includes(eventType) ? 'auto_apply' : 'pending_review';
     }
 
     return 'pending_review';
@@ -138,11 +136,7 @@ export class HermesDecisionEngine {
   //   - maxAutoPriceChangePct: max |price change| % allowed without review
   //   - minMarginFloor: minimum (price - cost)/price margin % to auto-apply a price
   // Informational events (e.g. suggested_more_photos) are not guardrail-gated.
-  passesGuardrails(
-    product: Product,
-    event: HermesEvent,
-    workspace: Workspace,
-  ): boolean {
+  passesGuardrails(product: Product, event: HermesEvent, workspace: Workspace): boolean {
     const g = workspace.guardrails;
     const change = event.proposedChange;
 
@@ -154,6 +148,7 @@ export class HermesDecisionEngine {
         if (pctChange > g.maxAutoPriceChangePct / 100) return false;
       }
       if (to > 0) {
+        if (!product.costPrice) return false;
         const margin = (to - product.costPrice.amount) / to;
         if (margin < g.minMarginFloor / 100) return false;
       }
@@ -257,10 +252,7 @@ export class HermesDecisionEngine {
     return suggestions;
   }
 
-  async applyChange(
-    product: Product,
-    change: ProposedChange,
-  ): Promise<Result<void>> {
+  async applyChange(product: Product, change: ProposedChange): Promise<Result<void>> {
     if (change === null) return Ok(undefined);
 
     switch (change.kind) {
@@ -294,8 +286,8 @@ export class HermesDecisionEngine {
         // here so run() downgrades it to pending_review for a human to action.
         return Err(
           new InvalidStateError(
-            `${change.kind} cannot be auto-applied by the decision engine; routed to review`,
-          ),
+            `${change.kind} cannot be auto-applied by the decision engine; routed to review`
+          )
         );
       default:
         return Err(new ValidationError('Unknown proposed change'));
