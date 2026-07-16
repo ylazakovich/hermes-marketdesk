@@ -292,6 +292,16 @@ function seedDraftListing(
       marketplaceId: 'm-1',
       price: money(25, 'PLN'),
       status: 'draft',
+      marketplaceCategory: {
+        providerCategoryId: 'widget-leaf-1',
+        name: 'Widgets',
+        path: ['Electronics', 'Other electronics', 'Widgets'],
+        source: 'provider_taxonomy',
+        confidence: 1,
+        isLeaf: true,
+        taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+        taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
+      },
     }),
   );
   listingRepo.items.set(listing.id, listing);
