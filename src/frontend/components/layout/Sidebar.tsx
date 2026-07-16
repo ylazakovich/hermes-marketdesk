@@ -273,6 +273,7 @@ export const Sidebar: React.FC = () => {
         '& .MuiDrawer-paper': {
           width,
           position: 'sticky',
+          top: 0,
           height: '100vh',
           boxSizing: 'border-box',
           overflowX: 'hidden',

@@ -14,15 +14,28 @@ export interface NavItem {
   icon: SvgIconComponent;
 }
 
+// Canonical router paths. Keeping deep-link-only routes here makes route
+// registration independently testable from primary navigation membership.
+export const APP_ROUTE_PATHS = {
+  login: '/login',
+  products: '/products',
+  productDetail: '/products/:productId',
+  listings: '/listings',
+  analytics: '/analytics',
+  hermes: '/hermes',
+  marketplaces: '/marketplaces',
+  settings: '/settings',
+} as const;
+
 // Order matches PRD §4. Listings remain routable for deep links but are managed
 // contextually under Products rather than occupying a second primary destination.
 export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Dashboard', path: '/', icon: DashboardIcon },
-  { label: 'Products', path: '/products', icon: InventoryIcon },
-  { label: 'Analytics', path: '/analytics', icon: InsightsIcon },
-  { label: 'Hermes AI', path: '/hermes', icon: AutoAwesomeIcon },
-  { label: 'Marketplaces', path: '/marketplaces', icon: HubIcon },
-  { label: 'Settings', path: '/settings', icon: SettingsIcon },
+  { label: 'Products', path: APP_ROUTE_PATHS.products, icon: InventoryIcon },
+  { label: 'Analytics', path: APP_ROUTE_PATHS.analytics, icon: InsightsIcon },
+  { label: 'Hermes AI', path: APP_ROUTE_PATHS.hermes, icon: AutoAwesomeIcon },
+  { label: 'Marketplaces', path: APP_ROUTE_PATHS.marketplaces, icon: HubIcon },
+  { label: 'Settings', path: APP_ROUTE_PATHS.settings, icon: SettingsIcon },
 ];
 
 export const SIDEBAR_WIDTH = 248;

@@ -1,5 +1,5 @@
 import { resolveTopBarRoute } from './TopBar.js';
-import { NAV_ITEMS } from '../../utils/constants.js';
+import { APP_ROUTE_PATHS, NAV_ITEMS } from '../../utils/constants.js';
 
 describe('canonical MarketDesk shell contract', () => {
   it.each([
@@ -21,6 +21,7 @@ describe('canonical MarketDesk shell contract', () => {
   });
 
   it('keeps Listings routable but out of primary PRD navigation', () => {
+    expect(APP_ROUTE_PATHS.listings).toBe('/listings');
     expect(NAV_ITEMS.map(({ path }) => path)).toEqual([
       '/',
       '/products',

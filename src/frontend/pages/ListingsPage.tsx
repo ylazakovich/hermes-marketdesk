@@ -61,6 +61,7 @@ const ListingsPage: React.FC = () => {
           size="small"
           multiple
           displayEmpty
+          inputProps={{ 'aria-label': 'Listing status filter' }}
           value={statusFilter}
           onChange={handleStatusChange}
           renderValue={(selected) =>
