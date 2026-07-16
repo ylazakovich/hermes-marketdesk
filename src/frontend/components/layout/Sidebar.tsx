@@ -230,16 +230,28 @@ export const Sidebar: React.FC = () => {
             </Tooltip>
           </Stack>
         ) : (
-          <Tooltip title={`${workspaceName || 'Workspace'} · ${userLabel}`} placement="right">
-            <ListItemButton
-              onClick={() => handleNavigate('/settings')}
-              sx={{ justifyContent: 'center', px: 1 }}
-            >
-              <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: 14 }}>
-                {avatarLetter}
-              </Avatar>
-            </ListItemButton>
-          </Tooltip>
+          <>
+            <Tooltip title={`${workspaceName || 'Workspace'} · ${userLabel}`} placement="right">
+              <ListItemButton
+                onClick={() => handleNavigate('/settings')}
+                sx={{ justifyContent: 'center', px: 1 }}
+              >
+                <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: 14 }}>
+                  {avatarLetter}
+                </Avatar>
+              </ListItemButton>
+            </Tooltip>
+            <Tooltip title="Sign out" placement="right">
+              <IconButton
+                size="small"
+                onClick={() => dispatch(logout())}
+                aria-label="Sign out"
+                sx={{ alignSelf: 'center' }}
+              >
+                <LogoutIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </>
         )}
       </Stack>
     </Box>
