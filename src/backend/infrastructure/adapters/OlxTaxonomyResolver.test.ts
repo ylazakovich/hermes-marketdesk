@@ -9,12 +9,22 @@ describe('OlxTaxonomyResolver', () => {
   const now = new Date('2026-07-16T12:00:00.000Z');
 
   it('attests an exact leaf category from the provider response', async () => {
-    const http = client({
-      id: 2000,
-      name: 'Projectors',
-      path: ['Electronics', 'TV and video', 'Projectors'],
-      leaf: true,
-    });
+    const request = jest.fn(async ({ url }: { url: string }) => ({
+      status: 200,
+      data: url.endsWith('/categories/2000')
+        ? {
+            id: 2000,
+            name: 'Projectors',
+            path: ['Electronics', 'TV and video', 'Projectors'],
+            leaf: true,
+          }
+        : { data: [
+            { id: 1000, name: 'Electronics', parent_id: 0, is_leaf: false },
+            { id: 1500, name: 'TV and video', parent_id: 1000, is_leaf: false },
+            { id: 2000, name: 'Projectors', parent_id: 1500, is_leaf: true },
+          ] },
+    }));
+    const http = { request: request as MarketplaceHttpClient['request'] };
     const resolver = new OlxTaxonomyResolver(http, 'https://example.test/api', () => now);
 
     await expect(resolver.verify('2000')).resolves.toEqual({
@@ -27,10 +37,62 @@ describe('OlxTaxonomyResolver', () => {
       taxonomyVerifiedAt: now.toISOString(),
       taxonomyStaleAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
     });
-    expect(http.request).toHaveBeenCalledWith({
+    expect(request).toHaveBeenNthCalledWith(1, {
       method: 'GET',
       url: 'https://example.test/api/categories/2000',
     });
+    expect(request).toHaveBeenNthCalledWith(2, {
+      method: 'GET',
+      url: 'https://example.test/api/categories',
+    });
+  });
+
+  it.each([
+    ['a one-segment array', ['Projektory']],
+    ['a one-segment string', 'Projektory'],
+  ])('rejects incomplete direct breadcrumb: %s', async (_label, path) => {
+    const request = jest.fn(async ({ url }: { url: string }) => ({
+      status: 200,
+      data: url.endsWith('/categories/1984')
+        ? { id: 1984, name: 'Projektory', path, is_leaf: true }
+        : { data: [
+            { id: 99, name: 'Elektronika', parent_id: 0, is_leaf: false },
+            { id: 1984, name: 'Projektory', parent_id: 99, is_leaf: true },
+          ] },
+    }));
+    const resolver = new OlxTaxonomyResolver(
+      { request: request as MarketplaceHttpClient['request'] },
+      undefined,
+      () => now,
+    );
+
+    await expect(resolver.verify('1984')).rejects.toThrow('incomplete');
+  });
+
+  it('rejects an unsafe numeric detail id instead of aliasing it', async () => {
+    const unsafeId = '9007199254740992';
+    const resolver = new OlxTaxonomyResolver(client({
+      id: 9007199254740993,
+      name: 'Projectors',
+      path: ['Electronics', 'Projectors'],
+      is_leaf: true,
+    }), undefined, () => now);
+
+    await expect(resolver.verify(unsafeId)).rejects.toThrow('different category id');
+  });
+
+  it.each([
+    ['target children contradict leafness', { id: 1984, name: 'Projektory', is_leaf: true, children: [{ id: 1 }] }],
+    ['a non-boolean leaf claim', { id: 1984, name: 'Projektory', leaf: true, is_leaf: 'false' }],
+    ['a nested parent asserted as leaf', {
+      id: 1984,
+      name: 'Projektory',
+      is_leaf: true,
+      parent: { id: 99, name: 'Elektronika', is_leaf: true, parent: null },
+    }],
+  ])('rejects malformed detail topology: %s', async (_label, detail) => {
+    const resolver = new OlxTaxonomyResolver(client(detail), undefined, () => now);
+    await expect(resolver.verify('1984')).rejects.toThrow();
   });
 
   it('reconstructs a complete path from the authenticated flat taxonomy', async () => {
@@ -103,6 +165,12 @@ describe('OlxTaxonomyResolver', () => {
     ['a noncanonical parent id', [
       { id: 1979, name: 'Sprzęt video', parent_id: 0, is_leaf: false },
       { id: 1984, name: 'Projektory', parent_id: '01979', is_leaf: true },
+    ]],
+    ['an unrelated child with a malformed parent id', [
+      { id: 99, name: 'Elektronika', parent_id: 0, is_leaf: false },
+      { id: 1979, name: 'Sprzęt video', parent_id: 99, is_leaf: false },
+      { id: 1984, name: 'Projektory', parent_id: 1979, is_leaf: true },
+      { id: 3000, name: 'Malformed child', parent_id: '01984', is_leaf: true },
     ]],
     ['a zero category node id', [
       { id: 0, name: 'Elektronika', parent_id: 0, is_leaf: false },

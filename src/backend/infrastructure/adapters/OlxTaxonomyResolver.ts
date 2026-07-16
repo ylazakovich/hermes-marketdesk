@@ -44,13 +44,16 @@ export class OlxTaxonomyResolver implements OlxTrustedTaxonomyResolver {
       url: `${this.baseUrl}/categories/${id}`,
     });
     const node = this.unwrap(response.data);
-    if (String(node.id ?? '') !== id) throw new Error('OLX taxonomy returned a different category id');
+    if (this.canonicalCategoryId(node.id) !== id) throw new Error('OLX taxonomy returned a different category id');
     const name = node.name?.trim();
     if (!name) throw new Error('OLX taxonomy category name is missing');
     const isLeaf = this.leafStatus(node);
     if (isLeaf !== true) throw new Error('OLX category is not a verified leaf category');
-    let path = this.path(node, name);
-    if (path.length === 0) path = await this.pathFromFlatTaxonomy(id, name);
+    const directPath = this.path(node, name);
+    const path = await this.pathFromFlatTaxonomy(id, name);
+    if (directPath.length > 0 && !this.samePath(directPath, path)) {
+      throw new Error('OLX taxonomy detail path does not match the flat taxonomy');
+    }
     if (path.length === 0 || path[path.length - 1] !== name) {
       throw new Error('OLX taxonomy did not return a complete category path');
     }
@@ -75,22 +78,32 @@ export class OlxTaxonomyResolver implements OlxTrustedTaxonomyResolver {
 
   private path(node: OlxCategoryNode, name: string): string[] {
     if (Array.isArray(node.path)) {
-      if (node.path.some((part) => typeof part !== 'string' || part.trim().length === 0)) return [];
-      return node.path.map((part) => part.trim());
+      if (node.path.some((part) => typeof part !== 'string' || part.trim().length === 0)) {
+        throw new Error('OLX taxonomy detail path is malformed');
+      }
+      const parts = node.path.map((part) => part.trim());
+      if (parts.length < 2) throw new Error('OLX taxonomy detail path is incomplete');
+      return parts;
     }
     if (typeof node.path === 'string') {
       const parts = node.path.split(/\s*(?:>|→|\/)\s*/).map((part) => part.trim());
-      return parts.some((part) => part.length === 0) ? [] : parts;
+      if (parts.length < 2 || parts.some((part) => part.length === 0)) {
+        throw new Error('OLX taxonomy detail path is incomplete');
+      }
+      return parts;
     }
+    if (node.path !== undefined) throw new Error('OLX taxonomy detail path is malformed');
     const parents: string[] = [];
     let current = node.parent;
     const visited = new Set<OlxCategoryNode>();
     let depth = 0;
     while (current) {
-      if (visited.has(current) || depth >= 32) return [];
+      if (visited.has(current) || depth >= 32) throw new Error('OLX taxonomy detail ancestry is malformed');
       visited.add(current);
       depth += 1;
-      if (!current.name?.trim()) return [];
+      if (!current.name?.trim() || this.leafStatus(current) !== false) {
+        throw new Error('OLX taxonomy detail ancestry is malformed');
+      }
       parents.unshift(current.name.trim());
       current = current.parent;
     }
@@ -115,7 +128,8 @@ export class OlxTaxonomyResolver implements OlxTrustedTaxonomyResolver {
     for (const node of nodes) {
       if (node.parent_id === 0) continue;
       const parentId = this.canonicalCategoryId(node.parent_id);
-      if (parentId) parentsWithChildren.add(parentId);
+      if (!parentId) return [];
+      parentsWithChildren.add(parentId);
     }
     const target = byId.get(id);
     const targetLeaf = target ? this.leafStatus(target) : undefined;
@@ -151,10 +165,17 @@ export class OlxTaxonomyResolver implements OlxTrustedTaxonomyResolver {
   }
 
   private leafStatus(node: OlxCategoryNode): boolean | undefined {
-    if (typeof node.leaf === 'boolean' && typeof node.is_leaf === 'boolean' && node.leaf !== node.is_leaf) {
-      return undefined;
-    }
-    return node.leaf ?? node.is_leaf
-      ?? (Array.isArray(node.children) ? node.children.length === 0 : undefined);
+    if (node.leaf !== undefined && typeof node.leaf !== 'boolean') return undefined;
+    if (node.is_leaf !== undefined && typeof node.is_leaf !== 'boolean') return undefined;
+    if (node.children !== undefined && !Array.isArray(node.children)) return undefined;
+    const explicit = node.leaf ?? node.is_leaf;
+    if (typeof node.leaf === 'boolean' && typeof node.is_leaf === 'boolean' && node.leaf !== node.is_leaf) return undefined;
+    const inferred = Array.isArray(node.children) ? node.children.length === 0 : undefined;
+    if (explicit !== undefined && inferred !== undefined && explicit !== inferred) return undefined;
+    return explicit ?? inferred;
+  }
+
+  private samePath(left: string[], right: string[]): boolean {
+    return left.length === right.length && left.every((part, index) => part === right[index]);
   }
 }
