@@ -108,6 +108,13 @@ export function marginWarning(values: ProductFormValues): string | null {
   return `Selling price is below cost — this listing would sell at a loss (${formatLossAmount(loss.amount)}, ${loss.marginPercent.toFixed(1)}% margin).`;
 }
 
+export function belowCostConfirmationRequired(
+  values: ProductFormValues,
+  confirmed: boolean
+): boolean {
+  return belowCostLoss(values) !== null && !confirmed;
+}
+
 export function toProductSubmissionValues(values: ProductFormValues): ProductSubmissionValues {
   const belowCost = belowCostLoss(values) !== null;
   return belowCost ? { ...values, allowBelowCost: true } : { ...values };

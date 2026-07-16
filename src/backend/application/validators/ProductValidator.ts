@@ -4,6 +4,7 @@
 // domain Result so the rest of the application stays railway-oriented.
 
 import { z } from 'zod';
+import { requireBelowCostConfirmation } from '../../../shared/validation/pricing';
 import { Result, Ok, Err } from '../../domain/shared/Result';
 import { ValidationError } from '../../domain/shared/DomainError';
 import {
@@ -20,20 +21,22 @@ const CONDITIONS = ['new', 'like_new', 'good', 'fair', 'poor', 'refurbished', 'u
 const conditionSchema = z.enum(CONDITIONS);
 const currencySchema = z.string().regex(/^[A-Z]{3}$/, 'currency must be an ISO-4217 code');
 
-const createProductSchema = z.object({
-  workspaceId: z.string().trim().min(1, 'workspaceId is required'),
-  sku: z.string().trim().min(1, 'sku is required'),
-  name: z.string().trim().min(1, 'name is required'),
-  description: z.string().min(PRODUCT_DESCRIPTION_MIN_LENGTH).max(PRODUCT_DESCRIPTION_MAX_LENGTH),
-  costPrice: z.number().finite().nonnegative(),
-  sellingPrice: z.number().finite().nonnegative(),
-  currency: currencySchema.optional(),
-  condition: conditionSchema,
-  category: z.string().trim().min(1, 'category is required'),
-  tags: z.array(z.string().trim().min(1)).optional(),
-  images: z.array(z.string().trim().min(1)).optional(),
-  allowBelowCost: z.boolean().optional(),
-});
+const createProductSchema = z
+  .object({
+    workspaceId: z.string().trim().min(1, 'workspaceId is required'),
+    sku: z.string().trim().min(1, 'sku is required'),
+    name: z.string().trim().min(1, 'name is required'),
+    description: z.string().min(PRODUCT_DESCRIPTION_MIN_LENGTH).max(PRODUCT_DESCRIPTION_MAX_LENGTH),
+    costPrice: z.number().finite().nonnegative(),
+    sellingPrice: z.number().finite().nonnegative(),
+    currency: currencySchema.optional(),
+    condition: conditionSchema,
+    category: z.string().trim().min(1, 'category is required'),
+    tags: z.array(z.string().trim().min(1)).optional(),
+    images: z.array(z.string().trim().min(1)).optional(),
+    allowBelowCost: z.boolean().optional(),
+  })
+  .superRefine(requireBelowCostConfirmation);
 
 const updateProductSchema = z
   .object({
@@ -58,6 +61,7 @@ const updateProductSchema = z
     images: z.array(z.string().trim().min(1)).optional(),
     allowBelowCost: z.boolean().optional(),
   })
+  .superRefine(requireBelowCostConfirmation)
   .refine(
     (dto) =>
       dto.name !== undefined ||

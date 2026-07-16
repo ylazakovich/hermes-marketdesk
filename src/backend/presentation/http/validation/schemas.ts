@@ -8,6 +8,7 @@
 // authenticated principal (req.user.workspaceId), never trusted from the client body.
 
 import { z } from 'zod';
+import { requireBelowCostConfirmation } from '../../../../shared/validation/pricing';
 import {
   PRODUCT_STATUS_LIST,
   AUTONOMY_LEVEL_LIST,
@@ -17,22 +18,24 @@ import {
 
 const conditionEnum = z.enum(['new', 'like_new', 'good', 'fair', 'poor', 'refurbished', 'unknown']);
 
-export const createProductSchema = z.object({
-  sku: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().min(1),
-  costPrice: z.number().nonnegative(),
-  sellingPrice: z.number().nonnegative(),
-  currency: z
-    .string()
-    .regex(/^[A-Z]{3}$/)
-    .optional(),
-  condition: conditionEnum,
-  category: z.string().min(1),
-  tags: z.array(z.string()).optional(),
-  images: z.array(z.string()).optional(),
-  allowBelowCost: z.boolean().optional(),
-});
+export const createProductSchema = z
+  .object({
+    sku: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    costPrice: z.number().nonnegative(),
+    sellingPrice: z.number().nonnegative(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    condition: conditionEnum,
+    category: z.string().min(1),
+    tags: z.array(z.string()).optional(),
+    images: z.array(z.string()).optional(),
+    allowBelowCost: z.boolean().optional(),
+  })
+  .superRefine(requireBelowCostConfirmation);
 
 export const updateProductSchema = z
   .object({
@@ -51,6 +54,7 @@ export const updateProductSchema = z
     images: z.array(z.string()).optional(),
     allowBelowCost: z.boolean().optional(),
   })
+  .superRefine(requireBelowCostConfirmation)
   .refine((obj) => Object.keys(obj).length > 0, {
     message: 'At least one field must be provided',
   });

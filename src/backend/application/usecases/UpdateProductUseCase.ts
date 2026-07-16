@@ -6,7 +6,8 @@
 import { Result, Ok, Err } from '../../domain/shared/Result';
 import { NotFoundError } from '../../domain/shared/DomainError';
 import { Money } from '../../domain/valueObjects/Money';
-import type { Product } from '../../domain/entities/Product';
+import { Product } from '../../domain/entities/Product';
+import { buildPricingDecision } from '../../domain/services/pricingDecision';
 import type { IProductRepository } from '../../domain/repositories/interfaces/IProductRepository';
 import type { IEventPublisher, DomainEvent } from '../../domain/ports/IEventPublisher';
 import type { UpdateProductDTO } from '../dto/UpdateProductDTO';
@@ -30,6 +31,8 @@ export class UpdateProductUseCase {
     if (!product) {
       return Err(new NotFoundError(`Product not found: ${dto.productId}`));
     }
+    const previousCostPrice = product.costPrice?.amount ?? null;
+    const previousSellingPrice = product.sellingPrice.amount;
 
     if (dto.name !== undefined) {
       const r = product.rename(dto.name);
@@ -106,7 +109,14 @@ export class UpdateProductUseCase {
     await this.productRepo.save(product);
 
     try {
-      await this.eventPublisher.publish(this.updatedEvent(product));
+      await this.eventPublisher.publish(
+        this.updatedEvent(product, {
+          pricesChanged: dto.costPrice !== undefined || dto.sellingPrice !== undefined,
+          belowCostConfirmed: dto.allowBelowCost === true,
+          previousCostPrice,
+          previousSellingPrice,
+        })
+      );
     } catch {
       // Product already persisted; don't fail the request over a best-effort
       // event publication failure. Consider logging/metrics here.
@@ -115,12 +125,30 @@ export class UpdateProductUseCase {
     return Ok(product);
   }
 
-  private updatedEvent(product: Product): DomainEvent {
+  private updatedEvent(
+    product: Product,
+    pricing: {
+      pricesChanged: boolean;
+      belowCostConfirmed: boolean;
+      previousCostPrice: number | null;
+      previousSellingPrice: number;
+    }
+  ): DomainEvent {
+    const payload: Record<string, unknown> = {
+      productId: product.id,
+      workspaceId: product.workspaceId,
+    };
+    if (pricing.pricesChanged) {
+      payload.pricingDecision = buildPricingDecision(product, pricing.belowCostConfirmed, {
+          costPrice: pricing.previousCostPrice,
+          sellingPrice: pricing.previousSellingPrice,
+      });
+    }
     return {
       type: 'product.updated',
       aggregateType: 'Product',
       aggregateId: product.id,
-      payload: { productId: product.id, workspaceId: product.workspaceId },
+      payload,
       occurredAt: new Date(),
     };
   }

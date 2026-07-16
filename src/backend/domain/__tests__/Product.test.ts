@@ -38,17 +38,21 @@ describe('Product invariants', () => {
     expect(r.isErr()).toBe(true);
   });
 
-  it('allows sellingPrice below costPrice as an intentional seller decision', () => {
+  it('rejects sellingPrice below costPrice without explicit confirmation', () => {
     const r = Product.create(baseProps({ costPrice: money(80), sellingPrice: money(50) }));
-    expect(r.isOk()).toBe(true);
-    expect(unwrap(r).sellingPrice.amount).toBeCloseTo(50);
+    expect(r.isErr()).toBe(true);
   });
 
-  it('accepts the legacy allowBelowCost flag without changing below-cost behaviour', () => {
+  it('accepts below-cost creation with explicit confirmation', () => {
     const r = Product.create(
       baseProps({ costPrice: money(80), sellingPrice: money(50), allowBelowCost: true }),
     );
     expect(r.isOk()).toBe(true);
+  });
+
+  it('allows zero draft prices and selling price equal to cost', () => {
+    expect(Product.create(baseProps({ costPrice: money(0), sellingPrice: money(0) })).isOk()).toBe(true);
+    expect(Product.create(baseProps({ costPrice: money(50), sellingPrice: money(50) })).isOk()).toBe(true);
   });
 });
 
@@ -88,22 +92,33 @@ describe('Product price / description updates', () => {
     expect(product.costPrice.currency).toBe('PLN');
   });
 
-  it('allows updating cost price above the current selling price as below-cost context', () => {
+  it('requires confirmation when cost becomes higher than selling price', () => {
     const product = unwrap(Product.create(baseProps()));
-    expect(product.updateCostPrice(money(90)).isOk()).toBe(true);
+    expect(product.updateCostPrice(money(90)).isErr()).toBe(true);
+    expect(product.updateCostPrice(money(90), true).isOk()).toBe(true);
     expect(product.costPrice.amount).toBeCloseTo(90);
   });
 
-  it('allows updating selling price below cost', () => {
+  it('rejects updating selling price below cost without confirmation', () => {
     const product = unwrap(Product.create(baseProps()));
-    expect(product.updateSellingPrice(money(10)).isOk()).toBe(true);
-    expect(product.sellingPrice.amount).toBeCloseTo(10);
+    expect(product.updateSellingPrice(money(10)).isErr()).toBe(true);
+    expect(product.sellingPrice.amount).toBeCloseTo(80);
   });
 
-  it('accepts the legacy allowBelowCost flag on below-cost updates', () => {
+  it('accepts explicit confirmation on below-cost updates', () => {
     const product = unwrap(Product.create(baseProps()));
     expect(product.updateSellingPrice(money(10), true).isOk()).toBe(true);
     expect(product.sellingPrice.amount).toBeCloseTo(10);
+  });
+
+  it('accepts equal-to-cost update boundaries without confirmation', () => {
+    const sellingUpdate = unwrap(Product.create(baseProps()));
+    expect(sellingUpdate.updateSellingPrice(money(50)).isOk()).toBe(true);
+    expect(sellingUpdate.sellingPrice.amount).toBeCloseTo(50);
+
+    const costUpdate = unwrap(Product.create(baseProps()));
+    expect(costUpdate.updateCostPrice(money(80)).isOk()).toBe(true);
+    expect(costUpdate.costPrice?.amount).toBeCloseTo(80);
   });
 
   it('validates description length on update', () => {

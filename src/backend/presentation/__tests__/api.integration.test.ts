@@ -511,6 +511,38 @@ describe('Presentation API', () => {
       expect(res.body.data.id).toBeDefined();
     });
 
+    it('requires explicit API confirmation before creating below-cost pricing', async () => {
+      const { app } = await buildTestApp();
+      const body = {
+        sku: 'BELOW-1',
+        name: 'Below-cost widget',
+        description: 'A deliberately discounted widget for boundary testing',
+        costPrice: 20,
+        sellingPrice: 10,
+        condition: 'good',
+        category: 'misc',
+      };
+
+      const rejected = await auth(request(app).post('/api/products')).send(body);
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error.code).toBe('VALIDATION_ERROR');
+      expect(rejected.body.error.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'allowBelowCost',
+            message: expect.stringContaining('must be true'),
+          }),
+        ])
+      );
+
+      const accepted = await auth(request(app).post('/api/products')).send({
+        ...body,
+        allowBelowCost: true,
+      });
+      expect(accepted.status).toBe(201);
+      expect(accepted.body.data.sellingPrice).toBe(10);
+    });
+
     it('generates a review-only AI product draft from a title', async () => {
       const { app } = await buildTestApp();
       const res = await auth(request(app).post('/api/products/ai-draft')).send({

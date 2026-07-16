@@ -5,6 +5,7 @@ import { Result, Ok, Err } from '../shared/Result';
 import { ConflictError, NotFoundError } from '../shared/DomainError';
 import { Product } from '../entities/Product';
 import { Money } from '../valueObjects/Money';
+import { buildPricingDecision } from './pricingDecision';
 import type { ProductStatus, ProductCondition } from '../../../shared/types';
 import type { IProductRepository } from '../repositories/interfaces/IProductRepository';
 import type { IEventPublisher, DomainEvent } from '../ports/IEventPublisher';
@@ -49,6 +50,7 @@ export class ProductService {
       workspaceId: product.workspaceId,
       sku: product.sku,
       name: product.name,
+      pricingDecision: buildPricingDecision(product, command.allowBelowCost === true),
     });
 
     return Ok(product);
@@ -72,6 +74,10 @@ export class ProductService {
       workspaceId: product.workspaceId,
       oldPrice,
       newPrice: product.sellingPrice.amount,
+      pricingDecision: buildPricingDecision(product, allowBelowCost, {
+          costPrice: product.costPrice?.amount ?? null,
+          sellingPrice: oldPrice,
+      }),
     });
 
     return Ok(product);

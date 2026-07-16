@@ -2,8 +2,13 @@
 // the parent supplies onSubmit (wired to a create/update mutation) and busy flag.
 import React, { useMemo, useState } from 'react';
 import { Alert, Button, Stack } from '@mui/material';
+import {
+  BelowCostConfirmationAlert,
+  useBelowCostConfirmation,
+} from './BelowCostConfirmation';
 import type { Product } from '@shared/types';
 import {
+  belowCostConfirmationRequired,
   emptyProductValues,
   marginWarning,
   productToValues,
@@ -38,9 +43,13 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     initial ? productToValues(initial) : emptyProductValues(),
   );
   const [errors, setErrors] = useState<ProductFieldErrors>({});
+  const belowCostConfirmation = useBelowCostConfirmation(
+    Boolean(initial && marginWarning(productToValues(initial)))
+  );
 
   const change = <K extends keyof ProductFormValues>(field: K, value: ProductFormValues[K]) => {
     setValues((prev) => ({ ...prev, [field]: value }));
+    belowCostConfirmation.resetForField(field);
   };
 
   const warning = useMemo(() => marginWarning(values), [values]);
@@ -51,6 +60,10 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     const validation = validateProductValues(values);
     setErrors(validation);
     if (Object.keys(validation).length > 0) return;
+    if (belowCostConfirmationRequired(values, belowCostConfirmation.confirmed)) {
+      belowCostConfirmation.setHasError(true);
+      return;
+    }
     onSubmit(toProductSubmissionValues(values));
   };
 
@@ -60,7 +73,14 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         <NameSkuFields {...fieldProps} />
         <DescriptionTagsFields {...fieldProps} />
         <PriceFields {...fieldProps} />
-        {warning && <Alert severity="warning">{warning}</Alert>}
+        {warning && (
+          <BelowCostConfirmationAlert
+            warning={warning}
+            confirmed={belowCostConfirmation.confirmed}
+            hasError={belowCostConfirmation.hasError}
+            onConfirmedChange={belowCostConfirmation.changeConfirmed}
+          />
+        )}
         <StatusField {...fieldProps} />
         <ImagesField {...fieldProps} />
 
