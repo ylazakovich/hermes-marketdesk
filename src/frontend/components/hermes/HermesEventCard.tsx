@@ -49,12 +49,23 @@ export const CategoryRecreationReview: React.FC<CategoryRecreationReviewProps> =
   onAction,
 }) => {
   const [delist, recreate] = change.operations;
-  const category = (label: string, value: CategoryRecreationChangePayload['currentCategory']) => (
+  const category = (
+    label: string,
+    value: CategoryRecreationChangePayload['currentCategory'] | null,
+  ) => value ? (
     <Box>
       <Typography variant="caption" color="text.secondary">{label}</Typography>
       <Typography variant="body2" sx={{ fontWeight: 700 }}>{value.path.join(' → ')}</Typography>
       <Typography variant="caption" color="text.secondary">
         Provider category ID: {value.providerCategoryId} · Confidence: {value.confidence}
+      </Typography>
+    </Box>
+  ) : (
+    <Box>
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+      <Typography variant="body2" sx={{ fontWeight: 700 }}>Not selected</Typography>
+      <Typography variant="caption" color="warning.main">
+        Select and verify an exact OLX leaf category before recreation can be reviewed.
       </Typography>
     </Box>
   );
