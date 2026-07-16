@@ -164,14 +164,21 @@ export class OlxPublicationQuotaService {
     marketplace: Marketplace;
   }): Promise<OlxQuotaDecisionView> {
     if (input.marketplace.key !== 'olx') return this.notApplicable();
+    const category = parseMarketplaceCategoryMetadata(input.listing.marketplaceCategory);
+    const categoryDecision = evaluateOlxCategory(input.product, category, this.now());
+    if (!categoryDecision.allowed || !category) {
+      return this.unknown(
+        `category_${categoryDecision.reason ?? 'invalid'}`,
+        undefined,
+        category?.providerCategoryId,
+        false,
+      );
+    }
     const account = await this.accountRepo.findByMarketplaceId(input.marketplace.id);
     if (!account || account.status !== 'connected') {
       return this.unknown('marketplace_account_unknown', undefined, undefined, false);
     }
-    const subcategoryId = input.listing.marketplaceCategory?.providerCategoryId ?? null;
-    if (!subcategoryId) {
-      return this.unknown('olx_subcategory_unknown', account.id, undefined, false);
-    }
+    const subcategoryId = category.providerCategoryId;
     const at = this.now();
     const quota = await this.quotaRepo.findCurrent({
       workspaceId: input.product.workspaceId,

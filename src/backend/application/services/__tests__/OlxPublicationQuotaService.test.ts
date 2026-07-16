@@ -244,7 +244,32 @@ describe('OlxPublicationQuotaService', () => {
     })).resolves.toMatchObject({ reason: 'marketplace_account_unknown', requiresOverride: false });
     await expect(service.preview({
       marketplace, product, listing: unknownCategoryListing,
-    })).resolves.toMatchObject({ reason: 'olx_subcategory_unknown', requiresOverride: false });
+    })).resolves.toMatchObject({ reason: 'category_category_missing', requiresOverride: false });
+  });
+
+  it('fails quota preview closed before reading quota for stale category metadata', async () => {
+    const { service, quotaRepo, marketplace, product } = setup();
+    const staleCategoryListing = unwrap(Listing.create({
+      id: 'listing-stale-category',
+      productId: product.id,
+      marketplaceId: marketplace.id,
+      price: money(200),
+      marketplaceCategory: {
+        providerCategoryId: '2000', name: 'Cameras', path: ['Electronics', 'Cameras'],
+        source: 'provider_taxonomy', confidence: 1, isLeaf: true,
+        taxonomyVerifiedAt: '2026-07-14T00:00:00.000Z',
+        taxonomyStaleAt: '2026-07-15T11:59:59.000Z',
+      },
+    }));
+    const quotaRead = jest.spyOn(quotaRepo, 'findCurrent');
+
+    await expect(service.preview({
+      marketplace, product, listing: staleCategoryListing,
+    })).resolves.toMatchObject({
+      status: 'unknown', decision: 'block', reason: 'category_taxonomy_unverified',
+      requiresOverride: false,
+    });
+    expect(quotaRead).not.toHaveBeenCalled();
   });
 
   it('blocks recreate against exhausted exact-subcategory quota without restoring a unit for deletion', async () => {
