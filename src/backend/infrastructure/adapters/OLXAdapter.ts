@@ -7,6 +7,7 @@ import {
   type MarketplaceHttpClient,
   StubMarketplaceHttpClient,
   HttpError,
+  type HttpRequestConfig,
   type StubResponder,
   type HttpResponse,
 } from './MarketplaceHttpClient';
@@ -133,26 +134,32 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
   protected async doPublish(input: ListingPublishInput): Promise<PublishResult> {
     const categoryId = this.resolvePublishCategory(input);
     this.assertPublishDetails(categoryId);
-    return this.sendPreparedAdvert(this.buildAdvertPayload(input, categoryId));
+    return this.sendPreparedAdvert(this.createAdvertRequest(this.buildAdvertPayload(input, categoryId)));
   }
 
   async preparePublish(input: ListingPublishInput): Promise<{ execute(): Promise<PublishResult> }> {
     const categoryId = this.resolvePublishCategory(input);
     this.assertPublishDetails(categoryId);
     const body = this.buildAdvertPayload(input, categoryId);
+    const request = this.createAdvertRequest(body);
+    this.http.assertRequestAllowed?.(request);
     return {
-      execute: () => this.execute('publish', () => this.sendPreparedAdvert(body), { retry: false }),
+      execute: () => this.execute('publish', () => this.sendPreparedAdvert(request), { retry: false }),
     };
   }
 
-  private async sendPreparedAdvert(body: Record<string, unknown>): Promise<PublishResult> {
-    const res = await this.http.request<
-      OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>
-    >({
+  private createAdvertRequest(body: Record<string, unknown>): HttpRequestConfig {
+    return {
       method: 'POST',
       url: `${this.baseUrl}/adverts`,
       body,
-    });
+    };
+  }
+
+  private async sendPreparedAdvert(request: HttpRequestConfig): Promise<PublishResult> {
+    const res = await this.http.request<
+      OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>
+    >(request);
     const advert = this.unwrapAdvert(res.data);
     return {
       externalListingId: String(advert.id),

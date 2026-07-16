@@ -1,4 +1,5 @@
 import { OLXAdapter, type OlxAdapterConfig } from '../OLXAdapter';
+import { FetchMarketplaceHttpClient } from '../FetchMarketplaceHttpClient';
 import {
   MarketplaceHttpClient,
   HttpRequestConfig,
@@ -51,6 +52,15 @@ const realConfig: OlxAdapterConfig = {
 };
 
 describe('OLXAdapter', () => {
+  it('rejects a disabled live publish during preparation before transport request', async () => {
+    const http = new FetchMarketplaceHttpClient({ livePublishEnabled: false });
+    const request = jest.spyOn(http, 'request');
+    const adapter = new OLXAdapter(http, fastOptions, realConfig);
+
+    await expect(adapter.preparePublish(publishInput)).rejects.toMatchObject({ status: 412 });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('maps domain input to the OLX ad payload and returns the external id', async () => {
     let captured: HttpRequestConfig | undefined;
     const http = mockClient((config) => {

@@ -674,6 +674,28 @@ describe('PublishListingHandler', () => {
     expect(consumeReservation.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder[0]);
   });
 
+  it('does not claim a fence or consume quota when local transport policy rejects preflight', async () => {
+    const preparePublish = jest.fn(async () => {
+      throw new Error('Live marketplace publish is disabled');
+    });
+    const adapter = fakeAdapter({ preparePublish });
+    const { resolver } = resolverFor(adapter);
+    const attempts = memoryPublishAttempts();
+    const begin = jest.spyOn(attempts, 'begin');
+    const consumeReservation = jest.fn();
+    const handler = makePublishHandler(
+      resolver, undefined, undefined, undefined, undefined, attempts, { consumeReservation },
+    );
+
+    await expect(handler.handle({
+      operationId: 'op-local-gate', marketplaceKey: 'olx', marketplaceId: 'm-1',
+      listingId: 'l-local-gate', listingUpdatedAt: '2026-07-16T12:00:00.000Z', input,
+    })).rejects.toThrow('Live marketplace publish is disabled');
+
+    expect(begin).not.toHaveBeenCalled();
+    expect(consumeReservation).not.toHaveBeenCalled();
+  });
+
   it('fails before preflight or fence claim when OLX quota wiring is missing', async () => {
     const preparePublish = jest.fn(async () => ({ execute: jest.fn(async () => publishResult) }));
     const adapter = fakeAdapter({ preparePublish });
