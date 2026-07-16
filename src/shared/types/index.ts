@@ -24,7 +24,18 @@ export type AutonomyLevel = 'suggest_only' | 'balanced' | 'full_auto';
 
 export type HermesSeverity = 'info' | 'success' | 'warning' | 'critical';
 
-export type HermesEventStatus = 'pending_review' | 'applied' | 'dismissed';
+/** Persisted/API lifecycle values. UI labels are mapped separately in Badge.tsx. */
+export const HERMES_EVENT_STATUSES = [
+  'pending_decision',
+  'pending_review',
+  'applying',
+  'applied',
+  'dismissed',
+  'failed',
+  'reverting',
+  'reverted',
+] as const;
+export type HermesEventStatus = (typeof HERMES_EVENT_STATUSES)[number];
 
 export type AutonomyDecision = 'auto_apply' | 'pending_review';
 

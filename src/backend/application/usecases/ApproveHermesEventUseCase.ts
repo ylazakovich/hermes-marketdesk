@@ -71,12 +71,26 @@ export class ApproveHermesEventUseCase {
       );
     }
 
-    const applied = await this.applyChange(event, input.actorId);
-    if (applied.isErr()) return applied;
-
     const approved = event.approve();
     if (approved.isErr()) return approved;
+    await this.eventRepo.save(event);
 
+    let applied: Result<ApplyChangeOutcome>;
+    try {
+      applied = await this.applyChange(event, input.actorId);
+    } catch (error) {
+      const failed = event.markFailed();
+      if (failed.isOk()) await this.eventRepo.save(event);
+      throw error;
+    }
+    if (applied.isErr()) {
+      const failed = event.markFailed();
+      if (failed.isOk()) await this.eventRepo.save(event);
+      return applied;
+    }
+
+    const completed = event.markApplied();
+    if (completed.isErr()) return completed;
     await this.eventRepo.save(event);
 
     await this.activityLog.record({

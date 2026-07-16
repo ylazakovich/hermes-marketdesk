@@ -114,15 +114,25 @@ export const HERMES_SEVERITY_LIST: readonly HermesSeverity[] = [
 
 // Hermes event statuses
 export const HERMES_EVENT_STATUS = {
+  PENDING_DECISION: 'pending_decision',
   PENDING_REVIEW: 'pending_review',
+  APPLYING: 'applying',
   APPLIED: 'applied',
   DISMISSED: 'dismissed',
+  FAILED: 'failed',
+  REVERTING: 'reverting',
+  REVERTED: 'reverted',
 } as const;
 
 export const HERMES_EVENT_STATUS_LIST: readonly HermesEventStatus[] = [
+  'pending_decision',
   'pending_review',
+  'applying',
   'applied',
   'dismissed',
+  'failed',
+  'reverting',
+  'reverted',
 ];
 
 // Autonomy decisions

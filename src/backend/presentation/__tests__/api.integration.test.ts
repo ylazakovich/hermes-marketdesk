@@ -32,6 +32,7 @@ import type { IListingRepository } from '../../domain/repositories/interfaces/IL
 import type { IMarketplaceRepository } from '../../domain/repositories/interfaces/IMarketplaceRepository';
 import type { IWorkspaceRepository } from '../../domain/repositories/interfaces/IWorkspaceRepository';
 import type { ProductView, HermesEventView } from '../../application/dto/presenters';
+import { HERMES_EVENT_STATUSES } from '../../../shared/types';
 import {
   InMemoryProductRepository,
   InMemoryListingRepository,
@@ -110,7 +111,15 @@ function stubProductService(): ProductApplicationService {
 function stubHermesService(): HermesApplicationService {
   return {
     async listEvents(query: { productId?: string }) {
-      const items = query.productId === 'p1' ? [{ ...appliedEvent, productId: 'p1' }] : [];
+      const items = query.productId
+        ? query.productId === 'p1'
+          ? [{ ...appliedEvent, productId: 'p1' }]
+          : []
+        : HERMES_EVENT_STATUSES.map((status) => ({
+            ...appliedEvent,
+            id: status,
+            status,
+          }));
       return { items, total: items.length, page: 1, limit: 20, totalPages: items.length ? 1 : 0 };
     },
     async getEvent(id: string) {
@@ -828,6 +837,16 @@ describe('Presentation API', () => {
   });
 
   describe('hermes', () => {
+    it('serializes every canonical lifecycle status without label translation', async () => {
+      const { app } = await buildTestApp();
+      const res = await auth(request(app).get('/api/hermes/events'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.map((event: HermesEventView) => event.status)).toEqual(
+        HERMES_EVENT_STATUSES,
+      );
+    });
+
     it('passes the product filter to the Hermes event query', async () => {
       const { app } = await buildTestApp();
       const res = await auth(request(app).get('/api/hermes/events?productId=p1'));

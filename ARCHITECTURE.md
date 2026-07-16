@@ -926,130 +926,106 @@ export class MarketplaceSyncService {
 
 ## 10. Hermes AI Architecture
 
-> **Implemented lifecycle:** persistence, API and domain currently use `pending_review`, `applied` and `dismissed`. The larger seven-state lifecycle is an accepted target tracked by issue #178, not current runtime behavior. Any transition must update database, API, domain and UI together.
+> **Canonical persisted/API lifecycle:** `pending_decision`, `pending_review`, `applying`, `applied`, `dismissed`, `failed`, `reverting`, `reverted`. Product-facing labels are presentation mappings and never additional persisted states.
+
+| From | Action | To | Invalid use |
+| --- | --- | --- | --- |
+| `pending_decision` | begin automatic execution | `applying` | any terminal or already-running state |
+| `pending_decision` | guardrail requires a person | `pending_review` | any state except `pending_decision` |
+| `pending_decision` / `pending_review` | dismiss | `dismissed` | applying or terminal states |
+| `pending_review` | approve | `applying` | any state except `pending_review` |
+| `applying` | side effect succeeds | `applied` | any state except `applying` |
+| `applying` | side effect fails | `failed` | any state except `applying` |
+| `applied` | begin undo | `reverting` | any state except `applied` |
+| `reverting` | undo succeeds | `reverted` | any state except `reverting` |
+
+`resolved_at` is null for pending/running states and set for terminal states. Approval persists `applying` before executing side effects; a failed application is persisted as `failed`. Undo requires a dedicated executor to perform the inverse operation before `markReverted`; the lifecycle representation does not claim that every event is currently undoable.
 
 ### Agent State Machine
 
+```text
+pending_decision ──guardrail/unsupported──▶ pending_review ──dismiss──▶ dismissed
+        │                                        │
+        │ automatic execution                    │ approve
+        └────────▶ applying ◀────────────────────┘
+                         │
+                  persist before effect
+                         │
+                   ┌─────┴─────┐
+                   ▼           ▼
+                applied      failed
+                   │
+                begin undo
+                   ▼
+                reverting ──undo succeeds──▶ reverted
 ```
-                    ┌─────────────────────────────────────┐
-                    │         Hermes Event                │
-                    │  (Decision Engine Output)           │
-                    │  type, severity, proposedChange     │
-                    └──────────────────┬────────────────┬─────────────┐
-                                       │                │             │
-                                  ┌────▼──────┐  ┌────▼──────┐  ┌───▼─────┐
-                                  │  Suggest  │  │  Balanced │  │Full Auto│
-                                  │  Only     │  │  Mode     │  │ Mode    │
-                                  └────┬──────┘  └────┬──────┘  └───┬─────┘
-                                       │              │             │
-                                   (All as)        (Safe as) (All as)
-                                 Pending Review  Pending/Auto   Auto Applied
-                                       │              │             │
-                                       └──────────────┼─────────────┘
-                                                      ▼
-                                        ┌──────────────────────────┐
-                                        │   PENDING_REVIEW state   │
-                                        │  (Awaiting human action) │
-                                        └──────────────────────────┘
-                                                 │
-                            ┌────────────────────┴────────────────────┐
-                            │                                         │
-                        ┌───▼────────┐                         ┌──────▼────┐
-                        │  Approve   │                         │  Dismiss  │
-                        │  (Execute) │                         │           │
-                        └───┬────────┘                         └──────┬────┘
-                            │                                        │
-                        ┌───▼──────────────────────────────────────┐ │
-                        │  Execute proposedChange on domain        │ │
-                        │  Update listing/product prices/titles    │ │
-                        │  Record in ActivityLog & PriceHistory    │ │
-                        └───┬──────────────────────────────────────┐ │
-                            │                                        │ │
-                        ┌───▼──────────────┐              ┌─────────▼─▼──┐
-                        │  APPLIED state   │              │ DISMISSED    │
-                        │  Event resolved  │              │              │
-                        └──────────────────┘              └──────────────┘
-```
+
+Both `applying` and `reverting` are persisted before their side effects. Successful forward execution completes through `markApplied`, terminal forward failure through `markFailed`, and successful undo through `markReverted`.
 
 ### Decision Engine
 
 ```typescript
-// domain/services/HermesDecisionEngine.ts
+// Simplified orchestration; the implementation also applies workspace guardrails.
 export class HermesDecisionEngine {
-  async run(workspace: Workspace): Promise<HermesEvent[]> {
-    const events: HermesEvent[] = [];
-    
-    // 1. Analyze products
-    const products = await this.productRepo.findByWorkspace(workspace.id);
-    
-    for (const product of products) {
-      // 2. Check conditions
-      const suggestions = await this.checkConditions(product);
-      
-      for (const suggestion of suggestions) {
-        // 3. Create event
-        const event = HermesEvent.create({
-          type: suggestion.type,
-          severity: suggestion.severity,
-          title: suggestion.title,
-          detail: suggestion.detail,
-          productId: product.id,
-          proposedChange: suggestion.change,
-        });
-        
-        // 4. Determine status based on autonomy level
-        event.autonomyDecision = this.determineAutonomy(
-          workspace.autonomyLevel,
-          suggestion.type,
-          suggestion.severity
-        );
-        
-        if (event.autonomyDecision === 'auto_apply') {
-          // Auto-apply only if safe
-          await this.applyChange(product, event.proposedChange);
-          event.status = 'applied';
-        } else {
-          event.status = 'pending_review';
-        }
-        
-        events.push(event);
-      }
+  async executeAutomatically(event: HermesEvent, product: Product): Promise<void> {
+    if (!this.supportsAutomaticChange(event.proposedChange)) {
+      event.requestReview();
+      await this.eventRepo.save(event);
+      return;
     }
-    
-    // 5. Save events
-    await this.eventRepo.saveAll(events);
-    
-    // 6. Emit notifications
-    this.eventPublisher.publish(new HermesRunCompletedEvent(events));
-    
-    return events;
+
+    event.beginAutoApply();
+    await this.eventRepo.save(event); // durable checkpoint before the side effect
+
+    try {
+      const result = await this.applyChange(product, event.proposedChange);
+      if (result.isErr()) {
+        event.markFailed();
+      } else {
+        event.markApplied();
+      }
+    } catch {
+      event.markFailed();
+    }
+
+    await this.eventRepo.save(event); // persist the terminal outcome immediately
   }
-  
+
+  async undo(event: HermesEvent): Promise<void> {
+    const begun = event.beginRevert();
+    if (begun.isErr()) return;
+    await this.eventRepo.save(event); // persist `reverting` before undo
+
+    try {
+      await this.executeInverseChange(event);
+    } catch (error) {
+      // `reverting` is the durable retry state; never claim the undo succeeded.
+      await this.undoRetryQueue.enqueue({ eventId: event.id, error });
+      await this.eventRepo.save(event);
+      return;
+    }
+    event.markReverted();
+    await this.eventRepo.save(event);
+  }
+
   private determineAutonomy(
     autonomyLevel: string,
     eventType: string,
-    severity: string
+    severity: string,
   ): 'auto_apply' | 'pending_review' {
-    if (autonomyLevel === 'suggest_only') {
-      return 'pending_review'; // Everything requires approval
+    if (autonomyLevel === 'suggest_only') return 'pending_review';
+    if (severity === 'critical' && eventType === 'competitor_price_detected') {
+      return 'pending_review';
     }
-    
-    if (autonomyLevel === 'full_auto') {
-      if (severity === 'critical' && eventType === 'competitor_price') {
-        return 'pending_review'; // Critical price alerts always need review
-      }
-      return 'auto_apply';
-    }
-    
+    if (autonomyLevel === 'full_auto') return 'auto_apply';
     if (autonomyLevel === 'balanced') {
-      // Safe operations auto-apply
-      const safeTypes = ['create_listing', 'update_description', 'relist'];
-      return safeTypes.includes(eventType) ? 'auto_apply' : 'pending_review';
+      return BALANCED_SAFE_EVENT_TYPES.includes(eventType)
+        ? 'auto_apply'
+        : 'pending_review';
     }
-    
-    return 'pending_review'; // Default to safe
+    return 'pending_review';
   }
-  
+
   private async checkConditions(product: Product): Promise<Suggestion[]> {
     const suggestions: Suggestion[] = [];
     

@@ -12,6 +12,7 @@ import type {
   AutonomyDecision,
   ProposedChange,
 } from '../../../shared/types';
+import { HERMES_EVENT_STATUSES } from '../../../shared/types';
 import { CRITICAL_PRICE_DROP_THRESHOLD } from '../../../shared/constants';
 
 export interface CreateHermesEventProps {
@@ -62,6 +63,22 @@ export class HermesEvent {
       return Err(new ValidationError('HermesEvent title is required'));
     }
 
+    const status = props.status ?? 'pending_review';
+    if (!HERMES_EVENT_STATUSES.includes(status)) {
+      return Err(new ValidationError(`Unknown HermesEvent status: ${status}`));
+    }
+    const terminal = ['applied', 'dismissed', 'failed', 'reverted'].includes(status);
+    const resolvedAt = props.resolvedAt ?? null;
+    if (terminal !== (resolvedAt !== null)) {
+      return Err(
+        new ValidationError(
+          terminal
+            ? `HermesEvent status ${status} requires resolvedAt`
+            : `HermesEvent status ${status} must not have resolvedAt`,
+        ),
+      );
+    }
+
     const changeCheck = HermesEvent.validateProposedChange(
       props.type,
       props.proposedChange,
@@ -75,13 +92,13 @@ export class HermesEvent {
         props.productId ?? null,
         props.type,
         props.severity,
-        props.status ?? 'pending_review',
+        status,
         props.title.trim(),
         props.detail ?? null,
         props.proposedChange,
         props.autonomyDecision ?? null,
         props.createdAt ?? new Date(),
-        props.resolvedAt ?? null,
+        resolvedAt,
       ),
     );
   }
@@ -174,20 +191,42 @@ export class HermesEvent {
     this._autonomyDecision = decision;
   }
 
-  // Approve a pending suggestion; the executor then applies the change.
-  approve(at: Date = new Date()): Result<void> {
+  // Human approval starts execution; it does not claim the side effect succeeded.
+  approve(): Result<void> {
     if (this._status !== 'pending_review') {
       return Err(
         new InvalidStateError(`Cannot approve event in ${this._status} state`),
       );
     }
-    this._status = 'applied';
-    this._resolvedAt = at;
+    this._status = 'applying';
+    this._resolvedAt = null;
+    return Ok(undefined);
+  }
+
+  beginAutoApply(): Result<void> {
+    if (this._status !== 'pending_decision') {
+      return Err(
+        new InvalidStateError(`Cannot auto-apply event in ${this._status} state`),
+      );
+    }
+    this._status = 'applying';
+    this._resolvedAt = null;
+    return Ok(undefined);
+  }
+
+  requestReview(): Result<void> {
+    if (this._status !== 'pending_decision') {
+      return Err(
+        new InvalidStateError(`Cannot request review from ${this._status} state`),
+      );
+    }
+    this._status = 'pending_review';
+    this._resolvedAt = null;
     return Ok(undefined);
   }
 
   dismiss(at: Date = new Date()): Result<void> {
-    if (this._status !== 'pending_review') {
+    if (this._status !== 'pending_review' && this._status !== 'pending_decision') {
       return Err(
         new InvalidStateError(`Cannot dismiss event in ${this._status} state`),
       );
@@ -197,12 +236,47 @@ export class HermesEvent {
     return Ok(undefined);
   }
 
-  // Mark an auto-applied event as resolved (used by the decision engine).
-  markApplied(at: Date = new Date()): void {
-    if (this._status !== 'pending_review') {
-      return;
+  markApplied(at: Date = new Date()): Result<void> {
+    if (this._status !== 'applying') {
+      return Err(
+        new InvalidStateError(`Cannot mark event applied from ${this._status}`),
+      );
     }
     this._status = 'applied';
     this._resolvedAt = at;
+    return Ok(undefined);
+  }
+
+  markFailed(at: Date = new Date()): Result<void> {
+    if (this._status !== 'applying') {
+      return Err(
+        new InvalidStateError(`Cannot mark event failed from ${this._status}`),
+      );
+    }
+    this._status = 'failed';
+    this._resolvedAt = at;
+    return Ok(undefined);
+  }
+
+  beginRevert(): Result<void> {
+    if (this._status !== 'applied') {
+      return Err(
+        new InvalidStateError(`Cannot revert event in ${this._status} state`),
+      );
+    }
+    this._status = 'reverting';
+    this._resolvedAt = null;
+    return Ok(undefined);
+  }
+
+  markReverted(at: Date = new Date()): Result<void> {
+    if (this._status !== 'reverting') {
+      return Err(
+        new InvalidStateError(`Cannot mark event reverted from ${this._status}`),
+      );
+    }
+    this._status = 'reverted';
+    this._resolvedAt = at;
+    return Ok(undefined);
   }
 }

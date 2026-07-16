@@ -61,9 +61,14 @@ const SEVERITY_META: Record<HermesSeverity, { label: string; color: ChipColor }>
 };
 
 const HERMES_STATUS_META: Record<HermesEventStatus, { label: string; color: ChipColor }> = {
+  pending_decision: { label: 'Decision pending', color: 'info' },
   pending_review: { label: 'Pending review', color: 'warning' },
+  applying: { label: 'Applying', color: 'info' },
   applied: { label: 'Applied', color: 'success' },
   dismissed: { label: 'Dismissed', color: 'default' },
+  failed: { label: 'Action failed', color: 'error' },
+  reverting: { label: 'Reverting', color: 'info' },
+  reverted: { label: 'Reverted', color: 'default' },
 };
 
 const DECISION_META: Record<AutonomyDecision, { label: string; color: ChipColor }> = {

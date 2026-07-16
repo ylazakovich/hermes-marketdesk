@@ -373,7 +373,8 @@ describe('ApproveHermesEventUseCase', () => {
         proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
       })
     );
-    unwrap(event.approve()); // move to applied
+    unwrap(event.approve());
+    unwrap(event.markApplied()); // move to applied
     await eventRepo.save(event);
 
     const result = await useCase.execute({ eventId: 'evt-2', workspaceId: 'ws-1' });
@@ -387,6 +388,28 @@ describe('ApproveHermesEventUseCase', () => {
     const result = await useCase.execute({ eventId: 'nope', workspaceId: 'ws-1' });
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.code).toBe('NOT_FOUND');
+  });
+
+  it('persists failed when an application dependency throws', async () => {
+    const { useCase, eventRepo, productRepo } = setup();
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-thrown',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_lower_price',
+        severity: 'warning',
+        title: 'Lower the price',
+        proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
+      }),
+    );
+    await eventRepo.save(event);
+    jest.spyOn(productRepo, 'save').mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(
+      useCase.execute({ eventId: event.id, workspaceId: 'ws-1' }),
+    ).rejects.toThrow('database unavailable');
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
   });
 
   it('does not enqueue a relist when the OAuth account is disconnected', async () => {
@@ -409,6 +432,7 @@ describe('ApproveHermesEventUseCase', () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.code).toBe('INVALID_STATE');
     expect(publishQueue.jobs).toHaveLength(0);
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
   });
 
   it('returns a structured guard error when the OLX quota guard is unavailable', async () => {
