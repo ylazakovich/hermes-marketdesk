@@ -374,6 +374,11 @@ export class PublishListingHandler {
 
     if (!result) {
       let ownsNewAttempt = false;
+      if (data.marketplaceKey === 'olx' && (!this.olxQuota || !this.publishAttempts)) {
+        throw new InvalidStateError(
+          'OLX publish worker is missing a quota reservation or publication fence',
+        );
+      }
       let adapter: IMarketplaceAdapter;
       if (data.marketplaceKey === 'olx' && this.accessTokens && this.authenticatedHttpClient) {
         if (!data.marketplaceId) {

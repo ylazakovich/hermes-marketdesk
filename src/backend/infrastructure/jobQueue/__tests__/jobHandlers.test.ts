@@ -674,6 +674,25 @@ describe('PublishListingHandler', () => {
     expect(consumeReservation.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder[0]);
   });
 
+  it('fails before preflight or fence claim when OLX quota wiring is missing', async () => {
+    const preparePublish = jest.fn(async () => ({ execute: jest.fn(async () => publishResult) }));
+    const adapter = fakeAdapter({ preparePublish });
+    const { resolver } = resolverFor(adapter);
+    const attempts = memoryPublishAttempts();
+    const begin = jest.spyOn(attempts, 'begin');
+    const handler = new PublishListingHandler(
+      resolver, undefined, undefined, undefined, undefined, attempts,
+    );
+
+    await expect(handler.handle({
+      operationId: 'op-misconfigured', marketplaceKey: 'olx', marketplaceId: 'm-1',
+      listingId: 'l-misconfigured', listingUpdatedAt: '2026-07-16T12:00:00.000Z', input,
+    })).rejects.toThrow('missing a quota reservation or publication fence');
+
+    expect(preparePublish).not.toHaveBeenCalled();
+    expect(begin).not.toHaveBeenCalled();
+  });
+
   it('does not consume quota when another operation owns the listing fence', async () => {
     const publish = jest.fn(async () => publishResult);
     const adapter = fakeAdapter({ publish });
