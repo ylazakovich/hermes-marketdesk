@@ -960,7 +960,7 @@ pending_decision ──guardrail/unsupported──▶ pending_review ──dismi
                 reverting ──undo succeeds──▶ reverted
 ```
 
-Both `applying` and `reverting` are persisted before their side effects. Forward execution may complete only through `markApplied`; undo may complete only through `markReverted`.
+Both `applying` and `reverting` are persisted before their side effects. Successful forward execution completes through `markApplied`, terminal forward failure through `markFailed`, and successful undo through `markReverted`.
 
 ### Decision Engine
 
@@ -992,10 +992,18 @@ export class HermesDecisionEngine {
   }
 
   async undo(event: HermesEvent): Promise<void> {
-    event.beginRevert();
+    const begun = event.beginRevert();
+    if (begun.isErr()) return;
     await this.eventRepo.save(event); // persist `reverting` before undo
 
-    await this.executeInverseChange(event);
+    try {
+      await this.executeInverseChange(event);
+    } catch (error) {
+      // `reverting` is the durable retry state; never claim the undo succeeded.
+      await this.undoRetryQueue.enqueue({ eventId: event.id, error });
+      await this.eventRepo.save(event);
+      return;
+    }
     event.markReverted();
     await this.eventRepo.save(event);
   }
@@ -1009,7 +1017,13 @@ export class HermesDecisionEngine {
     if (severity === 'critical' && eventType === 'competitor_price_detected') {
       return 'pending_review';
     }
-    return autonomyLevel === 'full_auto' ? 'auto_apply' : 'pending_review';
+    if (autonomyLevel === 'full_auto') return 'auto_apply';
+    if (autonomyLevel === 'balanced') {
+      return BALANCED_SAFE_EVENT_TYPES.includes(eventType)
+        ? 'auto_apply'
+        : 'pending_review';
+    }
+    return 'pending_review';
   }
 
   private async checkConditions(product: Product): Promise<Suggestion[]> {
