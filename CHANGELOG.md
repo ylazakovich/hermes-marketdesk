@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/ylazakovich/marketdesk/compare/hermes-marketdesk-v0.10.0...hermes-marketdesk-v0.10.1) (2026-07-16)
+
+
+### 🐛 Bug Fixes
+
+* **olx:** prevent wrong category publish and guide quota-safe recreation ([#190](https://github.com/ylazakovich/marketdesk/issues/190)) ([4b097fa](https://github.com/ylazakovich/marketdesk/commit/4b097fa5044fff05286d7e789b31e014e5185ba6))
+* **olx:** resolve paths from flat taxonomy ([#196](https://github.com/ylazakovich/marketdesk/issues/196)) ([28e3a53](https://github.com/ylazakovich/marketdesk/commit/28e3a53bd1adfc7598c093bc3fc365aae988bbf7))
+
 ## [0.10.0](https://github.com/ylazakovich/hermes-marketdesk/compare/hermes-marketdesk-v0.9.0...hermes-marketdesk-v0.10.0) (2026-07-16)
 
 
