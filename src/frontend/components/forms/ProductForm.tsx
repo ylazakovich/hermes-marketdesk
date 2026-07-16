@@ -43,7 +43,9 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     initial ? productToValues(initial) : emptyProductValues(),
   );
   const [errors, setErrors] = useState<ProductFieldErrors>({});
-  const belowCostConfirmation = useBelowCostConfirmation();
+  const belowCostConfirmation = useBelowCostConfirmation(
+    Boolean(initial && marginWarning(productToValues(initial)))
+  );
 
   const change = <K extends keyof ProductFormValues>(field: K, value: ProductFormValues[K]) => {
     setValues((prev) => ({ ...prev, [field]: value }));

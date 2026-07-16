@@ -15,8 +15,8 @@ export const BelowCostConfirmationAlert: React.FC<BelowCostConfirmationAlertProp
   hasError,
   onConfirmedChange,
 }) => (
-  <Alert severity={hasError ? 'error' : 'warning'}>
-    {warning}
+  <>
+    <Alert severity={hasError ? 'error' : 'warning'}>{warning}</Alert>
     <FormControlLabel
       control={
         <Checkbox
@@ -26,11 +26,11 @@ export const BelowCostConfirmationAlert: React.FC<BelowCostConfirmationAlertProp
       }
       label="I confirm this product may be sold below cost."
     />
-  </Alert>
+  </>
 );
 
-export function useBelowCostConfirmation() {
-  const [confirmed, setConfirmed] = useState(false);
+export function useBelowCostConfirmation(initialConfirmed = false) {
+  const [confirmed, setConfirmed] = useState(initialConfirmed);
   const [hasError, setHasError] = useState(false);
 
   const resetForField = (field: keyof ProductFormValues) => {
