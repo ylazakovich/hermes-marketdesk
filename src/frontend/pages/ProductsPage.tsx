@@ -19,7 +19,12 @@ import SearchIcon from '@mui/icons-material/Search';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { Product, ProductStatus } from '@shared/types';
 import { PRODUCT_STATUS_LIST } from '@shared/constants';
-import { useCreateProduct, useGenerateProductAIDraft, useProducts } from '../services/hooks/index.js';
+import {
+  useCreateProduct,
+  useGenerateProductAIDraft,
+  useMarketplaces,
+  useProducts,
+} from '../services/hooks/index.js';
 import type { ProductListParams } from '../state/api/index.js';
 import { useAppDispatch, useAppSelector } from '../state/hooks.js';
 import { enqueueToast } from '../state/slices/uiSlice.js';
@@ -54,7 +59,9 @@ const ProductsPage: React.FC = () => {
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const [search, setSearch] = useState(() => query.get('search') ?? '');
   const [sort, setSort] = useState(() => query.get('sort') ?? '-updatedAt');
-  const [page, setPage] = useState(() => Math.max(0, Number.parseInt(query.get('page') ?? '1', 10) - 1 || 0));
+  const [page, setPage] = useState(() =>
+    Math.max(0, Number.parseInt(query.get('page') ?? '1', 10) - 1 || 0)
+  );
   const wizardOpen = query.get('newProduct') === '1';
 
   const openWizard = () => navigate('/products?newProduct=1');
@@ -70,6 +77,7 @@ const ProductsPage: React.FC = () => {
   }, [statusFilter, tags, priceMin, priceMax, sort, page]);
 
   const { data, isLoading, isFetching, isError, error, refetch } = useProducts(params);
+  const marketplaces = useMarketplaces();
   const [createProduct, { isLoading: creating }] = useCreateProduct();
   const [generateProductAIDraft] = useGenerateProductAIDraft();
 
@@ -78,7 +86,7 @@ const ProductsPage: React.FC = () => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
     return items.filter(
-      (p: Product) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q),
+      (p: Product) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
     );
   }, [items, search]);
 
@@ -236,6 +244,9 @@ const ProductsPage: React.FC = () => {
       >
         <ProductWizardForm
           submitting={creating}
+          marketplaces={marketplaces.data}
+          marketplacesLoading={marketplaces.isLoading && !marketplaces.data}
+          marketplacesError={marketplaces.isError && !marketplaces.data}
           onSubmit={handleCreate}
           onGenerateAIDraft={(request) => generateProductAIDraft(request).unwrap()}
           onCancel={closeWizard}

@@ -21,6 +21,7 @@ export interface ProductFieldsProps {
   errors: ProductFieldErrors;
   onChange: <K extends keyof ProductFormValues>(field: K, value: ProductFormValues[K]) => void;
   showStatus?: boolean;
+  showCategory?: boolean;
 }
 
 function parseNumber(raw: string): number {
@@ -33,7 +34,12 @@ function parseOptionalNumber(raw: string): number | null {
   return Number(raw);
 }
 
-export const NameSkuFields: React.FC<ProductFieldsProps> = ({ values, errors, onChange }) => (
+export const NameSkuFields: React.FC<ProductFieldsProps> = ({
+  values,
+  errors,
+  onChange,
+  showCategory = true,
+}) => (
   <Stack spacing={2}>
     <TextField
       label="Name"
@@ -54,12 +60,16 @@ export const NameSkuFields: React.FC<ProductFieldsProps> = ({ values, errors, on
         error={Boolean(errors.sku)}
         helperText={errors.sku}
       />
-      <TextField
-        label="Category"
-        fullWidth
-        value={values.category}
-        onChange={(e) => onChange('category', e.target.value)}
-      />
+      {showCategory && (
+        <TextField
+          label="Category"
+          fullWidth
+          value={values.category}
+          onChange={(e) => onChange('category', e.target.value)}
+          error={Boolean(errors.category)}
+          helperText={errors.category}
+        />
+      )}
     </Stack>
     <FormControl fullWidth>
       <InputLabel id="condition-label">Condition</InputLabel>
@@ -142,7 +152,7 @@ export const PriceFields: React.FC<ProductFieldsProps> = ({ values, errors, onCh
   </Stack>
 );
 
-export const ImagesField: React.FC<ProductFieldsProps> = ({ values, onChange }) => (
+export const ImagesField: React.FC<ProductFieldsProps> = ({ values, errors, onChange }) => (
   <Autocomplete
     multiple
     freeSolo
@@ -155,7 +165,13 @@ export const ImagesField: React.FC<ProductFieldsProps> = ({ values, onChange }) 
       ))
     }
     renderInput={(params) => (
-      <TextField {...params} label="Image URLs" placeholder="Paste an image URL and press Enter" />
+      <TextField
+        {...params}
+        label="Image URLs"
+        placeholder="Paste an image URL and press Enter"
+        error={Boolean(errors.images)}
+        helperText={errors.images}
+      />
     )}
   />
 );
