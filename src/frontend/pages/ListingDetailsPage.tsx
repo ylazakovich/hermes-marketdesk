@@ -371,7 +371,11 @@ const ListingDetailsPage: React.FC = () => {
       return;
     }
     const reviewKey = `${review.mode}:${review.listingId}`;
-    if (consumedNavigationReview.current === reviewKey || listings.isLoading) return;
+    if (
+      consumedNavigationReview.current === reviewKey ||
+      listings.isLoading ||
+      listings.isError
+    ) return;
     consumedNavigationReview.current = reviewKey;
     navigate(location.pathname, { replace: true, state: null });
     const listing = listingItems.find((item) => item.id === review.listingId);
@@ -395,6 +399,7 @@ const ListingDetailsPage: React.FC = () => {
   }, [
     dispatch,
     listingItems,
+    listings.isError,
     listings.isLoading,
     location.pathname,
     location.state,
