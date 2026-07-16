@@ -1,29 +1,45 @@
 // Multi-step product creation wizard. Reuses the shared field controls and
 // validation model; emits the completed values via onSubmit on the final step.
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
   Button,
   Checkbox,
   Divider,
+  FormControl,
   FormControlLabel,
+  FormHelperText,
+  FormLabel,
   Chip,
+  Radio,
+  RadioGroup,
   Stack,
   Step,
   StepLabel,
   Stepper,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import type { ProductAIDraft, ProductAIDraftRequest } from '@shared/types';
+import type {
+  Marketplace,
+  MarketplaceKey,
+  ProductAIDraft,
+  ProductAIDraftRequest,
+} from '@shared/types';
 import {
   emptyProductValues,
   marginWarning,
   toProductSubmissionValues,
   validateProductValues,
 } from './productFormModel.js';
-import type { ProductFormValues, ProductFieldErrors, ProductSubmissionValues } from './productFormModel.js';
+import type {
+  ProductFormValues,
+  ProductFieldErrors,
+  ProductSubmissionValues,
+} from './productFormModel.js';
 import {
   DescriptionTagsFields,
   ImagesField,
@@ -34,6 +50,9 @@ import {
 
 export interface ProductWizardFormProps {
   submitting?: boolean;
+  marketplaces?: Marketplace[];
+  marketplacesLoading?: boolean;
+  marketplacesError?: boolean;
   onSubmit: (values: ProductSubmissionValues) => void;
   onCancel?: () => void;
   onGenerateAIDraft?: (request: ProductAIDraftRequest) => Promise<ProductAIDraft>;
@@ -43,21 +62,136 @@ const STEPS = ['Photos', 'Basic info', 'Pricing', 'Category', 'Marketplaces', 'R
 
 // Which value keys each step is responsible for (drives per-step validation).
 const STEP_FIELDS: Array<Array<keyof ProductFormValues>> = [
-  [],
+  ['images'],
   ['name', 'sku', 'description'],
   ['costPrice', 'sellingPrice'],
-  [],
+  ['category'],
   [],
   [],
 ];
 
-const MARKETPLACE_OPTIONS = [
-  { key: 'olx', name: 'OLX', description: 'Connected when workspace OLX account is active; publish still requires confirmation.' },
-  { key: 'allegro', name: 'Allegro', description: 'Connect this marketplace first.' },
-  { key: 'vinted', name: 'Vinted', description: 'Connect this marketplace first.' },
-  { key: 'facebook', name: 'Facebook Marketplace', description: 'Connect this marketplace first.' },
-  { key: 'ebay', name: 'eBay', description: 'Connect this marketplace first.' },
+const MARKETPLACE_OPTIONS: ReadonlyArray<{ key: MarketplaceKey; name: string }> = [
+  { key: 'olx', name: 'OLX' },
+  { key: 'allegro', name: 'Allegro' },
+  { key: 'vinted', name: 'Vinted' },
+  { key: 'facebook', name: 'Facebook Marketplace' },
+  { key: 'ebay', name: 'eBay' },
+  { key: 'etsy', name: 'Etsy' },
+  { key: 'amazon', name: 'Amazon' },
 ];
+
+export interface WizardMarketplaceOption {
+  key: MarketplaceKey;
+  name: string;
+  connected: boolean;
+  configured: boolean;
+}
+
+export interface WizardStepValidation {
+  fieldErrors: ProductFieldErrors;
+  marketplaceError?: string;
+}
+
+export interface MarketplaceReadinessStatus {
+  connected: boolean;
+  marketplaceId: string;
+  providerKey: MarketplaceKey;
+}
+
+export interface VerifiedMarketplaceResult {
+  marketplaces: Marketplace[];
+  hadCheckError: boolean;
+}
+
+export async function verifyWizardMarketplaceReadiness(
+  marketplaces: Marketplace[],
+  check: (id: string) => Promise<MarketplaceReadinessStatus>
+): Promise<VerifiedMarketplaceResult> {
+  let hadCheckError = false;
+  const verified = await Promise.all(
+    marketplaces.map(async (marketplace) => {
+      if (!marketplace.connected) return marketplace;
+      try {
+        const status = await check(marketplace.id);
+        const connected =
+          status.connected &&
+          status.marketplaceId === marketplace.id &&
+          status.providerKey === marketplace.key;
+        return { ...marketplace, connected };
+      } catch {
+        hadCheckError = true;
+        return { ...marketplace, connected: false };
+      }
+    })
+  );
+  return { marketplaces: verified, hadCheckError };
+}
+
+export function buildWizardMarketplaceOptions(
+  marketplaces: Marketplace[] | undefined
+): WizardMarketplaceOption[] {
+  const byKey = new Map((marketplaces ?? []).map((marketplace) => [marketplace.key, marketplace]));
+  return MARKETPLACE_OPTIONS.map((option) => {
+    const configured = byKey.get(option.key);
+    return {
+      ...option,
+      connected: configured?.connected === true,
+      configured: configured !== undefined,
+    };
+  });
+}
+
+export function validateWizardStep(
+  step: number,
+  values: ProductFormValues,
+  targetMarketplace: MarketplaceKey | null,
+  marketplaces: Marketplace[] | undefined,
+  marketplacesLoading = false,
+  marketplacesError = false
+): WizardStepValidation {
+  const all = validateProductValues(values);
+  const validImages = values.images.filter((image) => image.trim().length > 0);
+  if (validImages.length !== values.images.length) {
+    all.images = 'Remove blank product photos.';
+  } else if (validImages.length === 0) {
+    all.images = 'Add at least one product photo.';
+  } else if (validImages.length > 12) {
+    all.images = 'Add no more than 12 product photos.';
+  }
+  if (!values.category.trim()) all.category = 'Choose a category.';
+
+  const fieldErrors: ProductFieldErrors = {};
+  for (const key of STEP_FIELDS[step] ?? []) {
+    if (all[key]) fieldErrors[key] = all[key];
+  }
+
+  if (step !== 4) return { fieldErrors };
+  if (marketplacesLoading) {
+    return { fieldErrors, marketplaceError: 'Wait for marketplace connections to load.' };
+  }
+  if (marketplacesError) {
+    return {
+      fieldErrors,
+      marketplaceError: 'Marketplace connections could not be loaded. Retry before continuing.',
+    };
+  }
+
+  const connectedKeys = new Set(
+    (marketplaces ?? [])
+      .filter((marketplace) => marketplace.connected)
+      .map((marketplace) => marketplace.key)
+  );
+  if (connectedKeys.size === 0) {
+    return {
+      fieldErrors,
+      marketplaceError: 'Connect at least one marketplace before continuing.',
+    };
+  }
+  if (!targetMarketplace || !connectedKeys.has(targetMarketplace)) {
+    return { fieldErrors, marketplaceError: 'Select a connected marketplace.' };
+  }
+  return { fieldErrors };
+}
 
 const DRAFT_FIELD_ORDER: Array<keyof ProductFormValues> = [
   'name',
@@ -95,6 +229,9 @@ function fieldSummary(value: ProductFormValues[keyof ProductFormValues]): string
 
 export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
   submitting = false,
+  marketplaces,
+  marketplacesLoading = false,
+  marketplacesError = false,
   onSubmit,
   onCancel,
   onGenerateAIDraft,
@@ -102,27 +239,58 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
   const [activeStep, setActiveStep] = useState(0);
   const [values, setValues] = useState<ProductFormValues>(() => emptyProductValues());
   const [errors, setErrors] = useState<ProductFieldErrors>({});
+  const [marketplaceError, setMarketplaceError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProductAIDraft | null>(null);
-  const [selectedDraftFields, setSelectedDraftFields] = useState<Array<keyof ProductFormValues>>([]);
+  const [selectedDraftFields, setSelectedDraftFields] = useState<Array<keyof ProductFormValues>>(
+    []
+  );
   const [draftError, setDraftError] = useState<string | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
-  const [targetMarketplace, setTargetMarketplace] = useState(MARKETPLACE_OPTIONS[0].key);
+  const [targetMarketplace, setTargetMarketplace] = useState<MarketplaceKey | null>(null);
+  const marketplaceOptions = useMemo(
+    () => buildWizardMarketplaceOptions(marketplaces),
+    [marketplaces]
+  );
+
+  useEffect(() => {
+    if (
+      targetMarketplace &&
+      !marketplaces?.some(
+        (marketplace) => marketplace.key === targetMarketplace && marketplace.connected
+      )
+    ) {
+      setTargetMarketplace(null);
+    }
+  }, [marketplaces, targetMarketplace]);
 
   const change = <K extends keyof ProductFormValues>(field: K, value: ProductFormValues[K]) => {
     setValues((prev) => ({ ...prev, [field]: value }));
+    setErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
   };
 
   const warning = useMemo(() => marginWarning(values), [values]);
   const fieldProps = { values, errors, onChange: change };
 
+  const validationFor = (step: number) =>
+    validateWizardStep(
+      step,
+      values,
+      targetMarketplace,
+      marketplaces,
+      marketplacesLoading,
+      marketplacesError
+    );
+
   const validateStep = (step: number): boolean => {
-    const all = validateProductValues(values);
-    const stepErrors: ProductFieldErrors = {};
-    for (const key of STEP_FIELDS[step]) {
-      if (all[key]) stepErrors[key] = all[key];
-    }
-    setErrors(stepErrors);
-    return Object.keys(stepErrors).length === 0;
+    const validation = validationFor(step);
+    setErrors(validation.fieldErrors);
+    setMarketplaceError(validation.marketplaceError ?? null);
+    return Object.keys(validation.fieldErrors).length === 0 && !validation.marketplaceError;
   };
 
   const requestDraft = async (mode: ProductAIDraftRequest['mode']) => {
@@ -138,7 +306,7 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
       });
       setDraft(nextDraft);
       setSelectedDraftFields(
-        DRAFT_FIELD_ORDER.filter((field) => nextDraft.fields[field] !== undefined),
+        DRAFT_FIELD_ORDER.filter((field) => nextDraft.fields[field] !== undefined)
       );
     } catch (err) {
       const e = err as { data?: { error?: { message?: string } }; message?: string };
@@ -155,7 +323,9 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
       for (const field of fields) {
         const value = draft.fields[field];
         if (value !== undefined) {
-          (next as Record<keyof ProductFormValues, ProductFormValues[keyof ProductFormValues]>)[field] = value;
+          (next as Record<keyof ProductFormValues, ProductFormValues[keyof ProductFormValues]>)[
+            field
+          ] = value;
         }
       }
       return next;
@@ -170,19 +340,24 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
 
   const handleBack = () => {
     setErrors({});
+    setMarketplaceError(null);
     setActiveStep((s) => Math.max(0, s - 1));
   };
 
   const handleFinish = () => {
-    const all = validateProductValues(values);
-    setErrors(all);
-    if (Object.keys(all).length > 0) {
-      // Jump back to the earliest step with an error.
-      const firstBad = STEP_FIELDS.findIndex((fields) => fields.some((f) => all[f]));
-      if (firstBad >= 0) setActiveStep(firstBad);
-      return;
+    for (let step = 0; step <= 4; step += 1) {
+      const validation = validationFor(step);
+      if (Object.keys(validation.fieldErrors).length > 0 || validation.marketplaceError) {
+        setErrors(validation.fieldErrors);
+        setMarketplaceError(validation.marketplaceError ?? null);
+        setActiveStep(step);
+        return;
+      }
     }
-    onSubmit({ ...toProductSubmissionValues(values), targetMarketplace });
+    onSubmit({
+      ...toProductSubmissionValues(values),
+      targetMarketplace: targetMarketplace ?? undefined,
+    });
   };
 
   const availableDraftFields = draft
@@ -218,13 +393,15 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
           </Button>
         </Stack>
         <Typography variant="caption" color="text.secondary">
-          Manual product entry remains available. AI drafts never save or publish until you apply fields and create the product.
+          Manual product entry remains available. AI drafts never save or publish until you apply
+          fields and create the product.
         </Typography>
         {draftError && <Alert severity="error">{draftError}</Alert>}
         {draft && (
           <Stack spacing={1.5} sx={{ p: 1.5, borderRadius: 2, bgcolor: 'background.paper' }}>
             <Typography variant="subtitle2">
-              Draft from {draft.mode === 'photos' ? 'photos' : 'title'} · confidence {Math.round(draft.confidence * 100)}%
+              Draft from {draft.mode === 'photos' ? 'photos' : 'title'} · confidence{' '}
+              {Math.round(draft.confidence * 100)}%
             </Typography>
             <Stack spacing={0.5}>
               {availableDraftFields.map((field) => (
@@ -236,7 +413,7 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
                       checked={selectedDraftFields.includes(field)}
                       onChange={(event) => {
                         setSelectedDraftFields((prev) =>
-                          event.target.checked ? [...prev, field] : prev.filter((f) => f !== field),
+                          event.target.checked ? [...prev, field] : prev.filter((f) => f !== field)
                         );
                       }}
                     />
@@ -256,10 +433,18 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
               </Typography>
             )}
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              <Button size="small" variant="contained" onClick={() => applyDraft(availableDraftFields)}>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={() => applyDraft(availableDraftFields)}
+              >
                 Apply
               </Button>
-              <Button size="small" variant="outlined" onClick={() => applyDraft(selectedDraftFields)}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => applyDraft(selectedDraftFields)}
+              >
                 Apply selected
               </Button>
               <Button size="small" onClick={() => requestDraft(draft.mode)} disabled={draftLoading}>
@@ -289,7 +474,8 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
             <Typography variant="subtitle2">Upload photos</Typography>
             <ImagesField {...fieldProps} />
             <Typography variant="caption" color="text.secondary">
-              Add up to 12 image URLs. The first image is treated as the cover and can be analyzed by Hermes.
+              Add up to 12 image URLs. The first image is treated as the cover and can be analyzed
+              by Hermes.
             </Typography>
             {values.images.length > 0 && (
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -301,7 +487,13 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
                       alt={`Product photo ${index + 1}`}
                       sx={{ width: 88, height: 88, borderRadius: 2, objectFit: 'cover' }}
                     />
-                    {index === 0 && <Chip size="small" label="Cover" sx={{ position: 'absolute', left: 6, top: 6 }} />}
+                    {index === 0 && (
+                      <Chip
+                        size="small"
+                        label="Cover"
+                        sx={{ position: 'absolute', left: 6, top: 6 }}
+                      />
+                    )}
                   </Box>
                 ))}
               </Stack>
@@ -310,7 +502,7 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
         )}
         {activeStep === 1 && (
           <Stack spacing={2}>
-            <NameSkuFields {...fieldProps} />
+            <NameSkuFields {...fieldProps} showCategory={false} />
             <DescriptionTagsFields {...fieldProps} />
             <StatusField {...fieldProps} />
           </Stack>
@@ -319,63 +511,118 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
           <Stack spacing={2}>
             <PriceFields {...fieldProps} />
             <Alert severity="info">
-              Hermes suggestion: compare similar OLX listings, keep a margin target, and adjust before publishing.
+              Hermes suggestion: compare similar OLX listings, keep a margin target, and adjust
+              before publishing.
             </Alert>
             {warning && <Alert severity="warning">{warning}</Alert>}
           </Stack>
         )}
         {activeStep === 3 && (
-          <Stack spacing={2}>
-            <Typography variant="subtitle2">Choose category</Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              {['Electronics', 'Fashion', 'Home and Garden', 'Sports', 'Kitchen', 'Other'].map((category) => (
-                <Button
-                  key={category}
-                  variant={values.category === category ? 'contained' : 'outlined'}
-                  onClick={() => change('category', category)}
-                >
-                  {category}
-                </Button>
-              ))}
-            </Stack>
+          <FormControl error={Boolean(errors.category)}>
+            <FormLabel id="product-category-label">Choose category</FormLabel>
+            <ToggleButtonGroup
+              exclusive
+              value={values.category || null}
+              onChange={(_event, category: string | null) => {
+                if (category) change('category', category);
+              }}
+              aria-labelledby="product-category-label"
+              aria-describedby={errors.category ? 'product-category-error' : undefined}
+              sx={{ mt: 1, flexWrap: 'wrap', gap: 1 }}
+            >
+              {['Electronics', 'Fashion', 'Home and Garden', 'Sports', 'Kitchen', 'Other'].map(
+                (category) => (
+                  <ToggleButton
+                    key={category}
+                    value={category}
+                    sx={{ border: 1, borderColor: 'divider', borderRadius: 1 }}
+                  >
+                    {category}
+                  </ToggleButton>
+                )
+              )}
+            </ToggleButtonGroup>
+            {errors.category && (
+              <FormHelperText id="product-category-error">{errors.category}</FormHelperText>
+            )}
             <Typography variant="caption" color="text.secondary">
-              Hermes can suggest the closest category from photos, title, and description; final mapping stays editable.
+              Hermes can suggest the closest category from photos, title, and description; final
+              mapping stays editable.
             </Typography>
-          </Stack>
+          </FormControl>
         )}
         {activeStep === 4 && (
-          <Stack spacing={2}>
-            <Typography variant="subtitle2">Marketplaces</Typography>
-            {MARKETPLACE_OPTIONS.map((marketplace) => {
-              const selected = targetMarketplace === marketplace.key;
-              return (
-                <Box
-                  key={marketplace.key}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setTargetMarketplace(marketplace.key)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') setTargetMarketplace(marketplace.key);
-                  }}
-                  sx={{
-                    p: 1.5,
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                    border: (t) => `2px solid ${selected ? t.palette.primary.main : t.palette.divider}`,
-                    bgcolor: selected ? 'action.selected' : 'background.paper',
-                  }}
-                >
-                  <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{marketplace.name}</Typography>
-                    {selected && <Chip size="small" color="primary" label="Selected" />}
-                  </Stack>
-                  <Typography variant="caption" color="text.secondary">
-                    {marketplace.description}
-                  </Typography>
-                </Box>
-              );
-            })}
-          </Stack>
+          <FormControl error={Boolean(marketplaceError)}>
+            <FormLabel id="target-marketplace-label">Marketplaces</FormLabel>
+            {marketplacesLoading && <Alert severity="info">Loading marketplace connections…</Alert>}
+            {marketplacesError && (
+              <Alert severity="error">Marketplace connections could not be loaded.</Alert>
+            )}
+            <RadioGroup
+              value={targetMarketplace ?? ''}
+              onChange={(_event, key) => {
+                setTargetMarketplace(key as MarketplaceKey);
+                setMarketplaceError(null);
+              }}
+              aria-labelledby="target-marketplace-label"
+              aria-describedby={marketplaceError ? 'target-marketplace-error' : undefined}
+              sx={{ mt: 1, gap: 1 }}
+            >
+              {marketplaceOptions.map((marketplace) => {
+                const selected = targetMarketplace === marketplace.key;
+                return (
+                  <FormControlLabel
+                    key={marketplace.key}
+                    value={marketplace.key}
+                    disabled={!marketplace.connected}
+                    control={<Radio />}
+                    sx={{
+                      m: 0,
+                      p: 1.5,
+                      borderRadius: 2,
+                      opacity: marketplace.connected ? 1 : 0.62,
+                      border: (t) =>
+                        `2px solid ${selected ? t.palette.primary.main : t.palette.divider}`,
+                      bgcolor: selected ? 'action.selected' : 'background.paper',
+                    }}
+                    label={
+                      <Box sx={{ width: '100%' }}>
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          justifyContent="space-between"
+                          spacing={1}
+                        >
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            {marketplace.name}
+                          </Typography>
+                          {selected ? (
+                            <Chip size="small" color="primary" label="Selected" />
+                          ) : (
+                            <Chip
+                              size="small"
+                              color={marketplace.connected ? 'success' : 'default'}
+                              label={marketplace.connected ? 'Connected' : 'Unavailable'}
+                            />
+                          )}
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary">
+                          {marketplace.connected
+                            ? 'Connected to this workspace and available for publishing.'
+                            : marketplace.configured
+                              ? 'Reconnect or verify this marketplace from Marketplace settings.'
+                              : 'This channel is not configured for this workspace yet.'}
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                );
+              })}
+            </RadioGroup>
+            {marketplaceError && (
+              <FormHelperText id="target-marketplace-error">{marketplaceError}</FormHelperText>
+            )}
+          </FormControl>
         )}
         {activeStep === 5 && (
           <Stack spacing={2}>
@@ -384,12 +631,14 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
                 {values.name || 'Untitled product'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {values.sku || 'no-sku'} · {values.category || 'Uncategorised'} · {values.tags.length}{' '}
-                tag(s) · {values.images.length} image(s) · {values.sellingPrice} price
+                {values.sku || 'no-sku'} · {values.category || 'Uncategorised'} ·{' '}
+                {values.tags.length} tag(s) · {values.images.length} image(s) ·{' '}
+                {values.sellingPrice} price
               </Typography>
             </Box>
             <Alert severity="info">
-              Creating saves a draft product. Marketplace publishing remains a separate confirmation step.
+              Creating saves a draft product. Marketplace publishing remains a separate confirmation
+              step.
             </Alert>
           </Stack>
         )}
