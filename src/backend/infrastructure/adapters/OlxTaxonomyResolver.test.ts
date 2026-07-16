@@ -90,9 +90,52 @@ describe('OlxTaxonomyResolver', () => {
       is_leaf: true,
       parent: { id: 99, name: 'Elektronika', is_leaf: true, parent: null },
     }],
+    ['both path and nested parent representations', {
+      id: 1984,
+      name: 'Projektory',
+      path: ['Elektronika', 'Projektory'],
+      is_leaf: true,
+      parent: { id: 99, name: 'Elektronika', is_leaf: false, parent: null },
+    }],
+    ['an explicit null parent for a non-root target', {
+      id: 1984,
+      name: 'Projektory',
+      is_leaf: true,
+      parent: null,
+    }],
   ])('rejects malformed detail topology: %s', async (_label, detail) => {
     const resolver = new OlxTaxonomyResolver(client(detail), undefined, () => now);
     await expect(resolver.verify('1984')).rejects.toThrow();
+  });
+
+  it('rejects nested breadcrumb ids that disagree with the flat taxonomy', async () => {
+    const request = jest.fn(async ({ url }: { url: string }) => ({
+      status: 200,
+      data: url.endsWith('/categories/1984')
+        ? {
+            id: 1984,
+            name: 'Projektory',
+            is_leaf: true,
+            parent: {
+              id: 9999,
+              name: 'Sprzęt video',
+              is_leaf: false,
+              parent: { id: 8888, name: 'Elektronika', is_leaf: false, parent: null },
+            },
+          }
+        : { data: [
+            { id: 99, name: 'Elektronika', parent_id: 0, is_leaf: false },
+            { id: 1979, name: 'Sprzęt video', parent_id: 99, is_leaf: false },
+            { id: 1984, name: 'Projektory', parent_id: 1979, is_leaf: true },
+          ] },
+    }));
+    const resolver = new OlxTaxonomyResolver(
+      { request: request as MarketplaceHttpClient['request'] },
+      undefined,
+      () => now,
+    );
+
+    await expect(resolver.verify('1984')).rejects.toThrow('does not match');
   });
 
   it('reconstructs a complete path from the authenticated flat taxonomy', async () => {
@@ -171,6 +214,25 @@ describe('OlxTaxonomyResolver', () => {
       { id: 1979, name: 'Sprzęt video', parent_id: 99, is_leaf: false },
       { id: 1984, name: 'Projektory', parent_id: 1979, is_leaf: true },
       { id: 3000, name: 'Malformed child', parent_id: '01984', is_leaf: true },
+    ]],
+    ['an unrelated node with a missing parent', [
+      { id: 99, name: 'Elektronika', parent_id: 0, is_leaf: false },
+      { id: 1979, name: 'Sprzęt video', parent_id: 99, is_leaf: false },
+      { id: 1984, name: 'Projektory', parent_id: 1979, is_leaf: true },
+      { id: 3000, name: 'Orphan', parent_id: 9999, is_leaf: true },
+    ]],
+    ['unrelated conflicting leaf claims', [
+      { id: 99, name: 'Elektronika', parent_id: 0, is_leaf: false },
+      { id: 1979, name: 'Sprzęt video', parent_id: 99, is_leaf: false },
+      { id: 1984, name: 'Projektory', parent_id: 1979, is_leaf: true },
+      { id: 3000, name: 'Malformed', parent_id: 99, leaf: true, is_leaf: false },
+    ]],
+    ['an unrelated cyclic component', [
+      { id: 99, name: 'Elektronika', parent_id: 0, is_leaf: false },
+      { id: 1979, name: 'Sprzę video', parent_id: 99, is_leaf: false },
+      { id: 1984, name: 'Projektory', parent_id: 1979, is_leaf: true },
+      { id: 3000, name: 'Cycle A', parent_id: 3001, is_leaf: false },
+      { id: 3001, name: 'Cycle B', parent_id: 3000, is_leaf: false },
     ]],
     ['a zero category node id', [
       { id: 0, name: 'Elektronika', parent_id: 0, is_leaf: false },

@@ -14,6 +14,16 @@ interface OlxCategoryNode {
 
 interface OlxEnvelope<T> { data: T }
 
+interface OlxResolvedPath {
+  ids: string[];
+  names: string[];
+}
+
+interface OlxDetailPath {
+  ids?: string[];
+  names: string[];
+}
+
 export interface OlxTrustedTaxonomyResolver {
   verify(providerCategoryId: string): Promise<MarketplaceCategoryMetadata>;
 }
@@ -49,11 +59,16 @@ export class OlxTaxonomyResolver implements OlxTrustedTaxonomyResolver {
     if (!name) throw new Error('OLX taxonomy category name is missing');
     const isLeaf = this.leafStatus(node);
     if (isLeaf !== true) throw new Error('OLX category is not a verified leaf category');
-    const directPath = this.path(node, name);
-    const path = await this.pathFromFlatTaxonomy(id, name);
-    if (directPath.length > 0 && !this.samePath(directPath, path)) {
+    const directPath = this.detailPath(node, name, id);
+    const resolvedPath = await this.pathFromFlatTaxonomy(id, name);
+    if (!resolvedPath) throw new Error('OLX taxonomy did not return a complete category path');
+    if (directPath && (
+      !this.samePath(directPath.names, resolvedPath.names)
+      || (directPath.ids !== undefined && !this.samePath(directPath.ids, resolvedPath.ids))
+    )) {
       throw new Error('OLX taxonomy detail path does not match the flat taxonomy');
     }
+    const path = resolvedPath.names;
     if (path.length === 0 || path[path.length - 1] !== name) {
       throw new Error('OLX taxonomy did not return a complete category path');
     }
@@ -76,85 +91,117 @@ export class OlxTaxonomyResolver implements OlxTrustedTaxonomyResolver {
     return 'data' in value ? value.data : value;
   }
 
-  private path(node: OlxCategoryNode, name: string): string[] {
+  private detailPath(node: OlxCategoryNode, name: string, id: string): OlxDetailPath | null {
+    const hasParent = Object.prototype.hasOwnProperty.call(node, 'parent');
     if (Array.isArray(node.path)) {
+      if (hasParent) throw new Error('OLX taxonomy detail contains conflicting breadcrumb representations');
       if (node.path.some((part) => typeof part !== 'string' || part.trim().length === 0)) {
         throw new Error('OLX taxonomy detail path is malformed');
       }
       const parts = node.path.map((part) => part.trim());
       if (parts.length < 2) throw new Error('OLX taxonomy detail path is incomplete');
-      return parts;
+      return { names: parts };
     }
     if (typeof node.path === 'string') {
+      if (hasParent) throw new Error('OLX taxonomy detail contains conflicting breadcrumb representations');
       const parts = node.path.split(/\s*(?:>|→|\/)\s*/).map((part) => part.trim());
       if (parts.length < 2 || parts.some((part) => part.length === 0)) {
         throw new Error('OLX taxonomy detail path is incomplete');
       }
-      return parts;
+      return { names: parts };
     }
     if (node.path !== undefined) throw new Error('OLX taxonomy detail path is malformed');
-    const parents: string[] = [];
-    let current = node.parent;
-    const visited = new Set<OlxCategoryNode>();
+    if (!hasParent) return null;
+    if (node.parent === null) throw new Error('OLX taxonomy detail ancestry is incomplete');
+    const parentIds: string[] = [];
+    const parentNames: string[] = [];
+    let current: OlxCategoryNode | null | undefined = node.parent;
+    const visited = new Set<string>();
     let depth = 0;
     while (current) {
-      if (visited.has(current) || depth >= 32) throw new Error('OLX taxonomy detail ancestry is malformed');
-      visited.add(current);
+      const currentId = this.canonicalCategoryId(current.id);
+      if (!currentId || visited.has(currentId) || depth >= 32) {
+        throw new Error('OLX taxonomy detail ancestry is malformed');
+      }
+      visited.add(currentId);
       depth += 1;
       if (!current.name?.trim() || this.leafStatus(current) !== false) {
         throw new Error('OLX taxonomy detail ancestry is malformed');
       }
-      parents.unshift(current.name.trim());
+      parentIds.unshift(currentId);
+      parentNames.unshift(current.name.trim());
+      if (!Object.prototype.hasOwnProperty.call(current, 'parent')) {
+        throw new Error('OLX taxonomy detail ancestry is incomplete');
+      }
       current = current.parent;
     }
-    return parents.length > 0 ? [...parents, name] : [];
+    return { ids: [...parentIds, id], names: [...parentNames, name] };
   }
 
-  private async pathFromFlatTaxonomy(id: string, expectedName: string): Promise<string[]> {
+  private async pathFromFlatTaxonomy(id: string, expectedName: string): Promise<OlxResolvedPath | null> {
     const response = await this.http.request<OlxCategoryNode[] | OlxEnvelope<OlxCategoryNode[]>>({
       method: 'GET',
       url: `${this.baseUrl}/categories`,
     });
     const value = response.data;
     const nodes = Array.isArray(value) ? value : value?.data;
-    if (!Array.isArray(nodes)) return [];
+    if (!Array.isArray(nodes)) return null;
     const byId = new Map<string, OlxCategoryNode>();
     for (const node of nodes) {
       const nodeId = this.canonicalCategoryId(node?.id);
-      if (!nodeId || byId.has(nodeId)) return [];
+      if (!nodeId || byId.has(nodeId) || !node.name?.trim() || this.leafStatus(node) === undefined) return null;
       byId.set(nodeId, node);
     }
     const parentsWithChildren = new Set<string>();
     for (const node of nodes) {
       if (node.parent_id === 0) continue;
       const parentId = this.canonicalCategoryId(node.parent_id);
-      if (!parentId) return [];
+      if (!parentId || !byId.has(parentId)) return null;
       parentsWithChildren.add(parentId);
+    }
+    for (const [nodeId, node] of byId) {
+      if (this.leafStatus(node) !== !parentsWithChildren.has(nodeId)) return null;
+      const visited = new Set<string>();
+      let current: OlxCategoryNode | undefined = node;
+      let depth = 0;
+      while (current) {
+        const currentId = this.canonicalCategoryId(current.id);
+        if (!currentId || visited.has(currentId) || depth >= 32) return null;
+        visited.add(currentId);
+        depth += 1;
+        if (current.parent_id === 0) break;
+        const parentId = this.canonicalCategoryId(current.parent_id);
+        if (!parentId) return null;
+        current = byId.get(parentId);
+        if (!current) return null;
+      }
     }
     const target = byId.get(id);
     const targetLeaf = target ? this.leafStatus(target) : undefined;
-    if (target?.name?.trim() !== expectedName || targetLeaf !== true || parentsWithChildren.has(id)) return [];
+    if (target?.name?.trim() !== expectedName || targetLeaf !== true || parentsWithChildren.has(id)) return null;
 
-    const path: string[] = [];
+    const ids: string[] = [];
+    const names: string[] = [];
     const visited = new Set<string>();
     let current: OlxCategoryNode | undefined = target;
     let depth = 0;
     while (current) {
       const currentId = String(current.id ?? '');
       const currentName = current.name?.trim();
-      if (!currentId || !currentName || visited.has(currentId) || depth >= 32) return [];
+      if (!currentId || !currentName || visited.has(currentId) || depth >= 32) return null;
       visited.add(currentId);
-      path.unshift(currentName);
+      ids.unshift(currentId);
+      names.unshift(currentName);
       depth += 1;
-      if (currentId !== id && this.leafStatus(current) !== false) return [];
+      if (currentId !== id && this.leafStatus(current) !== false) return null;
       if (current.parent_id === 0) break;
-      if (current.parent_id === null || current.parent_id === undefined) return [];
+      if (current.parent_id === null || current.parent_id === undefined) return null;
       const parentId = this.canonicalCategoryId(current.parent_id);
-      if (!parentId) return [];
+      if (!parentId) return null;
       current = byId.get(parentId);
-      if (!current) return [];
+      if (!current) return null;
     }
-    return path.length > 1 ? path : [];
+    return names.length > 1 ? { ids, names } : null;
   }
 
   private canonicalCategoryId(value: unknown): string | null {
