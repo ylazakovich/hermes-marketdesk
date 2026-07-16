@@ -101,7 +101,7 @@ Static design artifacts live under `docs/design/` and are excluded from Docker b
   - [Dark theme](docs/design/screenshots/dark.png)
 - `docs/design/_ds/`, `doc-page.js`, `support.js` — local runtime/design-system assets required by the HTML docs
 
-Read [`docs/spec/README.md`](docs/spec/README.md) for the authoritative source hierarchy. The original PRD remains the product behavior and acceptance contract; [`docs/spec/PRODUCT.md`](docs/spec/PRODUCT.md) records current maturity and approved deviations, and [`docs/spec/TRACEABILITY.md`](docs/spec/TRACEABILITY.md) maps every PRD section to implementation evidence and active issues.
+Read [`docs/spec/README.md`](docs/spec/README.md) for the authoritative source hierarchy. The original PRD remains the product behavior and acceptance contract; [`ARCHITECTURE.md`](ARCHITECTURE.md) is the canonical architecture, while [`ARCHITECTURE_AMENDMENTS.md`](ARCHITECTURE_AMENDMENTS.md) is only its historical review/decision record. [`docs/spec/PRODUCT.md`](docs/spec/PRODUCT.md) records current maturity and approved deviations, and [`docs/spec/TRACEABILITY.md`](docs/spec/TRACEABILITY.md) maps requirements and cross-cutting decisions to implementation evidence and active issues.
 
 Preview the HTML files by opening them directly in a browser from the repository checkout.
 
