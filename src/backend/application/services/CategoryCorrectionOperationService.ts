@@ -18,6 +18,12 @@ import {
 import type { IdGenerator } from '../ports/IdGenerator';
 import type { OlxPublicationQuotaService } from './OlxPublicationQuotaService';
 import type { Marketplace } from '../../domain/entities/Marketplace';
+import type { HermesEventView } from '../dto/presenters';
+import type {
+  CategoryRecreationChangePayload,
+  CategoryRecreationOperationAction,
+  CategoryRecreationOperationStatus,
+} from '../../../shared/types';
 
 export interface CategoryCorrectionAdapterResolver {
   resolve(marketplace: Marketplace): Promise<IMarketplaceAdapter>;
@@ -47,6 +53,33 @@ export class CategoryCorrectionOperationService {
     return this.operations.findByRecommendationForWorkspace(recommendationEventId, workspaceId);
   }
 
+  async hydrateEvent(event: HermesEventView, workspaceId: string): Promise<HermesEventView> {
+    const change = event.proposedChange;
+    if (change?.kind !== 'category_recreation') return event;
+    const durable = await this.operations.findByRecommendationForWorkspace(event.id, workspaceId);
+    const delist = durable.find((operation) => operation.kind === 'delist');
+    const recreate = durable.find((operation) => operation.kind === 'recreate');
+    let recreateCanApprove = Boolean(recreate?.targetCategory);
+    if (recreate?.state === 'requested') {
+      const listing = await this.listings.findByIdForWorkspace(recreate.listingId, workspaceId);
+      const product = listing
+        ? await this.products.findByIdForWorkspace(listing.productId, workspaceId)
+        : null;
+      const target = recreate.targetCategory ?? listing?.marketplaceCategory ?? null;
+      recreateCanApprove = Boolean(product && evaluateOlxCategory(product, target, this.now()).allowed);
+    }
+    return {
+      ...event,
+      proposedChange: {
+        ...change,
+        operations: [
+          this.presentOperation(change.operations[0], delist, 'delist') as CategoryRecreationChangePayload['operations'][0],
+          this.presentOperation(change.operations[1], recreate, 'recreate', recreateCanApprove) as CategoryRecreationChangePayload['operations'][1],
+        ],
+      },
+    };
+  }
+
   async approve(input: {
     operationId: string;
     workspaceId: string;
@@ -66,11 +99,27 @@ export class CategoryCorrectionOperationService {
         && current.paidOverrideReason === (input.paidOverrideReason?.trim() ?? null)) return current;
       throw new InvalidStateError(`Cannot approve category correction operation from ${current.state}`);
     }
+    let targetCategory = current.targetCategory ?? undefined;
+    if (current.kind === 'recreate') {
+      const listing = await this.listings.findByIdForWorkspace(current.listingId, input.workspaceId);
+      if (!listing) throw new NotFoundError(`Listing not found: ${current.listingId}`);
+      const product = await this.products.findByIdForWorkspace(listing.productId, input.workspaceId);
+      if (!product) throw new NotFoundError(`Product not found: ${listing.productId}`);
+      targetCategory = targetCategory ?? listing.marketplaceCategory ?? undefined;
+      const categoryDecision = evaluateOlxCategory(product, targetCategory ?? null, this.now());
+      if (!categoryDecision.allowed || !targetCategory) {
+        throw new GuardrailViolationError(
+          `Select and verify an exact OLX category before approving recreate: ${categoryDecision.reason}`,
+          { categoryDecision },
+        );
+      }
+    }
     const approved = await this.operations.approve({
       id: current.id,
       workspaceId: input.workspaceId,
       actorId: input.actorId,
       paidOverrideReason: input.paidOverrideReason?.trim(),
+      targetCategory,
       at: this.now(),
     });
     if (!approved || approved.state !== 'approved'
@@ -96,6 +145,16 @@ export class CategoryCorrectionOperationService {
           : `Cannot execute category correction operation from ${current.state}`,
       );
     }
+    if (current.kind === 'recreate') {
+      const pair = await this.operations.findByRecommendationForWorkspace(
+        current.recommendationEventId,
+        input.workspaceId,
+      );
+      const delist = pair.find((candidate) => candidate.kind === 'delist');
+      if (!delist || delist.state !== 'executed') {
+        throw new InvalidStateError('Recreate cannot execute before the paired delist operation succeeds');
+      }
+    }
     const operation = await this.operations.claimApproved(current.id, input.workspaceId, this.now());
     if (!operation) {
       const raced = await this.requireOperation(current.id, input.workspaceId);
@@ -103,6 +162,7 @@ export class CategoryCorrectionOperationService {
       throw new InvalidStateError('Category correction operation is already executing');
     }
 
+    let providerCheckpoint: Record<string, unknown> = {};
     try {
       await this.audit(operation, input.actorId, 'olx.category_correction.executing', {});
       const listing = await this.listings.findByIdForWorkspace(operation.listingId, input.workspaceId);
@@ -117,6 +177,14 @@ export class CategoryCorrectionOperationService {
         if (!listing.marketplaceListingId) throw new InvalidStateError('Delist requires an external listing id');
         const adapter = await this.adapters.resolve(marketplace);
         await adapter.delist(listing.marketplaceListingId);
+        providerCheckpoint = {
+          providerEffect: 'delisted',
+          externalListingId: listing.marketplaceListingId,
+        };
+        const expired = listing.expire();
+        if (expired.isErr()) throw expired.error;
+        listing.recordSyncStatusNote('Remote advert delisted for category correction');
+        await this.listings.save(listing);
         result = {
           externalListingId: listing.marketplaceListingId,
           quotaUnitsRestored: 0,
@@ -157,6 +225,23 @@ export class CategoryCorrectionOperationService {
           condition: product.condition,
           imageUrls: [...product.images],
         });
+        providerCheckpoint = {
+          providerEffect: 'published',
+          externalListingId: published.externalListingId,
+          externalUrl: published.externalUrl ?? null,
+          publishedAt: published.publishedAt.toISOString(),
+        };
+        const linked = listing.publish(
+          product,
+          marketplace,
+          published.externalListingId,
+          published.externalUrl ?? null,
+          published.publishedAt,
+          null,
+          published.remoteStatus ?? null,
+        );
+        if (linked.isErr()) throw linked.error;
+        await this.listings.save(listing);
         result = {
           externalListingId: published.externalListingId,
           externalUrl: published.externalUrl ?? null,
@@ -176,11 +261,78 @@ export class CategoryCorrectionOperationService {
         message: error instanceof Error ? error.message : 'Unknown category correction failure',
         retrySafe: false,
         manualReconciliationRequired: true,
+        ...providerCheckpoint,
       };
       const failed = await this.operations.markFailed(operation.id, input.workspaceId, failure, this.now());
       if (failed) await this.audit(failed, input.actorId, 'olx.category_correction.failed', failure);
       throw error;
     }
+  }
+
+  private presentOperation(
+    fallback: CategoryRecreationChangePayload['operations'][number],
+    operation: CategoryCorrectionOperation | undefined,
+    kind: 'delist' | 'recreate',
+    canApprove = true,
+  ): CategoryRecreationChangePayload['operations'][number] {
+    if (!operation) return { ...fallback, availableActions: [] };
+    const statusByState: Record<CategoryCorrectionOperation['state'], CategoryRecreationOperationStatus> = {
+      requested: kind === 'recreate' && !operation.targetCategory
+        ? 'blocked_pending_quota_review'
+        : 'pending_review',
+      approved: 'approved',
+      executing: 'running',
+      executed: 'succeeded',
+      failed: 'failed',
+    };
+    const action = (actionKind: 'approve' | 'execute'): CategoryRecreationOperationAction => actionKind === 'approve'
+      ? {
+          kind: 'approve', method: 'POST',
+          href: `/hermes/category-correction-operations/${operation.id}/approve`,
+          label: `Review ${kind}`,
+        }
+      : {
+          kind: 'execute', method: 'POST',
+          href: `/hermes/category-correction-operations/${operation.id}/execute`,
+          label: `Execute ${kind}`,
+        };
+    const availableActions = operation.state === 'requested' && canApprove
+      ? [action('approve')]
+      : operation.state === 'approved'
+        ? [action('execute')]
+        : [];
+    const failureReason = operation.state === 'failed' && typeof operation.result?.message === 'string'
+      ? operation.result.message
+      : undefined;
+    if (kind === 'delist') {
+      return {
+        kind,
+        intentId: operation.id,
+        status: statusByState[operation.state],
+        providerSideEffectAllowed: operation.state === 'approved',
+        quotaUnitsRestored: 0,
+        availableActions,
+        failureReason,
+      };
+    }
+    const quotaDecision = operation.result?.quotaDecision as Record<string, unknown> | undefined;
+    return {
+      kind,
+      intentId: operation.id,
+      status: statusByState[operation.state],
+      providerSideEffectAllowed: operation.state === 'approved',
+      quotaGuardRequired: true,
+      availableActions,
+      failureReason,
+      ...(quotaDecision ? {
+        quota: {
+          status: String(quotaDecision.status ?? 'unknown') as 'available' | 'unknown' | 'stale' | 'exhausted' | 'paid_risk',
+          remaining: typeof quotaDecision.remaining === 'number' ? quotaDecision.remaining : null,
+          paidRisk: quotaDecision.decision === 'override',
+          reason: typeof quotaDecision.reason === 'string' ? quotaDecision.reason : undefined,
+        },
+      } : {}),
+    };
   }
 
   private async requireOperation(id: string, workspaceId: string): Promise<CategoryCorrectionOperation> {

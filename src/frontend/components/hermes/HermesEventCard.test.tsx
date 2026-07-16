@@ -34,7 +34,7 @@ const change: CategoryRecreationChangePayload = {
       providerSideEffectAllowed: false,
       quotaUnitsRestored: 0,
       availableActions: [
-        { kind: 'approve', method: 'POST', href: '/hermes/category-recreation-operations/delist-intent-1/approve', label: 'Review delist' },
+        { kind: 'approve', method: 'POST', href: '/hermes/category-correction-operations/delist-intent-1/approve', label: 'Review delist' },
       ],
     },
     {

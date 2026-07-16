@@ -124,13 +124,13 @@ export type CategoryRecreationOperationStatus =
  * these relative links in the event representation.
  */
 export type CategoryRecreationOperationAction = {
-  [Action in 'approve' | 'execute' | 'retry']: {
+  [Action in 'approve' | 'execute']: {
     kind: Action;
     method: 'POST';
-    href: `/hermes/category-recreation-operations/${string}/${Action}`;
+    href: `/hermes/category-correction-operations/${string}/${Action}`;
     label?: string;
   };
-}['approve' | 'execute' | 'retry'];
+}['approve' | 'execute'];
 
 export interface CategoryRecreationQuotaReview {
   status: 'available' | 'unknown' | 'stale' | 'exhausted' | 'paid_risk';

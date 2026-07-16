@@ -77,14 +77,16 @@ export class CategoryCorrectionOperationRepository implements ICategoryCorrectio
     return rows.map((row) => this.map(row));
   }
 
-  async approve(input: { id: string; workspaceId: string; actorId: string; paidOverrideReason?: string; at: Date }): Promise<CategoryCorrectionOperation | null> {
+  async approve(input: { id: string; workspaceId: string; actorId: string; paidOverrideReason?: string; targetCategory?: CategoryCorrectionOperation['targetCategory']; at: Date }): Promise<CategoryCorrectionOperation | null> {
     const { rows } = await query<OperationRow>(
       `UPDATE category_correction_operations
        SET state = 'approved', approved_by = $3, approved_at = $4,
-           paid_override_reason = $5, updated_at = $4
+           paid_override_reason = $5,
+           target_category = COALESCE($6::jsonb, target_category), updated_at = $4
        WHERE id = $1 AND workspace_id = $2 AND state = 'requested'
        RETURNING *`,
-      [input.id, input.workspaceId, input.actorId, input.at, input.paidOverrideReason ?? null],
+      [input.id, input.workspaceId, input.actorId, input.at, input.paidOverrideReason ?? null,
+        input.targetCategory ? JSON.stringify(input.targetCategory) : null],
       this.queryClient,
     );
     return rows[0] ? this.map(rows[0]) : this.findByIdForWorkspace(input.id, input.workspaceId);

@@ -255,16 +255,14 @@ export type HermesEventResolution = HermesEvent;
 export interface CategoryRecreationOperationCommand {
   action: CategoryRecreationOperationAction;
   operation: 'delist' | 'recreate';
-  confirmation:
-    | { kind: 'delist'; deletionDoesNotRestoreQuota: true }
-    | { kind: 'recreate'; newPublicationConsumesQuota: true; paidRiskAccepted: true };
 }
 
 export interface CategoryRecreationOperationResolution {
-  intentId: string;
-  operation: 'delist' | 'recreate';
-  status: CategoryRecreationOperationStatus;
-  event: HermesEvent;
+  id: string;
+  recommendationEventId: string;
+  kind: 'delist' | 'recreate';
+  state: 'requested' | 'approved' | 'executing' | 'executed' | 'failed';
+  result: Record<string, unknown> | null;
 }
 
 // ----------------------------------------------------------------------------

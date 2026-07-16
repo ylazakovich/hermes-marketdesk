@@ -316,7 +316,7 @@ CREATE TABLE IF NOT EXISTS category_correction_operations (
     CHECK (state IN ('requested', 'approved', 'executing', 'executed', 'failed')),
   CONSTRAINT category_correction_operations_target_valid CHECK (
     (kind = 'delist' AND target_category IS NULL AND paid_override_reason IS NULL)
-    OR (kind = 'recreate' AND target_category IS NOT NULL)
+    OR (kind = 'recreate' AND (state = 'requested' OR target_category IS NOT NULL))
   ),
   CONSTRAINT category_correction_operations_lifecycle_valid CHECK (
     (state = 'requested' AND approved_at IS NULL AND executed_at IS NULL AND failed_at IS NULL)

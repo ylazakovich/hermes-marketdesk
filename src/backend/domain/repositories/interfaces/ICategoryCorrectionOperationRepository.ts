@@ -40,6 +40,7 @@ export interface ICategoryCorrectionOperationRepository {
     workspaceId: string;
     actorId: string;
     paidOverrideReason?: string;
+    targetCategory?: MarketplaceCategoryMetadata;
     at: Date;
   }): Promise<CategoryCorrectionOperation | null>;
   claimApproved(id: string, workspaceId: string, at: Date): Promise<CategoryCorrectionOperation | null>;

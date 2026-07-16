@@ -81,6 +81,9 @@ function createService(
   for (const listing of existing) listingRepo.items.set(listing.id, listing);
   const activityLog = new InMemoryActivityLogRepository();
   const eventRepo = new InMemoryEventRepository();
+  const correctionOperations = {
+    createPair: jest.fn(async () => undefined),
+  } as any;
   const adapter = {
     getKey: () => 'olx',
     publish: jest.fn(),
@@ -95,7 +98,7 @@ function createService(
   const authenticatedHttpClient = jest.fn(() => ({ request: jest.fn() }));
   const defaultUnitOfWork: ConstructorParameters<typeof MarketplaceImportService>[9] = async (
     work
-  ) => work({ productRepo, listingRepo, activityLog, eventRepo });
+  ) => work({ productRepo, listingRepo, activityLog, eventRepo, correctionOperations });
   const service = new MarketplaceImportService(
     marketplaceRepo,
     productRepo,
@@ -108,6 +111,7 @@ function createService(
     idFactory('import'),
     runUnitOfWork ?? defaultUnitOfWork,
     eventRepo,
+    correctionOperations,
   );
   return {
     service,
@@ -119,6 +123,7 @@ function createService(
     listingRepo,
     activityLog,
     eventRepo,
+    correctionOperations,
   };
 }
 
@@ -162,6 +167,25 @@ describe('MarketplaceImportService', () => {
     expect(adapter.publish).not.toHaveBeenCalled();
     expect(adapter.updateListing).not.toHaveBeenCalled();
     expect(adapter.delist).not.toHaveBeenCalled();
+  });
+
+  it('creates an atomic durable pair for a new mismatched import before a target category is selected', async () => {
+    const remote = remoteListing({
+      title: 'AOPEN QH11 projector',
+      description: 'LED HD 720p HDMI projector in good condition.',
+      marketplaceCategory: headphonesCategory,
+    });
+    const { service, eventRepo, correctionOperations } = createService([remote]);
+    const result = await service.import({
+      workspaceId: 'workspace-1', marketplaceId: 'marketplace-1', externalListingIds: ['olx-1'],
+    });
+    if (result.isErr()) throw result.error;
+    const pending = await eventRepo.findPendingReview('workspace-1');
+    expect(pending).toHaveLength(1);
+    expect(correctionOperations.createPair).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'delist', recommendationEventId: pending[0].id }),
+      expect.objectContaining({ kind: 'recreate', targetCategory: null }),
+    );
   });
 
   it('allows already imported adverts with partial remote data to be refreshed', async () => {
@@ -407,7 +431,7 @@ describe('MarketplaceImportService', () => {
       description: 'LED HD 720p HDMI projector in good condition.',
       marketplaceCategory: headphonesCategory,
     });
-    const { service, productRepo, eventRepo, listingRepo, adapter } = createService([remote], [existing]);
+    const { service, productRepo, eventRepo, listingRepo, adapter, correctionOperations } = createService([remote], [existing]);
     productRepo.items.set(product.id, product);
 
     const first = await service.import({
@@ -430,6 +454,11 @@ describe('MarketplaceImportService', () => {
         expect.objectContaining({ kind: 'recreate', status: 'blocked_pending_quota_review', providerSideEffectAllowed: false, quotaGuardRequired: true }),
       ],
     }));
+    expect(correctionOperations.createPair).toHaveBeenCalledTimes(1);
+    expect(correctionOperations.createPair).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'delist', recommendationEventId: pending[0].id }),
+      expect.objectContaining({ kind: 'recreate', targetCategory: projectorCategory }),
+    );
     expect(adapter.delist).not.toHaveBeenCalled();
     expect(adapter.publish).not.toHaveBeenCalled();
   });

@@ -164,11 +164,22 @@ export class MarketplaceImportService {
     currentCategory: ImportedMarketplaceListing['marketplaceCategory'];
     proposedCategory: ImportedMarketplaceListing['marketplaceCategory'];
   }): Promise<void> {
-    const product = await this.productRepo.findByIdForWorkspace(input.listing.productId, input.workspaceId);
-    await this.createCategoryMismatchRecommendation(
-      input.listing, product, input.currentCategory, input.proposedCategory,
-      input.workspaceId, this.activityLog, this.eventRepo,
-    );
+    await this.unitOfWork(async (repos) => {
+      const product = await repos.productRepo.findByIdForWorkspace(
+        input.listing.productId,
+        input.workspaceId,
+      );
+      await this.createCategoryMismatchRecommendation(
+        input.listing,
+        product,
+        input.currentCategory,
+        input.proposedCategory,
+        input.workspaceId,
+        repos.activityLog,
+        repos.eventRepo,
+        repos.correctionOperations,
+      );
+    });
   }
 
   async import(input: ImportApplyInput): Promise<Result<ImportApplyResult>> {
@@ -240,6 +251,7 @@ export class MarketplaceImportService {
             input.workspaceId,
             repos.activityLog,
             repos.eventRepo,
+            repos.correctionOperations,
           );
           await repos.activityLog?.record(
             this.activityEntry(
@@ -727,7 +739,7 @@ export class MarketplaceImportService {
       `olx-category-mismatch:${listing.id}:${currentCategory.providerCategoryId}:${proposedCategory?.providerCategoryId ?? 'unresolved'}`,
     );
     if (!inserted) return;
-    if (correctionOperations && proposedCategory) {
+    if (correctionOperations) {
       const requestedAt = new Date();
       await correctionOperations.createPair(
         {
@@ -740,7 +752,7 @@ export class MarketplaceImportService {
         {
           id: recreateIntentId, workspaceId, recommendationEventId: eventId,
           listingId: listing.id, marketplaceId: listing.marketplaceId, kind: 'recreate',
-          state: 'requested', targetCategory: proposedCategory, paidOverrideReason: null,
+          state: 'requested', targetCategory: proposedCategory ?? null, paidOverrideReason: null,
           requestedBy: null, approvedBy: null, result: null, requestedAt,
           approvedAt: null, executedAt: null, failedAt: null, updatedAt: requestedAt,
         },

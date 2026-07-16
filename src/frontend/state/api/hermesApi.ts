@@ -59,14 +59,14 @@ export const hermesApi = baseApi.injectEndpoints({
       CategoryRecreationOperationResolution,
       CategoryRecreationOperationCommand
     >({
-      query: ({ action, operation, confirmation }) => ({
+      query: ({ action }) => ({
         url: action.href,
         method: action.method,
-        body: { operation, confirmation },
+        body: {},
       }),
       transformResponse: (res: ApiResponse<CategoryRecreationOperationResolution>) => unwrap(res),
       invalidatesTags: (result) => [
-        { type: 'HermesEvent', id: result?.event.id ?? 'LIST' },
+        { type: 'HermesEvent', id: result?.recommendationEventId ?? 'LIST' },
         { type: 'HermesEvent', id: 'LIST' },
         { type: 'Listing', id: 'LIST' },
       ],

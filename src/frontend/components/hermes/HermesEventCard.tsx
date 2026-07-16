@@ -250,12 +250,11 @@ export const HermesEventCard: React.FC<HermesEventCardProps> = ({
       await executeOperation({
         action,
         operation,
-        confirmation: operation === 'delist'
-          ? { kind: 'delist', deletionDoesNotRestoreQuota: true }
-          : { kind: 'recreate', newPublicationConsumesQuota: true, paidRiskAccepted: true },
       }).unwrap();
       dispatch(enqueueToast({
-        message: `${operation === 'delist' ? 'Delist' : 'Recreate'} decision recorded. Provider completion is tracked separately.`,
+        message: action.kind === 'approve'
+          ? `${operation === 'delist' ? 'Delist' : 'Recreate'} review approved.`
+          : `${operation === 'delist' ? 'Delist' : 'Recreate'} execution completed.`,
         severity: 'success',
       }));
       setPendingOperation(null);
@@ -328,11 +327,19 @@ export const HermesEventCard: React.FC<HermesEventCardProps> = ({
       </Stack>
       <ConfirmDialog
         open={Boolean(pendingOperation)}
-        title={pendingOperation?.operation === 'delist' ? 'Confirm delist review?' : 'Confirm recreate review?'}
-        message={pendingOperation?.operation === 'delist'
-          ? 'This records a separate delist decision. Ending the advert does not restore its consumed quota unit, and this confirmation does not mean OLX has completed the action.'
-          : 'This records a separate recreate decision for a new publication. It consumes quota and may incur a paid placement; this confirmation does not mean OLX has completed publication.'}
-        confirmLabel={pendingOperation?.operation === 'delist' ? 'Confirm delist decision' : 'Accept paid risk and confirm recreate'}
+        title={pendingOperation?.action.kind === 'execute'
+          ? `Execute ${pendingOperation.operation}?`
+          : `Approve ${pendingOperation?.operation ?? 'operation'} review?`}
+        message={pendingOperation?.action.kind === 'execute'
+          ? pendingOperation.operation === 'delist'
+            ? 'This will remove the current OLX advert. Deletion does not restore its consumed quota unit.'
+            : 'This will create a new OLX advert only if the quota guard allows it. It may consume a publication unit; no paid-risk override is granted by this action.'
+          : pendingOperation?.operation === 'delist'
+            ? 'This approves the separate delist operation but does not contact OLX yet.'
+            : 'This approves the separate recreate operation but does not publish yet. Execution remains quota-guarded.'}
+        confirmLabel={pendingOperation?.action.kind === 'execute'
+          ? `Execute ${pendingOperation.operation}`
+          : `Approve ${pendingOperation?.operation ?? 'operation'}`}
         confirmColor="error"
         loading={executingOperation}
         onConfirm={confirmOperation}

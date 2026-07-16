@@ -66,7 +66,10 @@ export class HermesController {
       offset: req.query.offset ? Number(req.query.offset) : undefined,
     };
     const page = await this.hermes.listEvents(query);
-    paginated(res, page.items, {
+    const items = this.categoryCorrections?.hydrateEvent
+      ? await Promise.all(page.items.map((event) => this.categoryCorrections!.hydrateEvent(event, req.user!.workspaceId!)))
+      : page.items;
+    paginated(res, items, {
       page: page.page,
       limit: page.limit,
       total: page.total,
@@ -80,7 +83,10 @@ export class HermesController {
     if (!event) {
       return next(new NotFoundError(`Hermes event not found: ${eventId}`));
     }
-    ok(res, event);
+    const hydrated = this.categoryCorrections?.hydrateEvent
+      ? await this.categoryCorrections.hydrateEvent(event, req.user!.workspaceId!)
+      : event;
+    ok(res, hydrated);
   };
 
   approve = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
