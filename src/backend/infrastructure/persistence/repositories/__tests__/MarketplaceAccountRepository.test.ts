@@ -13,6 +13,7 @@ describe('MarketplaceAccountRepository', () => {
     credentials: { version: 1, ciphertext: 'encrypted' },
     status: 'connected',
     scopes: ['basic'],
+    revision: 7,
     created_at: '2026-07-14T12:00:00.000Z',
     updated_at: '2026-07-14T12:01:00.000Z',
   };
@@ -21,6 +22,7 @@ describe('MarketplaceAccountRepository', () => {
     const account = MarketplaceAccountMapper.toRecord(row);
     expect(account.marketplaceId).toBe('marketplace-1');
     expect(account.credentials).toEqual({ version: 1, ciphertext: 'encrypted' });
+    expect(account.revision).toBe(7);
     expect(account.createdAt).toEqual(new Date('2026-07-14T12:00:00.000Z'));
   });
 
@@ -38,7 +40,9 @@ describe('MarketplaceAccountRepository', () => {
     });
 
     expect(query).toHaveBeenCalledTimes(1);
-    expect(String(query.mock.calls[0][0])).toContain('ON CONFLICT (marketplace_id)');
+    const sql = String(query.mock.calls[0][0]);
+    expect(sql).toContain('ON CONFLICT (marketplace_id)');
+    expect(sql).toContain('revision = marketplace_accounts.revision + 1');
     expect(query.mock.calls[0][1]).toEqual([
       'account-1',
       'marketplace-1',
@@ -49,10 +53,14 @@ describe('MarketplaceAccountRepository', () => {
     ]);
   });
 
-  it('updates refreshed credentials with a connected-state compare-and-swap', async () => {
-    const query = jest.fn(async () => ({ rows: [row], rowCount: 1 }));
+  it('uses an integer revision for refresh CAS instead of a lossy JavaScript timestamp', async () => {
+    const microsecondRow: MarketplaceAccountRow = {
+      ...row,
+      updated_at: '2026-07-14T12:01:00.071888Z',
+    };
+    const query = jest.fn(async () => ({ rows: [microsecondRow], rowCount: 1 }));
     const repo = new MarketplaceAccountRepository({ query } as unknown as Pool);
-    const expectedUpdatedAt = new Date('2026-07-14T12:01:00.000Z');
+    const expectedRevision = 7;
 
     await repo.updateConnectedIfUnchanged(
       {
@@ -63,11 +71,14 @@ describe('MarketplaceAccountRepository', () => {
         status: 'connected',
         scopes: ['basic'],
       },
-      expectedUpdatedAt
+      expectedRevision
     );
 
-    expect(String(query.mock.calls[0][0])).toContain("AND status = 'connected'");
-    expect(String(query.mock.calls[0][0])).toContain('AND updated_at = $7');
-    expect(query.mock.calls[0][1]?.[6]).toEqual(expectedUpdatedAt);
+    const sql = String(query.mock.calls[0][0]);
+    expect(sql).toContain("AND status = 'connected'");
+    expect(sql).toContain('AND revision = $7');
+    expect(sql).toContain('revision = revision + 1');
+    expect(sql).not.toContain('AND updated_at = $7');
+    expect(query.mock.calls[0][1]?.[6]).toBe(expectedRevision);
   });
 });

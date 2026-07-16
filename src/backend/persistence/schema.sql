@@ -104,8 +104,10 @@ CREATE TABLE IF NOT EXISTS marketplace_accounts (
   credentials JSONB NOT NULL, -- app-layer encrypted (see CredentialVault §9)
   status VARCHAR(50) DEFAULT 'connected',
   scopes TEXT[] DEFAULT '{}',
+  revision BIGINT NOT NULL DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT marketplace_accounts_revision_positive CHECK (revision > 0)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_accounts_marketplace ON marketplace_accounts(marketplace_id);

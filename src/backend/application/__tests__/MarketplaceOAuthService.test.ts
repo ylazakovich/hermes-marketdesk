@@ -3,6 +3,7 @@ import { InMemoryMarketplaceRepository, unwrap } from '../../domain/testkit/supp
 import {
   MarketplaceOAuthService,
   type MarketplaceAccountRecord,
+  type MarketplaceAccountWrite,
   type MarketplaceAppCredentialRecord,
   type MarketplaceOAuthServiceDeps,
   type OlxOAuthAppCredentials,
@@ -16,11 +17,12 @@ class InMemoryAccountRepository {
     return this.accounts.get(marketplaceId) ?? null;
   }
 
-  async upsert(input: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>) {
+  async upsert(input: MarketplaceAccountWrite) {
     const current = this.accounts.get(input.marketplaceId);
     const now = new Date('2026-07-14T12:00:00.000Z');
     const account: MarketplaceAccountRecord = {
       ...input,
+      revision: (current?.revision ?? 0) + 1,
       createdAt: current?.createdAt ?? now,
       updatedAt: now,
     };
@@ -29,14 +31,14 @@ class InMemoryAccountRepository {
   }
 
   async updateConnectedIfUnchanged(
-    input: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>,
-    expectedUpdatedAt: Date
+    input: MarketplaceAccountWrite,
+    expectedRevision: number
   ): Promise<MarketplaceAccountRecord | null> {
     const current = this.accounts.get(input.marketplaceId);
     if (
       !current ||
       current.status !== 'connected' ||
-      current.updatedAt.getTime() !== expectedUpdatedAt.getTime()
+      current.revision !== expectedRevision
     ) {
       return null;
     }
@@ -301,6 +303,41 @@ describe('MarketplaceOAuthService', () => {
     const saved = accountRepo.accounts.get(marketplace.id)!;
     const savedTokens = saved.credentials.payload as OlxOAuthTokens;
     expect(savedTokens.refreshToken).toBe('rotated-refresh-token');
+  });
+
+  it('rejects a genuinely stale account revision after a concurrent write', async () => {
+    const { marketplace, accountRepo } = setup();
+    const original = await accountRepo.upsert({
+      id: 'account-stale-revision',
+      marketplaceId: marketplace.id,
+      handle: 'OLX account',
+      credentials: { payload: initialTokens },
+      status: 'connected',
+      scopes: ['basic'],
+    });
+    const concurrent = await accountRepo.upsert({
+      id: original.id,
+      marketplaceId: marketplace.id,
+      handle: original.handle,
+      credentials: { payload: { ...initialTokens, accessToken: 'concurrent-token' } },
+      status: 'connected',
+      scopes: original.scopes,
+    });
+
+    const saved = await accountRepo.updateConnectedIfUnchanged(
+      {
+        id: original.id,
+        marketplaceId: marketplace.id,
+        handle: original.handle,
+        credentials: { payload: { ...initialTokens, accessToken: 'stale-token' } },
+        status: 'connected',
+        scopes: original.scopes,
+      },
+      original.revision
+    );
+
+    expect(saved).toBeNull();
+    expect(accountRepo.accounts.get(marketplace.id)).toEqual(concurrent);
   });
 
   it('does not refresh when workspace app credentials are missing', async () => {

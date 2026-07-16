@@ -3,6 +3,7 @@ import { query } from '../../../config/database';
 import type {
   MarketplaceAccountRecord,
   MarketplaceAccountRepository as MarketplaceAccountRepositoryPort,
+  MarketplaceAccountWrite,
 } from '../../../application/services/MarketplaceOAuthService';
 import type { MarketplaceAccountStatus } from '../../../../shared/types';
 
@@ -13,12 +14,13 @@ export interface MarketplaceAccountRow {
   credentials: Record<string, unknown>;
   status: string;
   scopes: string[] | null;
+  revision: number | string;
   created_at: Date | string;
   updated_at: Date | string;
 }
 
 const ACCOUNT_SELECT = `
-  SELECT id, marketplace_id, handle, credentials, status, scopes, created_at, updated_at
+  SELECT id, marketplace_id, handle, credentials, status, scopes, revision, created_at, updated_at
   FROM marketplace_accounts
 `;
 
@@ -31,6 +33,7 @@ export const MarketplaceAccountMapper = {
       credentials: row.credentials,
       status: row.status as MarketplaceAccountStatus,
       scopes: row.scopes ?? [],
+      revision: Number(row.revision),
       createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
       updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at),
     };
@@ -53,9 +56,7 @@ export class MarketplaceAccountRepository implements MarketplaceAccountRepositor
     return rows[0] ? MarketplaceAccountMapper.toRecord(rows[0]) : null;
   }
 
-  async upsert(
-    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>
-  ): Promise<MarketplaceAccountRecord> {
+  async upsert(account: MarketplaceAccountWrite): Promise<MarketplaceAccountRecord> {
     const { rows } = await query<MarketplaceAccountRow>(
       `INSERT INTO marketplace_accounts
          (id, marketplace_id, handle, credentials, status, scopes)
@@ -65,8 +66,9 @@ export class MarketplaceAccountRepository implements MarketplaceAccountRepositor
          credentials = EXCLUDED.credentials,
          status = EXCLUDED.status,
          scopes = EXCLUDED.scopes,
+         revision = marketplace_accounts.revision + 1,
          updated_at = CURRENT_TIMESTAMP
-       RETURNING id, marketplace_id, handle, credentials, status, scopes, created_at, updated_at`,
+       RETURNING id, marketplace_id, handle, credentials, status, scopes, revision, created_at, updated_at`,
       [
         account.id,
         account.marketplaceId,
@@ -83,8 +85,8 @@ export class MarketplaceAccountRepository implements MarketplaceAccountRepositor
   }
 
   async updateConnectedIfUnchanged(
-    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>,
-    expectedUpdatedAt: Date
+    account: MarketplaceAccountWrite,
+    expectedRevision: number
   ): Promise<MarketplaceAccountRecord | null> {
     const { rows } = await query<MarketplaceAccountRow>(
       `UPDATE marketplace_accounts
@@ -92,12 +94,13 @@ export class MarketplaceAccountRepository implements MarketplaceAccountRepositor
            credentials = $4::jsonb,
            status = $5,
            scopes = $6,
+           revision = revision + 1,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
          AND marketplace_id = $2
          AND status = 'connected'
-         AND updated_at = $7
-       RETURNING id, marketplace_id, handle, credentials, status, scopes, created_at, updated_at`,
+         AND revision = $7
+       RETURNING id, marketplace_id, handle, credentials, status, scopes, revision, created_at, updated_at`,
       [
         account.id,
         account.marketplaceId,
@@ -105,7 +108,7 @@ export class MarketplaceAccountRepository implements MarketplaceAccountRepositor
         JSON.stringify(account.credentials),
         account.status,
         account.scopes,
-        expectedUpdatedAt,
+        expectedRevision,
       ],
       this.queryClient
     );
