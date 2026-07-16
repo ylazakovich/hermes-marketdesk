@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS hermes_events (
   autonomy_decision VARCHAR(50),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   resolved_at TIMESTAMP,
+  idempotency_key VARCHAR(500),
   CONSTRAINT hermes_events_resolution_check CHECK (
     (status IN ('applied', 'dismissed', 'failed', 'reverted')) = (resolved_at IS NOT NULL)
   )
@@ -289,6 +290,8 @@ CREATE INDEX IF NOT EXISTS idx_hermes_events_workspace ON hermes_events(workspac
 CREATE INDEX IF NOT EXISTS idx_hermes_events_product ON hermes_events(product_id);
 CREATE INDEX IF NOT EXISTS idx_hermes_events_status ON hermes_events(status);
 CREATE INDEX IF NOT EXISTS idx_hermes_events_created ON hermes_events(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hermes_events_workspace_idempotency
+  ON hermes_events(workspace_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- ============================================================================
 -- Activity Log, Analytics Events, API Keys

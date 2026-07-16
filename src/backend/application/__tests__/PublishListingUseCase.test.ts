@@ -19,8 +19,8 @@ import type { MarketplaceCategoryMetadata } from '../../../shared/types';
 const exactCategory: MarketplaceCategoryMetadata = {
   providerCategoryId: '4000', name: 'Lamps', path: ['Home', 'Lighting', 'Lamps'],
   source: 'provider_taxonomy', confidence: 0.95, isLeaf: true,
-  taxonomyVerifiedAt: '2099-01-01T00:00:00.000Z',
-  taxonomyStaleAt: '2099-02-01T00:00:00.000Z',
+  taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+  taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
 };
 
 function setup(

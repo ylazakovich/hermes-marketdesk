@@ -70,6 +70,7 @@ import type { RedisCache } from '../../infrastructure/cache/RedisCache';
 import { BullJobQueue } from '../../infrastructure/jobQueue/BullJobQueue';
 import { MarketplaceAdapterFactory } from '../../infrastructure/adapters/MarketplaceAdapterFactory';
 import { FetchMarketplaceHttpClient } from '../../infrastructure/adapters/FetchMarketplaceHttpClient';
+import { OlxTaxonomyResolver } from '../../infrastructure/adapters/OlxTaxonomyResolver';
 import { RedisMarketplaceOAuthStateStore } from '../../infrastructure/cache/RedisMarketplaceOAuthStateStore';
 import { RedisMarketplaceOAuthRefreshLock } from '../../infrastructure/cache/RedisMarketplaceOAuthRefreshLock';
 import { AesGcmCredentialVault } from '../../infrastructure/security/AesGcmCredentialVault';
@@ -429,6 +430,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           productRepo: new ProductRepository(pool, client),
           listingRepo: new ListingRepository(pool, client),
           activityLog: new ActivityLogRepository(pool, client),
+          eventRepo: new EventRepository(pool, client),
         })
       ),
     eventRepo,
@@ -471,6 +473,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
             })
         : undefined,
     eventPublisher,
+    recommendCategoryMismatch: (input) => marketplaceImportService.recommendSyncedCategoryMismatch(input),
   });
   syncQueue.registerHandler((data) => syncHandler.handle(data));
 
@@ -508,6 +511,15 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     marketplaceOAuthService,
     marketplaceSyncScheduler,
     marketplaceImportService,
+    olxTaxonomyResolver: async (marketplaceId) => {
+      const accessToken = await marketplaceOAuthService.getValidAccessToken(marketplaceId);
+      const http = new FetchMarketplaceHttpClient({
+        defaultHeaders: buildOlxHeaders(accessToken),
+        timeoutMs: env.marketplaces.olx.requestTimeoutMs,
+        livePublishEnabled: false,
+      });
+      return new OlxTaxonomyResolver(http);
+    },
     olxPublicationQuotaService,
     marketplaceOAuthReturnUrl: env.marketplaces.olx.oauthSuccessUrl,
     workspaceRepo,

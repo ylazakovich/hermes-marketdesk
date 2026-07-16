@@ -21,7 +21,8 @@ const publishInput: ListingPublishInput = {
   marketplaceCategory: {
     providerCategoryId: '99', name: 'Cameras', path: ['Electronics', 'Photography', 'Cameras'],
     source: 'provider_taxonomy', confidence: 1, isLeaf: true,
-    taxonomyVerifiedAt: '2099-01-01T00:00:00.000Z', taxonomyStaleAt: '2099-02-01T00:00:00.000Z',
+    taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+    taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
   },
   condition: 'good',
   imageUrls: ['https://img/1.jpg', 'https://img/2.jpg'],
@@ -108,7 +109,7 @@ describe('OLXAdapter', () => {
     const adapter = new OLXAdapter(http, fastOptions, realConfig);
 
     await expect(adapter.publish({ ...publishInput, marketplaceCategory: null }))
-      .rejects.toThrow('category id is required');
+      .rejects.toThrow('exact OLX leaf category');
     expect(http.request).not.toHaveBeenCalled();
   });
 
@@ -410,7 +411,7 @@ describe('OLXAdapter', () => {
       { requirePublishDetails: true },
     );
 
-    await expect(adapter.publish({ ...publishInput, marketplaceCategory: null })).rejects.toThrow('category id');
+    await expect(adapter.publish({ ...publishInput, marketplaceCategory: null })).rejects.toThrow('exact OLX leaf category');
     expect(request).not.toHaveBeenCalled();
   });
 

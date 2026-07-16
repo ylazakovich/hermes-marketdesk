@@ -382,8 +382,9 @@ async function seedPreviewListing(listingRepo: InMemoryListingRepository): Promi
     price: price.value,
     marketplaceCategory: {
       providerCategoryId: '2000', name: 'Widgets', path: ['Home', 'Tools', 'Widgets'],
-      source: 'user_confirmed', confidence: 1, isLeaf: true,
-      taxonomyVerifiedAt: '2026-07-15T00:00:00.000Z', taxonomyStaleAt: '2099-01-01T00:00:00.000Z',
+      source: 'provider_taxonomy', confidence: 1, isLeaf: true,
+      taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+      taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
     },
   });
   if (listing.isErr()) throw listing.error;

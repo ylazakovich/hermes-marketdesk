@@ -86,6 +86,7 @@ export interface MarketplaceImportRepositories {
   productRepo: IProductRepository;
   listingRepo: IListingRepository;
   activityLog?: IActivityLogRepository;
+  eventRepo?: IEventRepository;
 }
 
 export type MarketplaceImportUnitOfWork = <T>(
@@ -154,6 +155,19 @@ export class MarketplaceImportService {
     );
   }
 
+  async recommendSyncedCategoryMismatch(input: {
+    listing: Listing;
+    workspaceId: string;
+    currentCategory: ImportedMarketplaceListing['marketplaceCategory'];
+    proposedCategory: ImportedMarketplaceListing['marketplaceCategory'];
+  }): Promise<void> {
+    const product = await this.productRepo.findByIdForWorkspace(input.listing.productId, input.workspaceId);
+    await this.createCategoryMismatchRecommendation(
+      input.listing, product, input.currentCategory, input.proposedCategory,
+      input.workspaceId, this.activityLog, this.eventRepo,
+    );
+  }
+
   async import(input: ImportApplyInput): Promise<Result<ImportApplyResult>> {
     const context = await this.discover(input);
     if (context.isErr()) return context;
@@ -215,6 +229,15 @@ export class MarketplaceImportService {
           );
           await repos.productRepo.save(product);
           await repos.listingRepo.save(listing);
+          await this.createCategoryMismatchRecommendation(
+            listing,
+            product,
+            item.proposed.marketplaceCategory ?? null,
+            null,
+            input.workspaceId,
+            repos.activityLog,
+            repos.eventRepo,
+          );
           await repos.activityLog?.record(
             this.activityEntry(
               input.workspaceId,
@@ -597,10 +620,8 @@ export class MarketplaceImportService {
         const described = product.updateDescription(remote.description);
         if (described.isErr()) throw described.error;
       }
-      if (remote.category && product.category !== remote.category) {
-        const categorized = product.updateCategory(remote.category);
-        if (categorized.isErr()) throw categorized.error;
-      }
+      // A provider category label is marketplace metadata, not the product's broad
+      // semantic identity. Preserve the local category until a user changes it.
       if (!this.sameStringList([...product.images], remote.imageUrls)) {
         product.clearImages();
         for (const imageUrl of remote.imageUrls) {
@@ -636,6 +657,7 @@ export class MarketplaceImportService {
       proposedCategory,
       workspaceId,
       repos.activityLog,
+      repos.eventRepo,
     );
     await repos.activityLog?.record(
       this.activityEntry(
@@ -655,19 +677,13 @@ export class MarketplaceImportService {
     proposedCategory: ImportedMarketplaceListing['marketplaceCategory'],
     workspaceId: string,
     activityLog?: IActivityLogRepository,
+    transactionEventRepo?: IEventRepository,
   ): Promise<void> {
-    if (!this.eventRepo || !product || listing.status !== 'live' || !currentCategory || !proposedCategory) return;
+    if (!product || listing.status !== 'live' || !currentCategory) return;
     const currentDecision = evaluateOlxCategory(product, currentCategory);
-    const proposedDecision = evaluateOlxCategory(product, proposedCategory);
-    if (currentDecision.reason !== 'semantic_mismatch' || !proposedDecision.allowed) return;
-    const duplicate = (await this.eventRepo.findPendingReview(workspaceId)).some((event) => {
-      const change = event.proposedChange;
-      return change?.kind === 'category_recreation'
-        && change.listingId === listing.id
-        && change.currentCategory.providerCategoryId === currentCategory.providerCategoryId
-        && change.proposedCategory.providerCategoryId === proposedCategory.providerCategoryId;
-    });
-    if (duplicate) return;
+    const proposedDecision = proposedCategory ? evaluateOlxCategory(product, proposedCategory) : null;
+    if (currentDecision.reason !== 'semantic_mismatch' || (proposedDecision && !proposedDecision.allowed)) return;
+
     const eventId = this.idGenerator();
     const delistIntentId = this.idGenerator();
     const recreateIntentId = this.idGenerator();
@@ -679,12 +695,12 @@ export class MarketplaceImportService {
       severity: 'critical',
       status: 'pending_review',
       title: 'OLX advert category mismatch requires recreation',
-      detail: `Current: ${currentCategory.path.join(' → ')}. Proposed: ${proposedCategory.path.join(' → ')}. OLX category is not corrected through a normal PUT; delist and recreate remain separate human-reviewed operations.`,
+      detail: `Current: ${currentCategory.path.join(' → ')}. Proposed: ${proposedCategory ? proposedCategory.path.join(' → ') : 'select an exact verified OLX leaf category'}. OLX category is not corrected through a normal PUT; delist and recreate remain separate human-reviewed operations.`,
       proposedChange: {
         kind: 'category_recreation',
         listingId: listing.id,
-        currentCategory,
-        proposedCategory,
+        currentCategory: currentCategory!,
+        proposedCategory: proposedCategory ?? null,
         operations: [
           {
             kind: 'delist', intentId: delistIntentId, status: 'pending_review',
@@ -700,7 +716,13 @@ export class MarketplaceImportService {
       autonomyDecision: 'pending_review',
     });
     if (created.isErr()) throw created.error;
-    await this.eventRepo.save(created.value);
+    const repository = transactionEventRepo ?? this.eventRepo;
+    if (!repository) return;
+    const inserted = await repository.saveRecommendationIfAbsent(
+      created.value,
+      `olx-category-mismatch:${listing.id}:${currentCategory.providerCategoryId}:${proposedCategory?.providerCategoryId ?? 'unresolved'}`,
+    );
+    if (!inserted) return;
     await activityLog?.record(this.activityEntry(
       workspaceId,
       listing.id,

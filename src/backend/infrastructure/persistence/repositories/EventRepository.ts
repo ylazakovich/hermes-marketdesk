@@ -75,6 +75,22 @@ export class EventRepository implements IEventRepository {
     await this.persist(event, this.queryClient as PoolClient);
   }
 
+  async saveRecommendationIfAbsent(event: HermesEvent, idempotencyKey: string): Promise<boolean> {
+    const proposedChange = event.proposedChange === null ? null : JSON.stringify(event.proposedChange);
+    const { rowCount } = await query(
+      `INSERT INTO hermes_events
+         (id, workspace_id, product_id, type, severity, status, title, detail,
+          proposed_change, autonomy_decision, created_at, resolved_at, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (workspace_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`,
+      [event.id, event.workspaceId, event.productId, event.type, event.severity, event.status,
+        event.title, event.detail, proposedChange, event.autonomyDecision, event.createdAt,
+        event.resolvedAt, idempotencyKey],
+      this.queryClient,
+    );
+    return rowCount === 1;
+  }
+
   async saveAll(events: HermesEvent[]): Promise<void> {
     const run = async (client: PoolClient): Promise<void> => {
       for (const event of events) {

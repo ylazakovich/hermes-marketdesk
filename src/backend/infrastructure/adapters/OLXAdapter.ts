@@ -17,6 +17,8 @@ import type {
   PublishResult,
   SyncedListing,
 } from '../../domain/services/MarketplaceAdapter';
+import { evaluateOlxCategory } from '../../domain/services/OlxCategoryGuard';
+import { OlxTaxonomyResolver, type OlxTrustedTaxonomyResolver } from './OlxTaxonomyResolver';
 
 const OLX_PARTNER_BASE_URL = 'https://www.olx.pl/api/partner';
 
@@ -119,6 +121,10 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     http?: MarketplaceHttpClient,
     options?: MarketplaceAdapterOptions,
     private readonly config: OlxAdapterConfig = {},
+    private readonly taxonomy: OlxTrustedTaxonomyResolver = new OlxTaxonomyResolver(
+      http ?? new StubMarketplaceHttpClient(OLXAdapter.stubResponder),
+      config.baseUrl ?? OLX_PARTNER_BASE_URL,
+    ),
   ) {
     super(http ?? new StubMarketplaceHttpClient(OLXAdapter.stubResponder), 'olx', options);
     this.baseUrl = (config.baseUrl ?? OLX_PARTNER_BASE_URL).replace(/\/$/, '');
@@ -326,7 +332,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     return statistics ? { ...advert, statistics } : advert;
   }
 
-  private toSyncedListing(data: OlxAdvertResponse): SyncedListing {
+  private async toSyncedListing(data: OlxAdvertResponse): Promise<SyncedListing> {
     const remoteStatus = String(data.status ?? 'unknown').toLowerCase();
     return {
       externalListingId: String(data.id),
@@ -336,11 +342,11 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       views: this.extractViews(data),
       watchers: this.extractWatchers(data),
       messages: this.extractMessages(data),
-      marketplaceCategory: this.extractMarketplaceCategory(data),
+      marketplaceCategory: await this.extractMarketplaceCategory(data),
     };
   }
 
-  private toImportedListing(data: OlxAdvertResponse): ImportedMarketplaceListing {
+  private async toImportedListing(data: OlxAdvertResponse): Promise<ImportedMarketplaceListing> {
     const price = this.extractPrice(data.price);
     const views = this.extractViews(data);
     const watchers = this.extractWatchers(data);
@@ -355,7 +361,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       status: OLX_STATUS_TO_LOCAL[String(data.status ?? 'unknown').toLowerCase()] ?? 'draft',
       remoteStatus: data.status,
       category: typeof data.category === 'string' ? data.category : data.category?.name ?? null,
-      marketplaceCategory: this.extractMarketplaceCategory(data),
+      marketplaceCategory: await this.extractMarketplaceCategory(data),
       imageUrls: this.extractImageUrls(data),
       remoteUpdatedAt: data.updated_at ? new Date(data.updated_at) : null,
       metrics: {
@@ -485,8 +491,11 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
 
   private resolvePublishCategory(input: ListingPublishInput): number | undefined {
     if (this.config.requirePublishDetails) {
-      const exact = input.marketplaceCategory;
-      if (!exact?.providerCategoryId?.trim() || !exact.isLeaf) return undefined;
+      const decision = evaluateOlxCategory({
+        name: input.productName, description: input.description, category: input.category,
+      }, input.marketplaceCategory ?? null);
+      if (!decision.allowed) throw new Error(decision.message ?? 'OLX category validation failed');
+      const exact = input.marketplaceCategory!;
       const id = Number(exact.providerCategoryId);
       return Number.isSafeInteger(id) && id > 0 ? id : undefined;
     }
@@ -495,26 +504,14 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       : this.mapCategory(input.category);
   }
 
-  private extractMarketplaceCategory(data: OlxAdvertResponse) {
+  private async extractMarketplaceCategory(data: OlxAdvertResponse) {
     if (!data.category || typeof data.category === 'string' || data.category.id === undefined) return null;
-    const name = data.category.name?.trim() || String(data.category.id);
-    const rawPath = data.category.path;
-    const path = Array.isArray(rawPath)
-      ? rawPath.filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
-      : typeof rawPath === 'string'
-        ? rawPath.split(/\s*(?:>|→|\/)\s*/).filter(Boolean)
-        : [name];
-    const now = new Date();
-    return {
-      providerCategoryId: String(data.category.id),
-      name,
-      path: path.length > 0 ? path : [name],
-      source: 'remote_import' as const,
-      confidence: 1,
-      isLeaf: data.category.leaf ?? true,
-      taxonomyVerifiedAt: now.toISOString(),
-      taxonomyStaleAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
-    };
+    try {
+      return await this.taxonomy.verify(String(data.category.id));
+    } catch {
+      // Advert payloads do not attest taxonomy path, leafness, confidence, or freshness.
+      return null;
+    }
   }
 
   private mapCategory(domainCategory: string): number | undefined {

@@ -19,13 +19,13 @@ import { InMemoryActivityLogRepository, idFactory } from '../../testkit/support'
 import type { MarketplaceCategoryMetadata } from '../../../../shared/types';
 
 const projectorCategory: MarketplaceCategoryMetadata = {
-  providerCategoryId: 'projectors', name: 'Projectors', path: ['Electronics', 'Video', 'Projectors'],
+  providerCategoryId: '100', name: 'Projectors', path: ['Electronics', 'Video', 'Projectors'],
   source: 'provider_taxonomy', confidence: 0.98, isLeaf: true,
-  taxonomyVerifiedAt: '2099-01-01T00:00:00.000Z', taxonomyStaleAt: '2099-02-01T00:00:00.000Z',
+  taxonomyVerifiedAt: '2026-07-16T00:00:00.000Z', taxonomyStaleAt: '2026-07-17T00:00:00.000Z',
 };
 const headphonesCategory: MarketplaceCategoryMetadata = {
-  ...projectorCategory, providerCategoryId: 'headphones', name: 'Wireless headphones',
-  path: ['Electronics', 'Audio equipment', 'Headphones', 'Wireless headphones'], source: 'remote_import',
+  ...projectorCategory, providerCategoryId: '200', name: 'Wireless headphones',
+  path: ['Electronics', 'Audio equipment', 'Headphones', 'Wireless headphones'],
 };
 
 const connectedAccount: MarketplaceAccountRecord = {
@@ -95,7 +95,7 @@ function createService(
   const authenticatedHttpClient = jest.fn(() => ({ request: jest.fn() }));
   const defaultUnitOfWork: ConstructorParameters<typeof MarketplaceImportService>[9] = async (
     work
-  ) => work({ productRepo, listingRepo, activityLog });
+  ) => work({ productRepo, listingRepo, activityLog, eventRepo });
   const service = new MarketplaceImportService(
     marketplaceRepo,
     productRepo,
@@ -365,7 +365,7 @@ describe('MarketplaceImportService', () => {
     expect(productRepo.items.get(product.id)).toMatchObject({
       name: 'Remote camera',
       description: 'Existing OLX advert with enough seller supplied detail.',
-      category: 'Electronics',
+      category: 'Old category',
     });
     expect(productRepo.items.get(product.id)?.sellingPrice.amount).toBe(100);
     expect(productRepo.items.get(product.id)?.images).toEqual(['https://img/1.jpg']);
@@ -414,8 +414,6 @@ describe('MarketplaceImportService', () => {
       workspaceId: 'workspace-1', marketplaceId: 'marketplace-1', externalListingIds: ['olx-1'],
     });
     if (first.isErr()) throw first.error;
-    existing.recordMarketplaceCategory(projectorCategory);
-    await listingRepo.save(existing);
     const replay = await service.import({
       workspaceId: 'workspace-1', marketplaceId: 'marketplace-1', externalListingIds: ['olx-1'],
     });

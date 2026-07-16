@@ -17,6 +17,24 @@ export interface OlxCategoryGuardResult {
 
 const PROJECTOR_TERMS = ['projector', 'projektor', 'beamer'];
 const HEADPHONE_TERMS = ['headphone', 'headphones', 'słuchawki', 'sluchawki', 'earbuds', 'airpods'];
+const MAX_TAXONOMY_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function parseMarketplaceCategoryMetadata(value: unknown): MarketplaceCategoryMetadata | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<MarketplaceCategoryMetadata>;
+  if (
+    typeof candidate.providerCategoryId !== 'string' || !candidate.providerCategoryId.trim()
+    || typeof candidate.name !== 'string' || !candidate.name.trim()
+    || !Array.isArray(candidate.path) || candidate.path.length === 0
+    || candidate.path.some((part) => typeof part !== 'string' || !part.trim())
+    || !['provider_taxonomy', 'remote_import', 'user_confirmed'].includes(candidate.source ?? '')
+    || typeof candidate.confidence !== 'number'
+    || typeof candidate.isLeaf !== 'boolean'
+    || typeof candidate.taxonomyVerifiedAt !== 'string'
+    || typeof candidate.taxonomyStaleAt !== 'string'
+  ) return null;
+  return candidate as MarketplaceCategoryMetadata;
+}
 
 function containsAny(value: string, terms: string[]): boolean {
   return terms.some((term) => value.includes(term));
@@ -32,18 +50,24 @@ export function evaluateOlxCategory(
   category: MarketplaceCategoryMetadata | null,
   now: Date = new Date(),
 ): OlxCategoryGuardResult {
-  if (!category?.providerCategoryId?.trim() || category.path.length === 0) {
+  category = parseMarketplaceCategoryMetadata(category);
+  if (!category) {
     return { allowed: false, requiresReview: true, reason: 'category_missing', message: 'Select an exact OLX leaf category before publishing' };
+  }
+  if (category.source !== 'provider_taxonomy') {
+    return { allowed: false, requiresReview: true, reason: 'taxonomy_unverified', message: 'OLX category must be verified by the server against provider taxonomy' };
   }
   if (!category.isLeaf) {
     return { allowed: false, requiresReview: true, reason: 'category_not_leaf', message: 'The selected OLX category is not a leaf category' };
   }
   const verifiedAt = new Date(category.taxonomyVerifiedAt).getTime();
   const staleAt = new Date(category.taxonomyStaleAt).getTime();
-  if (Number.isNaN(verifiedAt) || Number.isNaN(staleAt) || staleAt <= verifiedAt) {
+  const nowMs = now.getTime();
+  if (!Number.isFinite(nowMs) || Number.isNaN(verifiedAt) || Number.isNaN(staleAt)
+    || verifiedAt > nowMs || staleAt <= verifiedAt || staleAt - verifiedAt > MAX_TAXONOMY_TTL_MS) {
     return { allowed: false, requiresReview: true, reason: 'taxonomy_unverified', message: 'OLX taxonomy verification time is missing or invalid' };
   }
-  if (now.getTime() >= staleAt) {
+  if (nowMs >= staleAt) {
     return { allowed: false, requiresReview: true, reason: 'taxonomy_stale', message: 'The selected OLX taxonomy metadata is stale; refresh it before publishing' };
   }
   if (!Number.isFinite(category.confidence) || category.confidence < 0.8 || category.confidence > 1) {

@@ -237,7 +237,8 @@ describe('SyncMarketplaceHandler', () => {
           source: 'provider_taxonomy',
           confidence: 1,
           isLeaf: true,
-          taxonomyCheckedAt: new Date('2026-07-16T12:00:00.000Z'),
+          taxonomyVerifiedAt: '2026-07-16T12:00:00.000Z',
+          taxonomyStaleAt: '2026-07-17T12:00:00.000Z',
         },
       },
     ];

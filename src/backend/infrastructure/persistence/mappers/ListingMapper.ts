@@ -3,6 +3,7 @@ import { Money } from '../../../domain/valueObjects/Money';
 import type { ListingStatus } from '../../../../shared/types';
 import type { ListingRow } from './rows';
 import { toDate, toNullableDate, toNumber, unwrapPersisted } from './support';
+import { parseMarketplaceCategoryMetadata } from '../../../domain/services/OlxCategoryGuard';
 
 export const ListingMapper = {
   toDomain(row: ListingRow): Listing {
@@ -17,7 +18,7 @@ export const ListingMapper = {
       externalUrl: row.external_url,
       status: row.status as ListingStatus,
       remoteStatus: row.remote_status,
-      marketplaceCategory: row.marketplace_category,
+      marketplaceCategory: parseMarketplaceCategoryMetadata(row.marketplace_category),
       views: row.views,
       watchers: row.watchers,
       messages: row.messages,

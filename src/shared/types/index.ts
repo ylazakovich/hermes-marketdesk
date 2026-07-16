@@ -113,7 +113,8 @@ export interface CategoryRecreationChangePayload {
   kind: 'category_recreation';
   listingId: string;
   currentCategory: MarketplaceCategoryMetadata;
-  proposedCategory: MarketplaceCategoryMetadata;
+  /** Null until a trusted server-side taxonomy selection is available. */
+  proposedCategory: MarketplaceCategoryMetadata | null;
   operations: readonly [
     {
       kind: 'delist'; intentId: string; status: 'pending_review';

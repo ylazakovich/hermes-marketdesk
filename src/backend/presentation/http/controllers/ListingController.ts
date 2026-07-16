@@ -20,7 +20,7 @@ import { presentListing } from '../../../application/dto/presenters';
 import { evaluatePublishEligibility } from '../../../application/usecases/PublishListingUseCase';
 import type { OlxPublicationQuotaService } from '../../../application/services/OlxPublicationQuotaService';
 import { evaluateOlxCategory } from '../../../domain/services/OlxCategoryGuard';
-import type { MarketplaceCategoryMetadata } from '../../../../shared/types';
+import type { OlxTrustedTaxonomyResolver } from '../../../infrastructure/adapters/OlxTaxonomyResolver';
 import { ok, paginated } from '../formatters/ResponseFormatter';
 
 
@@ -35,6 +35,7 @@ export interface ListingControllerDeps {
   productRepo?: IProductRepository;
   marketplaceRepo?: IMarketplaceRepository;
   olxQuotaService?: OlxPublicationQuotaService;
+  olxTaxonomyResolver?: (marketplaceId: string) => Promise<OlxTrustedTaxonomyResolver>;
 }
 
 export class ListingController {
@@ -111,7 +112,15 @@ export class ListingController {
     const listingId = routeParam(req.params.id);
     const listing = await this.listingRepo.findByIdForWorkspace(listingId, req.user!.workspaceId!);
     if (!listing) return next(new NotFoundError(`Listing not found: ${listingId}`));
-    listing.recordMarketplaceCategory(req.body as MarketplaceCategoryMetadata);
+    const marketplace = await this.deps.marketplaceRepo?.findByIdForWorkspace(
+      listing.marketplaceId, req.user!.workspaceId!,
+    );
+    if (!marketplace || marketplace.key !== 'olx' || !this.deps.olxTaxonomyResolver) {
+      throw new NotFoundError('Trusted OLX taxonomy resolver is unavailable');
+    }
+    const resolver = await this.deps.olxTaxonomyResolver(marketplace.id);
+    const verified = await resolver.verify(String(req.body.providerCategoryId));
+    listing.recordMarketplaceCategory(verified);
     await this.listingRepo.save(listing);
     ok(res, presentListing(listing));
   };

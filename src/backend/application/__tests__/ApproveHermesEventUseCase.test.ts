@@ -364,7 +364,8 @@ describe('ApproveHermesEventUseCase', () => {
     const category = {
       providerCategoryId: 'projectors', name: 'Projectors', path: ['Electronics', 'Projectors'],
       source: 'provider_taxonomy' as const, confidence: 0.98, isLeaf: true,
-      taxonomyVerifiedAt: '2099-01-01T00:00:00.000Z', taxonomyStaleAt: '2099-02-01T00:00:00.000Z',
+      taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+      taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
     };
     const event = unwrap(HermesEvent.create({
       id: 'evt-category', workspaceId: 'ws-1', productId: 'prod-1',
