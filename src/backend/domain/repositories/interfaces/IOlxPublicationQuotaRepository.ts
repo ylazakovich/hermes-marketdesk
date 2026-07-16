@@ -41,4 +41,5 @@ export interface IOlxPublicationQuotaRepository {
   }): Promise<OlxPublicationQuota[]>;
   save(quota: OlxPublicationQuota): Promise<void>;
   authorize(input: AuthorizeOlxPublicationInput): Promise<OlxPublicationAuthorization>;
+  consume(operationId: string, at: Date): Promise<OlxPublicationAuthorization>;
 }

@@ -57,6 +57,26 @@ export class PublishAttemptRepository implements PublishAttemptStore {
     listingUpdatedAt: Date
   ): Promise<{ created: boolean; checkpoint: PublishAttemptCheckpoint }> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      const reclaimed = await this.pool.query<PublishAttemptRow>(
+        `UPDATE marketplace_publish_attempts
+         SET status = 'publishing', updated_at = NOW()
+         WHERE operation_id = $1
+           AND listing_id = $2
+           AND marketplace_key = $3
+           AND listing_updated_at = $4
+           AND status = 'abandoned'
+           AND NOT EXISTS (
+             SELECT 1 FROM marketplace_publish_attempts active
+              WHERE active.listing_id = $2
+                AND active.operation_id <> $1
+                AND active.status IN ('publishing', 'published')
+           )
+         RETURNING ${SELECT_COLUMNS}`,
+        [operationId, listingId, marketplaceKey, listingUpdatedAt]
+      );
+      if (reclaimed.rows[0]) {
+        return { created: true, checkpoint: toCheckpoint(reclaimed.rows[0]) };
+      }
       const latest = await this.findLatestByListing(listingId);
       if (latest && latest.listingUpdatedAt.getTime() >= listingUpdatedAt.getTime()) {
         return { created: false, checkpoint: latest };

@@ -17,6 +17,7 @@ describe('PublishAttemptRepository', () => {
     const query = jest
       .fn()
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({ rows: [row], rowCount: 1 });
     const repository = new PublishAttemptRepository({ query } as unknown as Pool);
 
@@ -30,12 +31,13 @@ describe('PublishAttemptRepository', () => {
         status: 'publishing',
       },
     });
-    expect(String(query.mock.calls[1][0])).toContain('ON CONFLICT DO NOTHING');
+    expect(String(query.mock.calls[2][0])).toContain('ON CONFLICT DO NOTHING');
   });
 
   it('returns the durable winner when another worker already began publishing', async () => {
     const query = jest
       .fn()
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({ rows: [row], rowCount: 1 });
@@ -51,7 +53,9 @@ describe('PublishAttemptRepository', () => {
 
   it('returns a newer durable listing generation without inserting a stale operation', async () => {
     const newer = { ...row, listing_updated_at: new Date('2026-07-15T12:00:00.000Z') };
-    const query = jest.fn().mockResolvedValueOnce({ rows: [newer], rowCount: 1 });
+    const query = jest.fn()
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [newer], rowCount: 1 });
     const repository = new PublishAttemptRepository({ query } as unknown as Pool);
 
     await expect(
@@ -60,7 +64,20 @@ describe('PublishAttemptRepository', () => {
       created: false,
       checkpoint: { operationId: 'operation-1', listingUpdatedAt: newer.listing_updated_at },
     });
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('atomically reclaims its own abandoned checkpoint for the same listing generation', async () => {
+    const reclaimed = { ...row, status: 'publishing' };
+    const query = jest.fn().mockResolvedValueOnce({ rows: [reclaimed], rowCount: 1 });
+    const repository = new PublishAttemptRepository({ query } as unknown as Pool);
+
+    await expect(
+      repository.begin('operation-1', 'listing-1', 'olx', new Date(0))
+    ).resolves.toMatchObject({ created: true, checkpoint: { status: 'publishing' } });
+
+    expect(String(query.mock.calls[0][0])).toContain("status = 'abandoned'");
+    expect(String(query.mock.calls[0][0])).toContain('NOT EXISTS');
   });
 
   it('stores the provider result before local finalization resumes', async () => {

@@ -483,7 +483,8 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
             livePublishEnabled: env.marketplaces.olx.livePublishEnabled,
           })
       : undefined,
-    publishAttemptRepo
+    publishAttemptRepo,
+    olxPublicationQuotaService
   );
   publishQueue.registerHandler((data) => publishHandler.handle(data));
 

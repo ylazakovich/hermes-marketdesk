@@ -58,6 +58,20 @@ function memoryPublishAttempts(): PublishAttemptStore {
       marketplaceKey: MarketplaceKey,
       listingUpdatedAt: Date
     ) => {
+      const abandoned = attempts.get(operationId);
+      const activeOther = [...attempts.values()].some((attempt) =>
+        attempt.operationId !== operationId
+        && attempt.listingId === listingId
+        && (attempt.status === 'publishing' || attempt.status === 'published'));
+      if (abandoned
+        && abandoned.status === 'abandoned'
+        && abandoned.listingId === listingId
+        && abandoned.listingUpdatedAt.getTime() === listingUpdatedAt.getTime()
+        && !activeOther) {
+        const reclaimed = { ...abandoned, status: 'publishing' as const };
+        attempts.set(operationId, reclaimed);
+        return { created: true, checkpoint: reclaimed };
+      }
       const latest = [...attempts.values()]
         .filter((attempt) => attempt.listingId === listingId)
         .sort((a, b) => b.listingUpdatedAt.getTime() - a.listingUpdatedAt.getTime())[0];
@@ -110,7 +124,34 @@ function memoryPublishAttempts(): PublishAttemptStore {
       const existing = attempts.get(operationId)!;
       attempts.set(operationId, { ...existing, status: 'finalized' });
     },
+    markAbandoned: async (operationId) => {
+      const existing = attempts.get(operationId)!;
+      attempts.set(operationId, { ...existing, status: 'abandoned' });
+    },
   };
+}
+
+function makePublishHandler(...args: ConstructorParameters<typeof PublishListingHandler>) {
+  const [adapters, events, listings, accessTokens, authenticatedHttpClient, attempts, quota] = args;
+  return new PublishListingHandler(
+    adapters,
+    events,
+    listings,
+    accessTokens,
+    authenticatedHttpClient,
+    attempts ?? memoryPublishAttempts(),
+    quota ?? {
+      consumeReservation: async () => ({
+        applicable: true,
+        marketplaceKey: 'olx' as const,
+        status: 'available' as const,
+        decision: 'allow' as const,
+        reason: 'free_unit_available',
+        requiresOverride: false,
+        consumedUnit: true,
+      }),
+    },
+  );
 }
 
 describe('SyncMarketplaceHandler', () => {
@@ -587,7 +628,7 @@ describe('PublishListingHandler', () => {
         published.push(e);
       },
     };
-    const handler = new PublishListingHandler(resolver, events);
+    const handler = makePublishHandler(resolver, events);
 
     const result = await handler.handle({
       operationId: 'op-1',
@@ -608,6 +649,82 @@ describe('PublishListingHandler', () => {
     });
   });
 
+  it('claims the listing fence before consuming quota and dispatching the provider POST', async () => {
+    const publish = jest.fn(async () => publishResult);
+    const preparePublish = jest.fn(async () => ({ execute: publish }));
+    const adapter = fakeAdapter({ publish, preparePublish });
+    const { resolver } = resolverFor(adapter);
+    const attempts = memoryPublishAttempts();
+    const begin = jest.spyOn(attempts, 'begin');
+    const consumeReservation = jest.fn(async () => ({
+      applicable: true, marketplaceKey: 'olx' as const, status: 'available' as const,
+      decision: 'allow' as const, reason: 'free_unit_available', requiresOverride: false, consumedUnit: true,
+    }));
+    const handler = makePublishHandler(
+      resolver, undefined, undefined, undefined, undefined, attempts, { consumeReservation },
+    );
+
+    await handler.handle({
+      operationId: 'op-order', marketplaceKey: 'olx', marketplaceId: 'm-1',
+      listingId: 'l-order', listingUpdatedAt: '2026-07-16T12:00:00.000Z', input,
+    });
+
+    expect(preparePublish.mock.invocationCallOrder[0]).toBeLessThan(begin.mock.invocationCallOrder[0]);
+    expect(begin.mock.invocationCallOrder[0]).toBeLessThan(consumeReservation.mock.invocationCallOrder[0]);
+    expect(consumeReservation.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder[0]);
+  });
+
+  it('does not consume quota when another operation owns the listing fence', async () => {
+    const publish = jest.fn(async () => publishResult);
+    const adapter = fakeAdapter({ publish });
+    const { resolver } = resolverFor(adapter);
+    const attempts = memoryPublishAttempts();
+    await attempts.begin('op-owner', 'l-contended', 'olx', new Date('2026-07-16T12:00:00.000Z'));
+    const consumeReservation = jest.fn();
+    const handler = makePublishHandler(
+      resolver, undefined, undefined, undefined, undefined, attempts, { consumeReservation },
+    );
+
+    await expect(handler.handle({
+      operationId: 'op-loser', marketplaceKey: 'olx', marketplaceId: 'm-1',
+      listingId: 'l-contended', listingUpdatedAt: '2026-07-16T12:00:00.000Z', input,
+    })).rejects.toThrow('ambiguous in-flight marketplace publish');
+
+    expect(consumeReservation).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('abandons and reclaims its own fence when quota becomes available on retry', async () => {
+    const publish = jest.fn(async () => publishResult);
+    const adapter = fakeAdapter({ publish });
+    const { resolver } = resolverFor(adapter);
+    const attempts = memoryPublishAttempts();
+    const markAbandoned = jest.spyOn(attempts, 'markAbandoned');
+    const consumeReservation = jest.fn()
+      .mockResolvedValueOnce({
+        applicable: true, marketplaceKey: 'olx', status: 'exhausted', decision: 'block',
+        reason: 'quota_exhausted', requiresOverride: true, consumedUnit: false,
+      })
+      .mockResolvedValueOnce({
+        applicable: true, marketplaceKey: 'olx', status: 'available', decision: 'allow',
+        reason: 'free_unit_available', requiresOverride: false, consumedUnit: true,
+      });
+    const handler = makePublishHandler(
+      resolver, undefined, undefined, undefined, undefined, attempts, { consumeReservation },
+    );
+    const job = {
+      operationId: 'op-retry', marketplaceKey: 'olx' as const, marketplaceId: 'm-1',
+      listingId: 'l-retry', listingUpdatedAt: '2026-07-16T12:00:00.000Z', input,
+    };
+
+    await expect(handler.handle(job)).rejects.toThrow('quota blocks publication');
+    await expect(handler.handle(job)).resolves.toMatchObject({ result: publishResult });
+
+    expect(markAbandoned).toHaveBeenCalledWith('op-retry');
+    expect(consumeReservation).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the marketplace account access token for real OLX publish jobs', async () => {
     const adapter = fakeAdapter({ publish: jest.fn(async () => publishResult) });
     const create = jest.fn(() => adapter);
@@ -616,7 +733,7 @@ describe('PublishListingHandler', () => {
     };
     const authenticatedClient = { request: jest.fn() };
     const clientFactory = jest.fn(() => authenticatedClient);
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       { create },
       undefined,
       undefined,
@@ -655,7 +772,7 @@ describe('PublishListingHandler', () => {
       productUpdatedAt: new Date('2026-07-15T12:00:00.000Z'),
       currentInput,
     }));
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       { create },
       undefined,
       { publishListing: jest.fn(), getPublishState },
@@ -690,7 +807,7 @@ describe('PublishListingHandler', () => {
   it('rejects a stale update snapshot instead of overwriting newer product data', async () => {
     const updateListing = jest.fn(async () => undefined);
     const adapter = fakeAdapter({ updateListing });
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       { create: jest.fn(() => adapter) },
       undefined,
       {
@@ -748,7 +865,7 @@ describe('PublishListingHandler', () => {
       markPublished: jest.fn(async () => undefined),
       markFinalized: jest.fn(async () => undefined),
     };
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       { create: jest.fn(() => adapter) },
       undefined,
       {
@@ -785,7 +902,7 @@ describe('PublishListingHandler', () => {
 
   it('rejects undeclared runtime fields in persisted update jobs', async () => {
     const create = jest.fn(() => fakeAdapter());
-    const handler = new PublishListingHandler({ create });
+    const handler = makePublishHandler({ create });
 
     await expect(
       handler.handle({
@@ -806,7 +923,7 @@ describe('PublishListingHandler', () => {
   it('works without an event publisher', async () => {
     const adapter = fakeAdapter({ publish: jest.fn(async () => publishResult) });
     const { resolver } = resolverFor(adapter);
-    const handler = new PublishListingHandler(resolver);
+    const handler = makePublishHandler(resolver);
     await expect(
       handler.handle({
         operationId: 'op-1',
@@ -828,7 +945,7 @@ describe('PublishListingHandler', () => {
       },
     };
     const publishListing = jest.fn(async () => Ok({} as unknown as Listing));
-    const handler = new PublishListingHandler(resolver, events, { publishListing });
+    const handler = makePublishHandler(resolver, events, { publishListing });
 
     const result = await handler.handle({
       operationId: 'op-1',
@@ -862,7 +979,7 @@ describe('PublishListingHandler', () => {
     const adapter = fakeAdapter({ publish: jest.fn(async () => remotePublishResult) });
     const { resolver } = resolverFor(adapter);
     const publishListing = jest.fn(async () => Ok({} as unknown as Listing));
-    const handler = new PublishListingHandler(resolver, undefined, { publishListing });
+    const handler = makePublishHandler(resolver, undefined, { publishListing });
 
     await expect(
       handler.handle({
@@ -897,7 +1014,7 @@ describe('PublishListingHandler', () => {
       .fn()
       .mockResolvedValueOnce(Err(new ServiceUnavailableError('temporary database failure')))
       .mockResolvedValue(Ok({} as unknown as Listing));
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       resolver,
       undefined,
       { publishListing },
@@ -924,7 +1041,7 @@ describe('PublishListingHandler', () => {
     const adapter = fakeAdapter({ publish: jest.fn(async () => publishResult) });
     const { resolver } = resolverFor(adapter);
     const publishListing = jest.fn(async () => Err(new NotFoundError('Listing missing')));
-    const handler = new PublishListingHandler(resolver, undefined, { publishListing });
+    const handler = makePublishHandler(resolver, undefined, { publishListing });
 
     await expect(
       handler.handle({
@@ -948,7 +1065,7 @@ describe('PublishListingHandler', () => {
     const adapter = fakeAdapter({ publish });
     const { resolver } = resolverFor(adapter);
     const attempts = memoryPublishAttempts();
-    const first = new PublishListingHandler(
+    const first = makePublishHandler(
       resolver,
       undefined,
       {
@@ -972,7 +1089,7 @@ describe('PublishListingHandler', () => {
     ).rejects.toBeInstanceOf(ListingFinalizationError);
 
     const secondFinalizer = jest.fn(async () => Ok({} as unknown as Listing));
-    const second = new PublishListingHandler(
+    const second = makePublishHandler(
       resolver,
       undefined,
       { publishListing: secondFinalizer },
@@ -1012,7 +1129,7 @@ describe('PublishListingHandler', () => {
       },
     };
     const publishListing = jest.fn(async () => Err(new NotFoundError('Listing not found: l-4')));
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       resolver,
       events,
       { publishListing },
@@ -1061,7 +1178,7 @@ describe('PublishListingHandler', () => {
     const attempts = memoryPublishAttempts();
     await attempts.begin('op-1', 'l-5', 'olx', new Date(0));
     await attempts.markPublished('op-1', publishResult);
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       resolver,
       undefined,
       {
@@ -1093,7 +1210,7 @@ describe('PublishListingHandler', () => {
     const adapter = fakeAdapter({ publish });
     const { resolver } = resolverFor(adapter);
     const publishListing = jest.fn(async () => Ok({} as unknown as Listing));
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       resolver,
       undefined,
       {
@@ -1138,7 +1255,7 @@ describe('PublishListingHandler', () => {
     await attempts.begin('op-first', 'l-race', 'olx', new Date(0));
     const adapter = fakeAdapter({ publish });
     const { resolver } = resolverFor(adapter);
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       resolver,
       undefined,
       { publishListing: jest.fn(async () => Ok({} as unknown as Listing)) },
@@ -1164,7 +1281,7 @@ describe('PublishListingHandler', () => {
     const publish = jest.fn(async () => publishResult);
     const adapter = fakeAdapter({ publish });
     const { resolver } = resolverFor(adapter);
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       resolver,
       undefined,
       undefined,
@@ -1200,7 +1317,7 @@ describe('PublishListingHandler', () => {
       .mockImplementation(persist);
     const adapter = fakeAdapter({ publish });
     const { resolver } = resolverFor(adapter);
-    const handler = new PublishListingHandler(
+    const handler = makePublishHandler(
       resolver,
       undefined,
       undefined,
@@ -1233,7 +1350,7 @@ describe('PublishListingHandler', () => {
       externalUrl: null,
       publishedAt: null,
     }));
-    const handler = new PublishListingHandler(resolver, undefined, {
+    const handler = makePublishHandler(resolver, undefined, {
       publishListing,
       getPublishState,
     });

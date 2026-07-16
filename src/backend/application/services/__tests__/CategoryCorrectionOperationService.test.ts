@@ -96,16 +96,24 @@ function setup(decision: 'allow' | 'block' | 'override' = 'allow') {
     price: money(299), status: 'live', marketplaceListingId: 'old-advert-1', marketplaceCategory: category }));
   productRepo.items.set(product.id, product); marketplaceRepo.items.set(marketplace.id, marketplace); listingRepo.items.set(listing.id, listing);
   const publish = jest.fn(async () => ({ externalListingId: 'new-advert-1', externalUrl: 'https://example/new', publishedAt: now }));
+  const preparePublish = jest.fn(async () => ({ execute: publish }));
   const delist = jest.fn(async () => undefined);
-  const adapter = { publish, delist } as unknown as IMarketplaceAdapter;
+  const adapter = { publish, preparePublish, delist } as unknown as IMarketplaceAdapter;
   const resolveAdapter = jest.fn(async () => adapter);
   const authorize = jest.fn(async (input: { override?: unknown }) => ({
     applicable: true, marketplaceKey: 'olx' as const, status: decision === 'block' ? 'unknown' as const : 'available' as const,
     decision, reason: decision === 'block' ? 'quota_unknown' : 'free_unit_available', requiresOverride: decision === 'block',
+    consumedUnit: false, subcategoryId: category.providerCategoryId,
+  }));
+  const consumeReservation = jest.fn(async () => ({
+    applicable: true, marketplaceKey: 'olx' as const, status: decision === 'block' ? 'unknown' as const : 'available' as const,
+    decision, reason: decision === 'block' ? 'quota_unknown' : 'free_unit_available', requiresOverride: decision === 'block',
     consumedUnit: decision !== 'block', subcategoryId: category.providerCategoryId,
   }));
-  const quota = { authorize, guardError: (quotaDecision: unknown) => new GuardrailViolationError('quota blocked', { quotaDecision }) } as unknown as OlxPublicationQuotaService;
+  const quota = { authorize, consumeReservation,
+    guardError: (quotaDecision: unknown) => new GuardrailViolationError('quota blocked', { quotaDecision }) } as unknown as OlxPublicationQuotaService;
   const publishAttempts = {
+    find: jest.fn(async () => null),
     begin: jest.fn(async () => ({
       created: true,
       checkpoint: { operationId: 'recreate-1', status: 'publishing' as const, externalListingId: null,
@@ -117,7 +125,8 @@ function setup(decision: 'allow' | 'block' | 'override' = 'allow') {
   };
   const service = new CategoryCorrectionOperationService(operations, new InMemoryEventRepository(), listingRepo,
     productRepo, marketplaceRepo, quota, { resolve: resolveAdapter }, activity, idFactory('audit'), publishAttempts, () => now);
-  return { service, operations, authorize, publish, delist, resolveAdapter, activity, listing, listingRepo, publishAttempts };
+  return { service, operations, authorize, consumeReservation, publish, preparePublish, delist, resolveAdapter,
+    activity, listing, listingRepo, product, marketplace, publishAttempts };
 }
 
 async function addAndApprove(setupResult: ReturnType<typeof setup>, kind: 'delist' | 'recreate', paidOverrideReason?: string) {
@@ -222,7 +231,8 @@ describe('CategoryCorrectionOperationService', () => {
     await expect(context.service.execute({ operationId: 'recreate-1', workspaceId: 'ws-1', actorId: 'user-1' }))
       .rejects.toThrow('quota blocked');
     expect(context.publish).not.toHaveBeenCalled();
-    expect(context.resolveAdapter).not.toHaveBeenCalled();
+    expect(context.resolveAdapter).toHaveBeenCalledTimes(1);
+    expect(context.preparePublish).toHaveBeenCalledTimes(1);
     expect(context.publishAttempts.markAbandoned).toHaveBeenCalledWith('recreate-1');
     expect(context.operations.items.get('recreate-1')).toMatchObject({
       state: 'approved', result: { retrySafe: true, manualReconciliationRequired: false },
@@ -262,7 +272,57 @@ describe('CategoryCorrectionOperationService', () => {
     expect(context.publish).toHaveBeenCalledTimes(1);
   });
 
-  it('never re-enters an executing operation after an interrupted effect boundary', async () => {
+  it('releases the fence on a local preflight failure before quota consumption or provider dispatch', async () => {
+    const context = setup('allow'); await addAndApprove(context, 'recreate');
+    context.preparePublish.mockRejectedValueOnce(new Error('invalid local OLX payload'));
+
+    await expect(context.service.execute({ operationId: 'recreate-1', workspaceId: 'ws-1', actorId: 'user-1' }))
+      .rejects.toThrow('invalid local OLX payload');
+
+    expect(context.publishAttempts.markAbandoned).toHaveBeenCalledWith('recreate-1');
+    expect(context.authorize).not.toHaveBeenCalled();
+    expect(context.consumeReservation).not.toHaveBeenCalled();
+    expect(context.publish).not.toHaveBeenCalled();
+  });
+
+  it('resumes an executing recreate from a published checkpoint without another provider POST', async () => {
+    const context = setup('allow'); await addAndApprove(context, 'recreate');
+    context.operations.items.get('recreate-1')!.state = 'executing';
+    const checkpoint = {
+      operationId: 'recreate-1', status: 'published' as const, externalListingId: 'new-advert-1',
+      externalUrl: 'https://example/new', publishedAt: now, remoteStatus: 'active', remoteImageUrls: [],
+    };
+    context.publishAttempts.find.mockResolvedValueOnce(checkpoint);
+    context.publishAttempts.begin.mockResolvedValueOnce({ created: false, checkpoint });
+
+    const result = await context.service.execute({ operationId: 'recreate-1', workspaceId: 'ws-1', actorId: 'user-1' });
+
+    expect(result.state).toBe('executed');
+    expect(context.publish).not.toHaveBeenCalled();
+    expect(context.listing.marketplaceListingId).toBe('new-advert-1');
+    expect(context.publishAttempts.markFinalized).toHaveBeenCalledWith('recreate-1');
+  });
+
+  it('finalizes an executing operation when local relinking already completed before the crash', async () => {
+    const context = setup('allow'); await addAndApprove(context, 'recreate');
+    const linked = context.listing.publish(
+      context.product, context.marketplace, 'new-advert-1', 'https://example/new', now, null, 'active',
+    );
+    if (linked.isErr()) throw linked.error;
+    context.operations.items.get('recreate-1')!.state = 'executing';
+    context.publishAttempts.find.mockResolvedValueOnce({
+      status: 'finalized', externalListingId: 'new-advert-1', externalUrl: 'https://example/new',
+      publishedAt: now, remoteStatus: 'active',
+    });
+
+    const result = await context.service.execute({ operationId: 'recreate-1', workspaceId: 'ws-1', actorId: 'user-1' });
+
+    expect(result).toMatchObject({ state: 'executed', result: { recoveredFromCheckpoint: true } });
+    expect(context.authorize).not.toHaveBeenCalled();
+    expect(context.publish).not.toHaveBeenCalled();
+  });
+
+  it('never re-enters an executing operation without a durable provider checkpoint', async () => {
     const context = setup(); const value = operation('recreate'); value.state = 'executing'; value.approvedAt = now;
     context.operations.items.set(value.id, value);
     await expect(context.service.execute({ operationId: value.id, workspaceId: 'ws-1', actorId: 'user-1' }))

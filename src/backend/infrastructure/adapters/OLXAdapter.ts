@@ -133,8 +133,19 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
   protected async doPublish(input: ListingPublishInput): Promise<PublishResult> {
     const categoryId = this.resolvePublishCategory(input);
     this.assertPublishDetails(categoryId);
-    const body = this.buildAdvertPayload(input, categoryId);
+    return this.sendPreparedAdvert(this.buildAdvertPayload(input, categoryId));
+  }
 
+  async preparePublish(input: ListingPublishInput): Promise<{ execute(): Promise<PublishResult> }> {
+    const categoryId = this.resolvePublishCategory(input);
+    this.assertPublishDetails(categoryId);
+    const body = this.buildAdvertPayload(input, categoryId);
+    return {
+      execute: () => this.execute('publish', () => this.sendPreparedAdvert(body), { retry: false }),
+    };
+  }
+
+  private async sendPreparedAdvert(body: Record<string, unknown>): Promise<PublishResult> {
     const res = await this.http.request<
       OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>
     >({

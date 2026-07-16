@@ -22,6 +22,10 @@ export interface PublishResult {
   remoteStatus?: string | null;
   remoteImageUrls?: string[];
 }
+export interface PreparedMarketplacePublish {
+  execute(): Promise<PublishResult>;
+}
+
 export interface SyncedListing {
   externalListingId: string;
   externalUrl?: string | null;
@@ -60,6 +64,9 @@ export interface IMarketplaceAdapter {
 
   // Publish a new listing to the marketplace.
   publish(input: ListingPublishInput): Promise<PublishResult>;
+  // Validate and prepare all local provider payload state before a durable
+  // publication fence is claimed. execute() begins the provider request.
+  preparePublish?(input: ListingPublishInput): Promise<PreparedMarketplacePublish>;
 
   // Update fields of an existing marketplace listing.
   updateListing(

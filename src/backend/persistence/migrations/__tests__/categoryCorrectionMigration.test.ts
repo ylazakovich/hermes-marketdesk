@@ -8,7 +8,7 @@ describe('OLX category correction migrations', () => {
   );
 
   it('replaces the legacy non-null recreate target constraint before imports can create unresolved operations', () => {
-    const sql = readMigration('026_category_correction_operations.sql');
+    const sql = readMigration('025_category_correction_operations.sql');
     const drop = sql.indexOf(
       'DROP CONSTRAINT IF EXISTS category_correction_operations_target_valid',
     );
@@ -26,8 +26,8 @@ describe('OLX category correction migrations', () => {
 
   it('keeps index creation standalone and validates the quota constraint in a later migration', () => {
     const addConstraint = readMigration('022_listing_marketplace_category.sql');
-    const createIndex = readMigration('025_hermes_event_idempotency_index.sql');
-    const validateConstraint = readMigration('027_validate_olx_publication_mode.sql');
+    const createIndex = readMigration('024_hermes_event_idempotency_index.sql');
+    const validateConstraint = readMigration('026_validate_olx_publication_mode.sql');
 
     expect(addConstraint).toContain('NOT VALID');
     expect(addConstraint).not.toContain('VALIDATE CONSTRAINT');
@@ -36,9 +36,29 @@ describe('OLX category correction migrations', () => {
     expect(validateConstraint).toContain('VALIDATE CONSTRAINT olx_publication_operations_mode_valid');
   });
 
+  it('serializes the full lexical run and repairs invalid concurrent-index remnants under the same session lock', () => {
+    const runner = fs.readFileSync(
+      path.join(process.cwd(), 'src/backend/persistence/migrate.ts'),
+      'utf8',
+    );
+    const lock = runner.indexOf("pg_advisory_lock(hashtext($1))");
+    const loop = runner.indexOf('for (const file of files)');
+    const invalidInspection = runner.indexOf('index.indisvalid');
+    const invalidDrop = runner.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const unlock = runner.indexOf('pg_advisory_unlock(hashtext($1))');
+
+    expect(lock).toBeGreaterThan(-1);
+    expect(loop).toBeGreaterThan(lock);
+    expect(invalidInspection).toBeGreaterThan(loop);
+    expect(invalidDrop).toBeGreaterThan(invalidInspection);
+    expect(unlock).toBeGreaterThan(invalidDrop);
+    expect(runner).toContain('await client.query(sql)');
+    expect(runner).not.toContain('await pool.query(sql)');
+  });
+
   it('preserves correction audit rows across ordinary event, listing, and marketplace retention', () => {
-    const sql = readMigration('026_category_correction_operations.sql');
-    const validation = readMigration('027_validate_olx_publication_mode.sql');
+    const sql = readMigration('025_category_correction_operations.sql');
+    const validation = readMigration('026_validate_olx_publication_mode.sql');
 
     expect(sql).toContain('recommendation_event_id UUID NOT NULL REFERENCES hermes_events(id) ON DELETE RESTRICT');
     expect(sql).toContain('listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE RESTRICT');

@@ -30,6 +30,13 @@ export interface CategoryCorrectionAdapterResolver {
 }
 
 export interface CategoryCorrectionPublishAttemptStore {
+  find(operationId: string): Promise<{
+    status: 'publishing' | 'published' | 'finalized' | 'abandoned';
+    externalListingId: string | null;
+    externalUrl: string | null;
+    publishedAt: Date | null;
+    remoteStatus: string | null;
+  } | null>;
   begin(operationId: string, listingId: string, marketplaceKey: 'olx', listingUpdatedAt: Date): Promise<{
     created: boolean;
     checkpoint: {
@@ -156,7 +163,18 @@ export class CategoryCorrectionOperationService {
     if (!input.actorId.trim()) throw new ValidationError('Authenticated actor is required');
     const current = await this.requireOperation(input.operationId, input.workspaceId);
     if (current.state === 'executed' || current.state === 'failed') return current;
-    if (current.state !== 'approved') {
+    let recoveryCheckpoint: Awaited<ReturnType<CategoryCorrectionPublishAttemptStore['find']>> = null;
+    let recoveringPublishedCheckpoint = false;
+    if (current.state === 'executing' && current.kind === 'recreate') {
+      const checkpoint = await this.publishAttempts.find(current.id);
+      recoveryCheckpoint = checkpoint;
+      recoveringPublishedCheckpoint = Boolean(
+        checkpoint
+        && ['published', 'finalized'].includes(checkpoint.status)
+        && checkpoint.externalListingId
+      );
+    }
+    if (current.state !== 'approved' && !recoveringPublishedCheckpoint) {
       throw new InvalidStateError(
         current.state === 'executing'
           ? 'Operation is already executing or requires manual reconciliation after an interrupted effect'
@@ -173,11 +191,15 @@ export class CategoryCorrectionOperationService {
         throw new InvalidStateError('Recreate cannot execute before the paired delist operation succeeds');
       }
     }
-    const operation = await this.operations.claimApproved(current.id, input.workspaceId, this.now());
-    if (!operation) {
-      const raced = await this.requireOperation(current.id, input.workspaceId);
-      if (raced.state === 'executed' || raced.state === 'failed') return raced;
-      throw new InvalidStateError('Category correction operation is already executing');
+    let operation = current;
+    if (!recoveringPublishedCheckpoint) {
+      const claimed = await this.operations.claimApproved(current.id, input.workspaceId, this.now());
+      if (!claimed) {
+        const raced = await this.requireOperation(current.id, input.workspaceId);
+        if (raced.state === 'executed' || raced.state === 'failed') return raced;
+        throw new InvalidStateError('Category correction operation is already executing');
+      }
+      operation = claimed;
     }
 
     let providerCheckpoint: Record<string, unknown> = {};
@@ -192,6 +214,29 @@ export class CategoryCorrectionOperationService {
       const marketplace = await this.marketplaces.findByIdForWorkspace(operation.marketplaceId, input.workspaceId);
       if (!marketplace) throw new NotFoundError(`Marketplace not found: ${operation.marketplaceId}`);
       if (marketplace.key !== 'olx') throw new InvalidStateError('Category correction operations are only supported for OLX');
+      if (recoveringPublishedCheckpoint
+        && recoveryCheckpoint?.externalListingId
+        && listing.status === 'live'
+        && listing.marketplaceListingId === recoveryCheckpoint.externalListingId) {
+        await this.publishAttempts.markFinalized(operation.id);
+        const recoveredResult = {
+          providerEffect: 'published',
+          externalListingId: recoveryCheckpoint.externalListingId,
+          externalUrl: recoveryCheckpoint.externalUrl,
+          publishedAt: recoveryCheckpoint.publishedAt?.toISOString() ?? null,
+          remoteStatus: recoveryCheckpoint.remoteStatus,
+          recoveredFromCheckpoint: true,
+        };
+        const executed = await this.operations.markExecuted(
+          operation.id,
+          input.workspaceId,
+          recoveredResult,
+          this.now(),
+        );
+        if (!executed) throw new InvalidStateError('Category correction operation was concurrently finalized');
+        await this.audit(executed, input.actorId, 'olx.category_correction.executed', recoveredResult);
+        return executed;
+      }
       let result: Record<string, unknown>;
       if (operation.kind === 'delist') {
         if (!listing.marketplaceListingId) throw new InvalidStateError('Delist requires an external listing id');
@@ -237,6 +282,7 @@ export class CategoryCorrectionOperationService {
         const started = await this.publishAttempts.begin(operation.id, listing.id, 'olx', listingGeneration);
         publicationReserved = started.created;
         let published: PublishResult | null = null;
+        let executePreparedPublish: (() => Promise<PublishResult>) | null = null;
         if (!started.created) {
           const checkpoint = started.checkpoint;
           if (checkpoint.operationId !== operation.id
@@ -265,9 +311,24 @@ export class CategoryCorrectionOperationService {
             || fencedListing.updatedAt.getTime() !== listingGeneration.getTime()) {
             throw new InvalidStateError('Listing changed while recreate publication was being reserved');
           }
+          const adapter = await this.adapters.resolve(marketplace);
+          const publishInput = {
+            productName: product.name,
+            description: product.description,
+            price: listing.price.amount,
+            currency: listing.price.currency,
+            category: product.category,
+            marketplaceCategory: operation.targetCategory,
+            condition: product.condition,
+            imageUrls: [...product.images],
+          };
+          const prepared = adapter.preparePublish
+            ? await adapter.preparePublish(publishInput)
+            : { execute: () => adapter.publish(publishInput) };
+          executePreparedPublish = () => prepared.execute();
         }
 
-        const quotaDecision = await this.quota.authorize({
+        let quotaDecision = await this.quota.authorize({
           operationId: operation.id,
           mode: 'recreate',
           listing,
@@ -283,19 +344,15 @@ export class CategoryCorrectionOperationService {
           throw this.quota.guardError(quotaDecision);
         }
 
+        quotaDecision = await this.quota.consumeReservation(operation.id);
+        if (quotaDecision.decision !== 'allow' && quotaDecision.decision !== 'override') {
+          throw this.quota.guardError(quotaDecision);
+        }
+
         if (started.created) {
-          const adapter = await this.adapters.resolve(marketplace);
+          if (!executePreparedPublish) throw new InvalidStateError('Recreate publish was not prepared');
           providerCallStarted = true;
-          published = await adapter.publish({
-            productName: product.name,
-            description: product.description,
-            price: listing.price.amount,
-            currency: listing.price.currency,
-            category: product.category,
-            marketplaceCategory: operation.targetCategory,
-            condition: product.condition,
-            imageUrls: [...product.images],
-          });
+          published = await executePreparedPublish();
           await this.publishAttempts.markPublished(operation.id, published);
           publicationReserved = false;
         }

@@ -257,6 +257,25 @@ export class OlxPublicationQuotaService {
     return decision;
   }
 
+  async consumeReservation(operationId: string): Promise<OlxQuotaDecisionView> {
+    const authorization = await this.quotaRepo.consume(operationId, this.now());
+    const quota = authorization.quota;
+    return {
+      applicable: true,
+      marketplaceKey: 'olx',
+      ...(quota ? {
+        marketplaceAccountId: quota.marketplaceAccountId,
+        subcategoryId: quota.subcategoryId,
+        quota: this.presentQuota(quota),
+      } : {}),
+      status: authorization.status,
+      decision: authorization.decision,
+      reason: authorization.reason,
+      requiresOverride: authorization.decision === 'block',
+      consumedUnit: authorization.consumedUnit,
+    };
+  }
+
   guardError(decision: OlxQuotaDecisionView): GuardrailViolationError {
     return new GuardrailViolationError(
       `OLX ${decision.status} quota blocks publication for subcategory ${decision.subcategoryId ?? 'unknown'}; ` +
