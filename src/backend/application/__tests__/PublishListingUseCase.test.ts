@@ -33,6 +33,7 @@ function setup(
     productDescription?: string;
     category?: MarketplaceCategoryMetadata | null;
     listingStatus?: ListingStatus;
+    marketplaceListingId?: string;
   } = {},
 ) {
   const productRepo = new InMemoryProductRepository();
@@ -107,6 +108,7 @@ function setup(
       marketplaceId: 'mp-1',
       price: money(100),
       status: options.listingStatus,
+      marketplaceListingId: options.marketplaceListingId,
       marketplaceCategory: options.category === undefined ? exactCategory : options.category,
     })
   );
@@ -240,6 +242,21 @@ describe('PublishListingUseCase', () => {
       expect(publishQueue.jobs[0].data.mode).toBe('relist');
     },
   );
+
+  it('rejects relisting an error listing that still references an external advert', async () => {
+    const { useCase, publishQueue, quotaService } = setup(true, 'legacy', true, {
+      listingStatus: 'error',
+      marketplaceListingId: 'olx-existing-1',
+    });
+    const authorize = jest.spyOn(quotaService, 'authorize');
+
+    const result = await useCase.execute({ listingId: 'lst-1', mode: 'relist' });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error).toBeInstanceOf(InvalidStateError);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(publishQueue.jobs).toHaveLength(0);
+  });
 
   it('fails closed without enqueueing when the OLX quota service is unavailable', async () => {
     const { useCase, publishQueue } = setup(true, 'legacy', false);

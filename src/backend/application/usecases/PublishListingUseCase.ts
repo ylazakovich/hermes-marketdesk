@@ -75,9 +75,11 @@ export class PublishListingUseCase {
     }
 
     const mode = input.mode ?? 'publish';
-    if (mode === 'relist' && listing.status !== 'expired' && listing.status !== 'error') {
+    const relistable = listing.status === 'expired'
+      || (listing.status === 'error' && !listing.marketplaceListingId);
+    if (mode === 'relist' && !relistable) {
       return Err(new InvalidStateError(
-        `Cannot relist a listing in ${listing.status} status; only expired or error listings may be relisted`,
+        `Cannot relist a listing in ${listing.status} status while it may still reference an existing marketplace advert`,
       ));
     }
 
