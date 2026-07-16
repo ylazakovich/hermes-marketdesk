@@ -13,8 +13,9 @@ import { InMemoryActivityLogRepository, RecordingJobQueue, idFactory } from '../
 import type { PublishListingJob } from '../ports/IJobQueue';
 import type { MarketplaceAccountRepository } from '../services/MarketplaceOAuthService';
 import type { OlxPublicationQuotaService } from '../services/OlxPublicationQuotaService';
-import { GuardrailViolationError } from '../../domain/shared/DomainError';
+import { GuardrailViolationError, InvalidStateError } from '../../domain/shared/DomainError';
 import type { MarketplaceCategoryMetadata } from '../../../shared/types';
+import type { ListingStatus } from '../../domain/valueObjects/ListingStatus';
 
 const exactCategory: MarketplaceCategoryMetadata = {
   providerCategoryId: '4000', name: 'Lamps', path: ['Home', 'Lighting', 'Lamps'],
@@ -27,7 +28,13 @@ function setup(
   connected: boolean,
   oauthAccount: 'connected' | 'missing' | 'legacy' = 'legacy',
   withQuotaService = true,
-  options: { productName?: string; productDescription?: string; category?: MarketplaceCategoryMetadata | null } = {},
+  options: {
+    productName?: string;
+    productDescription?: string;
+    category?: MarketplaceCategoryMetadata | null;
+    listingStatus?: ListingStatus;
+    marketplaceListingId?: string;
+  } = {},
 ) {
   const productRepo = new InMemoryProductRepository();
   const listingRepo = new InMemoryListingRepository();
@@ -100,6 +107,8 @@ function setup(
       productId: 'prod-1',
       marketplaceId: 'mp-1',
       price: money(100),
+      status: options.listingStatus,
+      marketplaceListingId: options.marketplaceListingId,
       marketplaceCategory: options.category === undefined ? exactCategory : options.category,
     })
   );
@@ -178,6 +187,77 @@ describe('PublishListingUseCase', () => {
     expect(publishQueue.jobs).toHaveLength(0);
   });
 
+  it('forwards an operation-scoped override and queues exactly one publication', async () => {
+    const { useCase, publishQueue, quotaService } = setup(true);
+    const authorize = jest.spyOn(quotaService, 'authorize').mockResolvedValueOnce({
+      applicable: true, marketplaceKey: 'olx', status: 'unknown', decision: 'override',
+      reason: 'operator_override:Accept possible OLX publication fee', requiresOverride: false,
+    });
+
+    const result = await useCase.execute({
+      listingId: 'lst-1',
+      actorId: 'user-1',
+      quotaOverride: { confirmed: true, reason: 'Accept possible OLX publication fee' },
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: 'rec-1',
+      actorId: 'user-1',
+      override: { confirmed: true, reason: 'Accept possible OLX publication fee' },
+    }));
+    expect(publishQueue.jobs).toHaveLength(1);
+  });
+
+  it.each(['draft', 'live'] as const)(
+    'rejects relisting a %s listing before quota authorization or enqueueing',
+    async (listingStatus) => {
+      const { useCase, publishQueue, quotaService } = setup(true, 'legacy', true, {
+        listingStatus,
+      });
+      const authorize = jest.spyOn(quotaService, 'authorize');
+
+      const result = await useCase.execute({
+        listingId: 'lst-1',
+        mode: 'relist',
+        quotaOverride: { confirmed: true, reason: 'Accept possible OLX publication fee' },
+      });
+
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) expect(result.error).toBeInstanceOf(InvalidStateError);
+      expect(authorize).not.toHaveBeenCalled();
+      expect(publishQueue.jobs).toHaveLength(0);
+    },
+  );
+
+  it.each(['expired', 'error'] as const)(
+    'allows relisting a recoverable %s listing',
+    async (listingStatus) => {
+      const { useCase, publishQueue } = setup(true, 'legacy', true, { listingStatus });
+
+      const result = await useCase.execute({ listingId: 'lst-1', mode: 'relist' });
+
+      expect(result.isOk()).toBe(true);
+      expect(publishQueue.jobs).toHaveLength(1);
+      expect(publishQueue.jobs[0].data.mode).toBe('relist');
+    },
+  );
+
+  it('rejects relisting an error listing that still references an external advert', async () => {
+    const { useCase, publishQueue, quotaService } = setup(true, 'legacy', true, {
+      listingStatus: 'error',
+      marketplaceListingId: 'olx-existing-1',
+    });
+    const authorize = jest.spyOn(quotaService, 'authorize');
+
+    const result = await useCase.execute({ listingId: 'lst-1', mode: 'relist' });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error).toBeInstanceOf(InvalidStateError);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(publishQueue.jobs).toHaveLength(0);
+  });
+
   it('fails closed without enqueueing when the OLX quota service is unavailable', async () => {
     const { useCase, publishQueue } = setup(true, 'legacy', false);
 
@@ -212,7 +292,10 @@ describe('PublishListingUseCase', () => {
     });
     const authorize = jest.spyOn(quotaService, 'authorize');
 
-    const result = await useCase.execute({ listingId: 'lst-1' });
+    const result = await useCase.execute({
+      listingId: 'lst-1',
+      quotaOverride: { confirmed: true, reason: 'Accept possible OLX publication fee' },
+    });
 
     expect(result.isErr()).toBe(true);
     expect(authorize).not.toHaveBeenCalled();
