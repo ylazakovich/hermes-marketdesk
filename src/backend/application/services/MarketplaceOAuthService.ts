@@ -24,18 +24,22 @@ export interface MarketplaceAccountRecord {
   credentials: Record<string, unknown>;
   status: MarketplaceAccountStatus;
   scopes: string[];
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
+export type MarketplaceAccountWrite = Omit<
+  MarketplaceAccountRecord,
+  'revision' | 'createdAt' | 'updatedAt'
+>;
+
 export interface MarketplaceAccountRepository {
   findByMarketplaceId(marketplaceId: string): Promise<MarketplaceAccountRecord | null>;
-  upsert(
-    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>
-  ): Promise<MarketplaceAccountRecord>;
+  upsert(account: MarketplaceAccountWrite): Promise<MarketplaceAccountRecord>;
   updateConnectedIfUnchanged(
-    account: Omit<MarketplaceAccountRecord, 'createdAt' | 'updatedAt'>,
-    expectedUpdatedAt: Date
+    account: MarketplaceAccountWrite,
+    expectedRevision: number
   ): Promise<MarketplaceAccountRecord | null>;
 }
 
@@ -469,7 +473,7 @@ export class MarketplaceOAuthService {
         status: 'connected',
         scopes: refreshed.scopes,
       },
-      account.updatedAt
+      account.revision
     );
     if (!saved) {
       throw new InvalidStateError('OLX account changed while its access token was refreshing');
