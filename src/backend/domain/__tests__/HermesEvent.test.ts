@@ -44,30 +44,74 @@ describe('HermesEvent creation invariants', () => {
   });
 });
 
-describe('HermesEvent approval rules', () => {
-  it('approves a pending event and transitions to applied', () => {
+describe('HermesEvent lifecycle transitions', () => {
+  it('moves human approval through applying to applied', () => {
     const event = unwrap(HermesEvent.create(priceEvent(100, 95)));
     expect(event.approve().isOk()).toBe(true);
+    expect(event.status).toBe('applying');
+    expect(event.resolvedAt).toBeNull();
+    expect(event.markApplied().isOk()).toBe(true);
     expect(event.status).toBe('applied');
     expect(event.resolvedAt).not.toBeNull();
   });
 
-  it('cannot approve twice', () => {
+  it('records applying failures as terminal failed events', () => {
     const event = unwrap(HermesEvent.create(priceEvent(100, 95)));
     unwrap(event.approve());
+    expect(event.markFailed().isOk()).toBe(true);
+    expect(event.status).toBe('failed');
+    expect(event.markApplied().isErr()).toBe(true);
+  });
+
+  it('moves automatic decisions through applying', () => {
+    const event = unwrap(
+      HermesEvent.create(priceEvent(100, 95, { status: 'pending_decision' })),
+    );
+    expect(event.beginAutoApply().isOk()).toBe(true);
+    expect(event.status).toBe('applying');
+  });
+
+  it('can route a guarded automatic decision to human review', () => {
+    const event = unwrap(
+      HermesEvent.create(priceEvent(100, 70, { status: 'pending_decision' })),
+    );
+    expect(event.requestReview().isOk()).toBe(true);
+    expect(event.status).toBe('pending_review');
+  });
+
+  it('dismisses pending review and pending decision events only', () => {
+    const review = unwrap(HermesEvent.create(priceEvent(100, 95)));
+    expect(review.dismiss().isOk()).toBe(true);
+    expect(review.status).toBe('dismissed');
+
+    const decision = unwrap(
+      HermesEvent.create(priceEvent(100, 95, { status: 'pending_decision' })),
+    );
+    expect(decision.dismiss().isOk()).toBe(true);
+    expect(decision.status).toBe('dismissed');
+    expect(decision.approve().isErr()).toBe(true);
+  });
+
+  it('defines undo as applied -> applying -> reverted', () => {
+    const event = unwrap(HermesEvent.create(priceEvent(100, 95)));
+    unwrap(event.approve());
+    unwrap(event.markApplied());
+    expect(event.beginRevert().isOk()).toBe(true);
+    expect(event.status).toBe('applying');
+    expect(event.markReverted().isOk()).toBe(true);
+    expect(event.status).toBe('reverted');
+  });
+
+  it('rejects invalid terminal-state transitions', () => {
+    const event = unwrap(
+      HermesEvent.create(
+        priceEvent(100, 95, { status: 'failed', resolvedAt: new Date() }),
+      ),
+    );
     expect(event.approve().isErr()).toBe(true);
-  });
-
-  it('dismisses a pending event', () => {
-    const event = unwrap(HermesEvent.create(priceEvent(100, 95)));
-    expect(event.dismiss().isOk()).toBe(true);
-    expect(event.status).toBe('dismissed');
-  });
-
-  it('cannot dismiss an applied event', () => {
-    const event = unwrap(HermesEvent.create(priceEvent(100, 95)));
-    unwrap(event.approve());
     expect(event.dismiss().isErr()).toBe(true);
+    expect(event.beginRevert().isErr()).toBe(true);
+    expect(event.markApplied().isErr()).toBe(true);
   });
 });
 

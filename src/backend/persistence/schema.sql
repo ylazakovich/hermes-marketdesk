@@ -267,13 +267,19 @@ CREATE TABLE IF NOT EXISTS hermes_events (
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   type VARCHAR(100) NOT NULL,
   severity VARCHAR(50) NOT NULL,
-  status VARCHAR(50) NOT NULL,
+  status VARCHAR(50) NOT NULL CONSTRAINT hermes_events_status_check CHECK (status IN (
+    'pending_decision', 'pending_review', 'applying', 'applied',
+    'dismissed', 'failed', 'reverted'
+  )),
   title VARCHAR(255) NOT NULL,
   detail TEXT,
   proposed_change JSONB,
   autonomy_decision VARCHAR(50),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  resolved_at TIMESTAMP
+  resolved_at TIMESTAMP,
+  CONSTRAINT hermes_events_resolution_check CHECK (
+    (status IN ('applied', 'dismissed', 'failed', 'reverted')) = (resolved_at IS NOT NULL)
+  )
 );
 
 CREATE INDEX IF NOT EXISTS idx_hermes_events_workspace ON hermes_events(workspace_id);

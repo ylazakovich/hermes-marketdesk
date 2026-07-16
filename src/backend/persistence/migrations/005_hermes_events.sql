@@ -1,7 +1,7 @@
 -- Migration 005: Hermes Events (the core AI event log)
 -- Authoritative source: ARCHITECTURE.md §7
 -- severity          : info | success | warning | critical
--- status            : pending_review | applied | dismissed
+-- status            : initial lifecycle values; expanded and constrained by 020_hermes_event_lifecycle.sql
 -- autonomy_decision : auto_apply | pending_review
 -- proposed_change   : app-layer typed JSONB payload (e.g. {field:'price', from:100, to:90})
 

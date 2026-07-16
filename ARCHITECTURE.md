@@ -926,7 +926,20 @@ export class MarketplaceSyncService {
 
 ## 10. Hermes AI Architecture
 
-> **Implemented lifecycle:** persistence, API and domain currently use `pending_review`, `applied` and `dismissed`. The larger seven-state lifecycle is an accepted target tracked by issue #178, not current runtime behavior. Any transition must update database, API, domain and UI together.
+> **Canonical persisted/API lifecycle:** `pending_decision`, `pending_review`, `applying`, `applied`, `dismissed`, `failed`, `reverted`. Product-facing labels are presentation mappings and never additional persisted states.
+
+| From | Action | To | Invalid use |
+| --- | --- | --- | --- |
+| `pending_decision` | begin automatic execution | `applying` | any terminal or already-running state |
+| `pending_decision` | guardrail requires a person | `pending_review` | any state except `pending_decision` |
+| `pending_decision` / `pending_review` | dismiss | `dismissed` | applying or terminal states |
+| `pending_review` | approve | `applying` | any state except `pending_review` |
+| `applying` | side effect succeeds | `applied` | any state except `applying` |
+| `applying` | side effect fails | `failed` | any state except `applying` |
+| `applied` | begin undo | `applying` | any state except `applied` |
+| `applying` | undo succeeds | `reverted` | any state except `applying` |
+
+`resolved_at` is null for pending/running states and set for terminal states. Approval persists `applying` before executing side effects; a failed application is persisted as `failed`. Undo requires a dedicated executor to perform the inverse operation before `markReverted`; the lifecycle representation does not claim that every event is currently undoable.
 
 ### Agent State Machine
 

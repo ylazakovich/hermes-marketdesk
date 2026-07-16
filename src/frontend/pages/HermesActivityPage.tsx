@@ -19,9 +19,13 @@ import { HermesStatusBadge, HermesSeverityBadge } from '../components/common/Bad
 import { HermesEventCard } from '../components/hermes/index.js';
 
 const STATUS_LABELS: Record<HermesEventStatus, string> = {
+  pending_decision: 'Decision pending',
   pending_review: 'Pending review',
+  applying: 'Applying',
   applied: 'Applied',
   dismissed: 'Dismissed',
+  failed: 'Action failed',
+  reverted: 'Reverted',
 };
 
 const SEVERITY_LABELS: Record<HermesSeverity, string> = {
@@ -58,14 +62,17 @@ const HermesActivityPage: React.FC = () => {
   const [runHermes, { isLoading: running }] = useRunHermes();
 
   const events: HermesEvent[] = data?.items ?? [];
-  const isCompletedEvent = (event: HermesEvent): boolean => event.status === 'applied' || event.status === 'dismissed';
+  const isCompletedEvent = (event: HermesEvent): boolean =>
+    event.status === 'applied' || event.status === 'dismissed' || event.status === 'reverted';
+  const isPendingSuggestion = (event: HermesEvent): boolean =>
+    event.status === 'pending_decision' || event.status === 'pending_review';
   const visibleEvents = useMemo(() => {
     if (activityTab === 'completed') return events.filter(isCompletedEvent);
     if (activityTab === 'alerts') return events.filter((event) => event.severity === 'critical' || event.severity === 'warning');
-    if (activityTab === 'suggestions') return events.filter((event) => event.status === 'pending_review');
+    if (activityTab === 'suggestions') return events.filter(isPendingSuggestion);
     return events;
   }, [activityTab, events]);
-  const pendingCount = events.filter((event) => event.status === 'pending_review').length;
+  const pendingCount = events.filter(isPendingSuggestion).length;
   const completedCount = events.filter(isCompletedEvent).length;
   const listingSuggestionCount = events.filter((event) => event.type === 'create_listing').length;
   const estimatedReviewMinutes = events.length === 0 ? 0 : events.length * 6;

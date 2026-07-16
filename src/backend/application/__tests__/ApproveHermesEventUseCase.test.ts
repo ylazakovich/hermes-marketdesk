@@ -373,7 +373,8 @@ describe('ApproveHermesEventUseCase', () => {
         proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
       })
     );
-    unwrap(event.approve()); // move to applied
+    unwrap(event.approve());
+    unwrap(event.markApplied()); // move to applied
     await eventRepo.save(event);
 
     const result = await useCase.execute({ eventId: 'evt-2', workspaceId: 'ws-1' });
@@ -409,6 +410,7 @@ describe('ApproveHermesEventUseCase', () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.code).toBe('INVALID_STATE');
     expect(publishQueue.jobs).toHaveLength(0);
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
   });
 
   it('returns a structured guard error when the OLX quota guard is unavailable', async () => {
