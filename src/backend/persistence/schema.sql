@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS olx_publication_operations (
   override_reason TEXT,
   actor_id VARCHAR(100),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT olx_publication_operations_mode_valid CHECK (mode IN ('publish', 'relist')),
+  CONSTRAINT olx_publication_operations_mode_valid CHECK (mode IN ('publish', 'relist', 'recreate')),
   CONSTRAINT olx_publication_operations_decision_valid CHECK (decision IN ('allow', 'block', 'override')),
   CONSTRAINT olx_publication_operations_status_valid
     CHECK (quota_status IN ('available', 'exhausted', 'stale', 'unverified', 'unknown')),
@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS listings (
   price DECIMAL(10, 2) NOT NULL,
   status VARCHAR(50) DEFAULT 'draft',
   remote_status VARCHAR(100),
+  marketplace_category JSONB,
   views INT DEFAULT 0,
   watchers INT DEFAULT 0,
   messages INT DEFAULT 0,
@@ -279,6 +280,7 @@ CREATE TABLE IF NOT EXISTS hermes_events (
   autonomy_decision VARCHAR(50),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   resolved_at TIMESTAMP,
+  idempotency_key VARCHAR(500),
   CONSTRAINT hermes_events_resolution_check CHECK (
     (status IN ('applied', 'dismissed', 'failed', 'reverted')) = (resolved_at IS NOT NULL)
   )
@@ -288,6 +290,46 @@ CREATE INDEX IF NOT EXISTS idx_hermes_events_workspace ON hermes_events(workspac
 CREATE INDEX IF NOT EXISTS idx_hermes_events_product ON hermes_events(product_id);
 CREATE INDEX IF NOT EXISTS idx_hermes_events_status ON hermes_events(status);
 CREATE INDEX IF NOT EXISTS idx_hermes_events_created ON hermes_events(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hermes_events_workspace_idempotency
+  ON hermes_events(workspace_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS category_correction_operations (
+  id UUID PRIMARY KEY,
+  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  recommendation_event_id UUID NOT NULL REFERENCES hermes_events(id) ON DELETE RESTRICT,
+  listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE RESTRICT,
+  marketplace_id UUID NOT NULL REFERENCES marketplaces(id) ON DELETE RESTRICT,
+  kind VARCHAR(20) NOT NULL,
+  state VARCHAR(20) NOT NULL DEFAULT 'requested',
+  target_category JSONB,
+  paid_override_reason TEXT,
+  requested_by VARCHAR(100),
+  approved_by VARCHAR(100),
+  result JSONB,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  approved_at TIMESTAMPTZ,
+  executed_at TIMESTAMPTZ,
+  failed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT category_correction_operations_kind_valid CHECK (kind IN ('delist', 'recreate')),
+  CONSTRAINT category_correction_operations_state_valid
+    CHECK (state IN ('requested', 'approved', 'executing', 'executed', 'failed')),
+  CONSTRAINT category_correction_operations_target_valid CHECK (
+    (kind = 'delist' AND target_category IS NULL AND paid_override_reason IS NULL)
+    OR (kind = 'recreate' AND (state = 'requested' OR target_category IS NOT NULL))
+  ),
+  CONSTRAINT category_correction_operations_lifecycle_valid CHECK (
+    (state = 'requested' AND approved_at IS NULL AND executed_at IS NULL AND failed_at IS NULL)
+    OR (state IN ('approved', 'executing') AND approved_at IS NOT NULL AND executed_at IS NULL AND failed_at IS NULL)
+    OR (state = 'executed' AND approved_at IS NOT NULL AND executed_at IS NOT NULL AND failed_at IS NULL)
+    OR (state = 'failed' AND approved_at IS NOT NULL AND executed_at IS NULL AND failed_at IS NOT NULL)
+  ),
+  CONSTRAINT uq_category_correction_recommendation_kind UNIQUE (recommendation_event_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_category_correction_operations_workspace
+  ON category_correction_operations(workspace_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_category_correction_operations_listing
+  ON category_correction_operations(listing_id, requested_at DESC);
 
 -- ============================================================================
 -- Activity Log, Analytics Events, API Keys

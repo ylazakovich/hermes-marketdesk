@@ -21,16 +21,13 @@ const quotaRow = (consumed: number) => ({
 });
 
 describe('OlxPublicationQuotaRepository', () => {
-  it('locks the operation and quota row before atomically consuming a free unit', async () => {
+  it('reserves a free unit without consuming it before the publication fence', async () => {
     const statements: string[] = [];
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       statements.push(sql);
       if (sql.includes('FROM olx_publication_operations')) return { rows: [], rowCount: 0 };
       if (sql.includes('FROM olx_publication_quotas') && sql.includes('FOR UPDATE')) {
         return { rows: [quotaRow(0)], rowCount: 1 };
-      }
-      if (sql.includes('UPDATE olx_publication_quotas')) {
-        return { rows: [quotaRow(1)], rowCount: 1 };
       }
       return { rows: [], rowCount: 1 };
     });
@@ -39,35 +36,51 @@ describe('OlxPublicationQuotaRepository', () => {
     const repository = new OlxPublicationQuotaRepository(pool);
 
     const result = await repository.authorize({
-      operationId: 'operation-1',
-      workspaceId: 'ws-1',
-      marketplaceId: 'mp-1',
-      marketplaceAccountId: 'account-1',
-      subcategoryId: '2000',
-      at: new Date('2026-07-15T12:00:00.000Z'),
-      listingId: 'listing-1',
-      mode: 'publish',
+      operationId: 'operation-1', workspaceId: 'ws-1', marketplaceId: 'mp-1',
+      marketplaceAccountId: 'account-1', subcategoryId: '2000',
+      at: new Date('2026-07-15T12:00:00.000Z'), listingId: 'listing-1', mode: 'publish',
       overrideConfirmed: true,
-      overrideReason: 'Operator pre-confirmed paid risk, but a free unit is available',
-      actorId: 'user-1',
+      overrideReason: 'Operator pre-confirmed paid risk, but a free unit is available', actorId: 'user-1',
     });
 
     const operationInsert = query.mock.calls.find(([sql]) =>
       String(sql).includes('INSERT INTO olx_publication_operations'),
     );
-
     expect(result).toMatchObject({
-      decision: 'allow',
-      status: 'available',
-      consumedUnit: true,
-      quota: { consumed: 1, remaining: 0 },
+      decision: 'allow', status: 'available', consumedUnit: false,
+      quota: { consumed: 0, remaining: 1 },
     });
     expect(operationInsert?.[1]?.[12]).toBeNull();
     expect(statements.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
     expect(statements.some((sql) => sql.includes('FOR UPDATE'))).toBe(true);
-    expect(statements.some((sql) => sql.includes('SET consumed = consumed + 1'))).toBe(true);
+    expect(statements.some((sql) => sql.includes('SET consumed = consumed + 1'))).toBe(false);
     expect(statements.at(-1)).toBe('COMMIT');
     expect(release).toHaveBeenCalled();
+  });
+
+  it('atomically consumes a reservation only after the worker owns the publication fence', async () => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.includes('FROM olx_publication_operations')) return { rows: [{
+        operation_id: 'operation-1', decision: 'allow', quota_status: 'available',
+        reason: 'free_unit_available', consumed_unit: false, quota_id: 'quota-1',
+      }], rowCount: 1 };
+      if (sql.includes('FROM olx_publication_quotas') && sql.includes('FOR UPDATE')) {
+        return { rows: [quotaRow(0)], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE olx_publication_quotas')) {
+        return { rows: [quotaRow(1)], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const pool = { connect: async () => ({ query, release: jest.fn() }) } as unknown as Pool;
+
+    const result = await new OlxPublicationQuotaRepository(pool).consume(
+      'operation-1', new Date('2026-07-15T12:00:00.000Z'),
+    );
+
+    expect(result).toMatchObject({ decision: 'allow', consumedUnit: true, quota: { consumed: 1 } });
+    expect(query.mock.calls.some(([sql]) => sql.includes('SET consumed = consumed + 1'))).toBe(true);
+    expect(query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
   });
 
   it('uses a monotonic upsert so an in-cycle operator update cannot restore consumed units', async () => {
@@ -131,7 +144,7 @@ describe('OlxPublicationQuotaRepository', () => {
     expect(insert?.[1]?.[11]).toBe(false);
   });
 
-  it('persists an explicit override and consumes the associated quota row', async () => {
+  it('persists an explicit override as an unconsumed reservation', async () => {
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM olx_publication_operations')) return { rows: [], rowCount: 0 };
       if (sql.includes('FOR UPDATE')) return { rows: [quotaRow(1)], rowCount: 1 };
@@ -148,18 +161,21 @@ describe('OlxPublicationQuotaRepository', () => {
     });
 
     const insert = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO olx_publication_operations'));
-    expect(result).toMatchObject({ decision: 'override', consumedUnit: true, replayed: false });
+    expect(result).toMatchObject({ decision: 'override', consumedUnit: false, replayed: false });
     expect(insert?.[1]?.[8]).toBe('override');
     expect(insert?.[1]?.[12]).toBe('Operator accepts paid publication');
   });
 
-  it('short-circuits a replay before locking or consuming quota', async () => {
+  it('re-evaluates a previous non-consuming block instead of replaying it forever', async () => {
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM olx_publication_operations')) {
         return { rows: [{
           operation_id: 'operation-replay', decision: 'block', quota_status: 'exhausted',
-          reason: 'quota_exhausted', consumed_unit: false, quota_id: null,
+          reason: 'quota_exhausted', consumed_unit: false, quota_id: 'quota-1',
         }], rowCount: 1 };
+      }
+      if (sql.includes('FROM olx_publication_quotas') && sql.includes('FOR UPDATE')) {
+        return { rows: [quotaRow(0)], rowCount: 1 };
       }
       return { rows: [], rowCount: 1 };
     });
@@ -172,9 +188,9 @@ describe('OlxPublicationQuotaRepository', () => {
       overrideConfirmed: false,
     });
 
-    expect(result).toMatchObject({ decision: 'block', consumedUnit: false, replayed: true });
-    expect(query.mock.calls.some(([sql]) => sql.includes('FOR UPDATE'))).toBe(false);
-    expect(query.mock.calls.some(([sql]) => sql.includes('INSERT INTO olx_publication_operations'))).toBe(false);
+    expect(result).toMatchObject({ decision: 'allow', consumedUnit: false, replayed: false });
+    expect(query.mock.calls.some(([sql]) => sql.includes('FOR UPDATE'))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => sql.includes('ON CONFLICT (operation_id) DO UPDATE'))).toBe(true);
     expect(query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
   });
 });

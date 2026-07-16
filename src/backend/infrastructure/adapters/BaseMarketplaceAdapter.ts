@@ -97,6 +97,10 @@ export abstract class BaseMarketplaceAdapter implements IMarketplaceAdapter {
     return this.execute('publish', () => this.doPublish(input), { retry: false });
   }
 
+  async preparePublish(input: ListingPublishInput): Promise<{ execute(): Promise<PublishResult> }> {
+    return { execute: () => this.publish(input) };
+  }
+
   updateListing(
     externalListingId: string,
     changes: Partial<Pick<ListingPublishInput, 'price' | 'description' | 'productName'>>,

@@ -20,6 +20,8 @@ export interface HttpResponse<T = unknown> {
 }
 
 export interface MarketplaceHttpClient {
+  /** Synchronous local policy gate. It must not perform network I/O. */
+  assertRequestAllowed?(config: HttpRequestConfig): void;
   request<T = unknown>(config: HttpRequestConfig): Promise<HttpResponse<T>>;
 }
 

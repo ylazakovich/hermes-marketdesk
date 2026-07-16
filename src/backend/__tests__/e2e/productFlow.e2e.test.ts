@@ -58,7 +58,11 @@ import { ListingApplicationService } from '../../application/services/ListingApp
 import { HermesApplicationService } from '../../application/services/HermesApplicationService';
 import { AnalyticsApplicationService } from '../../application/services/AnalyticsApplicationService';
 
-import { PublishListingHandler } from '../../infrastructure/jobQueue/JobHandlers/PublishListingHandler';
+import {
+  PublishListingHandler,
+  type PublishAttemptCheckpoint,
+  type PublishAttemptStore,
+} from '../../infrastructure/jobQueue/JobHandlers/PublishListingHandler';
 import type { MarketplaceAdapterResolver } from '../../infrastructure/jobQueue/JobHandlers/SyncMarketplaceHandler';
 import type {
   IMarketplaceAdapter,
@@ -181,10 +185,52 @@ async function buildE2E(): Promise<E2EContext> {
   const adapterResolver: MarketplaceAdapterResolver = {
     create: () => fakeAdapter('olx-external-1'),
   };
+  const checkpoints = new Map<string, PublishAttemptCheckpoint>();
+  const publishAttempts: PublishAttemptStore = {
+    find: async (operationId) => checkpoints.get(operationId) ?? null,
+    begin: async (operationId, listingId, marketplaceKey, listingUpdatedAt) => {
+      const checkpoint: PublishAttemptCheckpoint = {
+        operationId, listingId, marketplaceKey, listingUpdatedAt, status: 'publishing',
+        externalListingId: null, externalUrl: null, publishedAt: null,
+        remoteStatus: null, remoteImageUrls: [],
+      };
+      checkpoints.set(operationId, checkpoint);
+      return { created: true, checkpoint };
+    },
+    markPublished: async (operationId, result) => {
+      const checkpoint = checkpoints.get(operationId)!;
+      checkpoints.set(operationId, {
+        ...checkpoint,
+        status: 'published',
+        externalListingId: result.externalListingId,
+        externalUrl: result.externalUrl ?? null,
+        publishedAt: result.publishedAt,
+        remoteStatus: result.remoteStatus ?? null,
+        remoteImageUrls: result.remoteImageUrls ?? [],
+      });
+    },
+    markFinalized: async (operationId) => {
+      const checkpoint = checkpoints.get(operationId)!;
+      checkpoints.set(operationId, { ...checkpoint, status: 'finalized' });
+    },
+    markAbandoned: async (operationId) => {
+      const checkpoint = checkpoints.get(operationId)!;
+      checkpoints.set(operationId, { ...checkpoint, status: 'abandoned' });
+    },
+  };
   const publishHandler = new PublishListingHandler(
     adapterResolver,
     events,
     listingDomainService,
+    undefined,
+    undefined,
+    publishAttempts,
+    {
+      consumeReservation: async () => ({
+        applicable: true, marketplaceKey: 'olx', status: 'available', decision: 'allow',
+        reason: 'free_unit_available', requiresOverride: false, consumedUnit: true,
+      }),
+    },
   );
   const publishQueue = new SyncPublishQueue(publishHandler);
   const syncQueue = new RecordingJobQueue();
@@ -292,6 +338,16 @@ function seedDraftListing(
       marketplaceId: 'm-1',
       price: money(25, 'PLN'),
       status: 'draft',
+      marketplaceCategory: {
+        providerCategoryId: 'widget-leaf-1',
+        name: 'Widgets',
+        path: ['Electronics', 'Other electronics', 'Widgets'],
+        source: 'provider_taxonomy',
+        confidence: 1,
+        isLeaf: true,
+        taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+        taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
+      },
     }),
   );
   listingRepo.items.set(listing.id, listing);

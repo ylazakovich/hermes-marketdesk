@@ -1,4 +1,5 @@
 import { OLXAdapter, type OlxAdapterConfig } from '../OLXAdapter';
+import { FetchMarketplaceHttpClient } from '../FetchMarketplaceHttpClient';
 import {
   MarketplaceHttpClient,
   HttpRequestConfig,
@@ -18,6 +19,12 @@ const publishInput: ListingPublishInput = {
   price: 349.99,
   currency: 'PLN',
   category: 'electronics',
+  marketplaceCategory: {
+    providerCategoryId: '99', name: 'Cameras', path: ['Electronics', 'Photography', 'Cameras'],
+    source: 'provider_taxonomy', confidence: 1, isLeaf: true,
+    taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+    taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
+  },
   condition: 'good',
   imageUrls: ['https://img/1.jpg', 'https://img/2.jpg'],
 };
@@ -45,6 +52,15 @@ const realConfig: OlxAdapterConfig = {
 };
 
 describe('OLXAdapter', () => {
+  it('rejects a disabled live publish during preparation before transport request', async () => {
+    const http = new FetchMarketplaceHttpClient({ livePublishEnabled: false });
+    const request = jest.spyOn(http, 'request');
+    const adapter = new OLXAdapter(http, fastOptions, realConfig);
+
+    await expect(adapter.preparePublish(publishInput)).rejects.toMatchObject({ status: 412 });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('maps domain input to the OLX ad payload and returns the external id', async () => {
     let captured: HttpRequestConfig | undefined;
     const http = mockClient((config) => {
@@ -94,7 +110,17 @@ describe('OLXAdapter', () => {
       views: null,
       watchers: null,
       messages: null,
+      marketplaceCategory: null,
     });
+  });
+
+  it('refuses real publish when only the broad category map is available', async () => {
+    const http = mockClient(() => ({ status: 201, data: { data: { id: 1, status: 'active' } } }));
+    const adapter = new OLXAdapter(http, fastOptions, realConfig);
+
+    await expect(adapter.publish({ ...publishInput, marketplaceCategory: null }))
+      .rejects.toThrow('exact OLX leaf category');
+    expect(http.request).not.toHaveBeenCalled();
   });
 
   it.each<[string, string]>([
@@ -395,7 +421,7 @@ describe('OLXAdapter', () => {
       { requirePublishDetails: true },
     );
 
-    await expect(adapter.publish(publishInput)).rejects.toThrow('category id');
+    await expect(adapter.publish({ ...publishInput, marketplaceCategory: null })).rejects.toThrow('exact OLX leaf category');
     expect(request).not.toHaveBeenCalled();
   });
 

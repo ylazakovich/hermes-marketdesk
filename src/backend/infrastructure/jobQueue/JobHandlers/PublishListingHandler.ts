@@ -11,7 +11,8 @@ import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient
 import type { IEventPublisher } from '../../../domain/ports/IEventPublisher';
 import type { Result } from '../../../domain/shared/Result';
 import type { Listing } from '../../../domain/entities/Listing';
-import { InvalidStateError, ServiceUnavailableError } from '../../../domain/shared/DomainError';
+import { GuardrailViolationError, InvalidStateError, ServiceUnavailableError } from '../../../domain/shared/DomainError';
+import type { OlxQuotaDecisionView } from '../../../application/services/OlxPublicationQuotaService';
 import type {
   ListingPublishJobInput,
   ListingUpdateJobChanges,
@@ -115,6 +116,11 @@ export interface PublishAttemptStore {
   ): Promise<{ created: boolean; checkpoint: PublishAttemptCheckpoint }>;
   markPublished(operationId: string, result: PublishResult): Promise<void>;
   markFinalized(operationId: string): Promise<void>;
+  markAbandoned(operationId: string): Promise<void>;
+}
+
+export interface PublishQuotaReservationConsumer {
+  consumeReservation(operationId: string): Promise<OlxQuotaDecisionView>;
 }
 
 export interface PublishMarketplaceAdapterResolver {
@@ -188,7 +194,8 @@ export class PublishListingHandler {
     private readonly listings?: ListingFinalizer,
     private readonly accessTokens?: MarketplaceAccessTokenProvider,
     private readonly authenticatedHttpClient?: (accessToken: string) => MarketplaceHttpClient,
-    private readonly publishAttempts?: PublishAttemptStore
+    private readonly publishAttempts?: PublishAttemptStore,
+    private readonly olxQuota?: PublishQuotaReservationConsumer
   ) {}
 
   async handle(data: PublishListingJobData): Promise<PublishListingResult> {
@@ -366,6 +373,12 @@ export class PublishListingHandler {
     }
 
     if (!result) {
+      let ownsNewAttempt = false;
+      if (data.marketplaceKey === 'olx' && (!this.olxQuota || !this.publishAttempts)) {
+        throw new InvalidStateError(
+          'OLX publish worker is missing a quota reservation or publication fence',
+        );
+      }
       let adapter: IMarketplaceAdapter;
       if (data.marketplaceKey === 'olx' && this.accessTokens && this.authenticatedHttpClient) {
         if (!data.marketplaceId) {
@@ -381,6 +394,9 @@ export class PublishListingHandler {
       } else {
         adapter = this.adapters.create(data.marketplaceKey);
       }
+      const preparedPublish = adapter.preparePublish
+        ? await adapter.preparePublish(data.input)
+        : { execute: () => adapter.publish(data.input) };
 
       if (this.publishAttempts) {
         const started = await this.publishAttempts.begin(
@@ -389,6 +405,7 @@ export class PublishListingHandler {
           data.marketplaceKey,
           new Date(data.listingUpdatedAt ?? 0)
         );
+        ownsNewAttempt = started.created;
         if (!started.created) {
           checkpointOperationId = started.checkpoint.operationId;
           checkpointFinalized = started.checkpoint.status === 'finalized';
@@ -413,7 +430,24 @@ export class PublishListingHandler {
       }
 
       if (!result) {
-        result = await adapter.publish(data.input);
+        if (data.marketplaceKey === 'olx') {
+          if (!this.olxQuota || !this.publishAttempts || !ownsNewAttempt) {
+            throw new InvalidStateError('OLX publish worker is missing a quota reservation or publication fence');
+          }
+          try {
+            const quotaDecision = await this.olxQuota.consumeReservation(operationId);
+            if (quotaDecision.decision !== 'allow' && quotaDecision.decision !== 'override') {
+              throw new GuardrailViolationError(
+                `OLX ${quotaDecision.status} quota blocks publication`,
+                { quotaDecision },
+              );
+            }
+          } catch (error) {
+            await this.publishAttempts.markAbandoned(operationId);
+            throw error;
+          }
+        }
+        result = await preparedPublish.execute();
         if (this.publishAttempts) {
           await retryTransientPhase(() =>
             this.publishAttempts!.markPublished(operationId, result!)

@@ -11,10 +11,24 @@ import {
   InMemoryProductRepository,
   InMemoryListingRepository,
   InMemoryMarketplaceRepository,
+  InMemoryEventRepository,
   money,
   unwrap,
 } from '../../../domain/testkit/support';
 import { InMemoryActivityLogRepository, idFactory } from '../../testkit/support';
+import type { MarketplaceCategoryMetadata } from '../../../../shared/types';
+
+const taxonomyNow = Date.now();
+const projectorCategory: MarketplaceCategoryMetadata = {
+  providerCategoryId: '100', name: 'Projectors', path: ['Electronics', 'Video', 'Projectors'],
+  source: 'provider_taxonomy', confidence: 0.98, isLeaf: true,
+  taxonomyVerifiedAt: new Date(taxonomyNow - 60_000).toISOString(),
+  taxonomyStaleAt: new Date(taxonomyNow + 23 * 60 * 60 * 1000).toISOString(),
+};
+const headphonesCategory: MarketplaceCategoryMetadata = {
+  ...projectorCategory, providerCategoryId: '200', name: 'Wireless headphones',
+  path: ['Electronics', 'Audio equipment', 'Headphones', 'Wireless headphones'],
+};
 
 const connectedAccount: MarketplaceAccountRecord = {
   id: 'account-1',
@@ -68,6 +82,10 @@ function createService(
   const listingRepo = new InMemoryListingRepository();
   for (const listing of existing) listingRepo.items.set(listing.id, listing);
   const activityLog = new InMemoryActivityLogRepository();
+  const eventRepo = new InMemoryEventRepository();
+  const correctionOperations = {
+    createPair: jest.fn(async () => undefined),
+  } as any;
   const adapter = {
     getKey: () => 'olx',
     publish: jest.fn(),
@@ -82,7 +100,7 @@ function createService(
   const authenticatedHttpClient = jest.fn(() => ({ request: jest.fn() }));
   const defaultUnitOfWork: ConstructorParameters<typeof MarketplaceImportService>[9] = async (
     work
-  ) => work({ productRepo, listingRepo, activityLog });
+  ) => work({ productRepo, listingRepo, activityLog, eventRepo, correctionOperations });
   const service = new MarketplaceImportService(
     marketplaceRepo,
     productRepo,
@@ -93,7 +111,9 @@ function createService(
     authenticatedHttpClient,
     activityLog,
     idFactory('import'),
-    runUnitOfWork ?? defaultUnitOfWork
+    runUnitOfWork ?? defaultUnitOfWork,
+    eventRepo,
+    correctionOperations,
   );
   return {
     service,
@@ -104,6 +124,8 @@ function createService(
     productRepo,
     listingRepo,
     activityLog,
+    eventRepo,
+    correctionOperations,
   };
 }
 
@@ -147,6 +169,25 @@ describe('MarketplaceImportService', () => {
     expect(adapter.publish).not.toHaveBeenCalled();
     expect(adapter.updateListing).not.toHaveBeenCalled();
     expect(adapter.delist).not.toHaveBeenCalled();
+  });
+
+  it('creates an atomic durable pair for a new mismatched import before a target category is selected', async () => {
+    const remote = remoteListing({
+      title: 'AOPEN QH11 projector',
+      description: 'LED HD 720p HDMI projector in good condition.',
+      marketplaceCategory: headphonesCategory,
+    });
+    const { service, eventRepo, correctionOperations } = createService([remote]);
+    const result = await service.import({
+      workspaceId: 'workspace-1', marketplaceId: 'marketplace-1', externalListingIds: ['olx-1'],
+    });
+    if (result.isErr()) throw result.error;
+    const pending = await eventRepo.findPendingReview('workspace-1');
+    expect(pending).toHaveLength(1);
+    expect(correctionOperations.createPair).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'delist', recommendationEventId: pending[0].id }),
+      expect.objectContaining({ kind: 'recreate', targetCategory: null }),
+    );
   });
 
   it('allows already imported adverts with partial remote data to be refreshed', async () => {
@@ -332,7 +373,6 @@ describe('MarketplaceImportService', () => {
         'status',
         'product_title',
         'product_description',
-        'product_category',
         'product_images',
         'product_selling_price',
       ]),
@@ -350,7 +390,7 @@ describe('MarketplaceImportService', () => {
     expect(productRepo.items.get(product.id)).toMatchObject({
       name: 'Remote camera',
       description: 'Existing OLX advert with enough seller supplied detail.',
-      category: 'Electronics',
+      category: 'Old category',
     });
     expect(productRepo.items.get(product.id)?.sellingPrice.amount).toBe(100);
     expect(productRepo.items.get(product.id)?.images).toEqual(['https://img/1.jpg']);
@@ -360,6 +400,68 @@ describe('MarketplaceImportService', () => {
       action: 'olx_import_refreshed',
       metadata: expect.objectContaining({ marketplaceAccountId: 'account-1' }),
     });
+  });
+
+  it('preserves imported exact remote category metadata', async () => {
+    const remote = remoteListing({ marketplaceCategory: headphonesCategory });
+    const { service, listingRepo } = createService([remote]);
+
+    const result = await service.import({
+      workspaceId: 'workspace-1', marketplaceId: 'marketplace-1', externalListingIds: ['olx-1'],
+    });
+
+    if (result.isErr()) throw result.error;
+    const [listing] = await listingRepo.findByMarketplace('marketplace-1');
+    expect(listing.marketplaceCategory).toEqual(headphonesCategory);
+    expect(listing.status).toBe('live');
+  });
+
+  it('creates one idempotent pending-review mismatch recommendation with separate fail-closed intents', async () => {
+    const product = unwrap(Product.create({
+      id: 'product-projector', workspaceId: 'workspace-1', sku: 'PROJECTOR-1',
+      name: 'AOPEN QH11 projector', description: 'LED HD 720p HDMI projector in good condition.',
+      costPrice: money(10), sellingPrice: money(100), condition: 'good', category: 'Electronics',
+    }));
+    const existing = unwrap(Listing.create({
+      id: 'listing-projector', productId: product.id, marketplaceId: 'marketplace-1',
+      marketplaceListingId: 'olx-1', price: money(100), status: 'live',
+      marketplaceCategory: projectorCategory,
+    }));
+    const remote = remoteListing({
+      title: 'AOPEN QH11 projector',
+      description: 'LED HD 720p HDMI projector in good condition.',
+      marketplaceCategory: headphonesCategory,
+    });
+    const { service, productRepo, eventRepo, listingRepo, adapter, correctionOperations } = createService([remote], [existing]);
+    productRepo.items.set(product.id, product);
+
+    const first = await service.import({
+      workspaceId: 'workspace-1', marketplaceId: 'marketplace-1', externalListingIds: ['olx-1'],
+    });
+    if (first.isErr()) throw first.error;
+    const replay = await service.import({
+      workspaceId: 'workspace-1', marketplaceId: 'marketplace-1', externalListingIds: ['olx-1'],
+    });
+    if (replay.isErr()) throw replay.error;
+
+    const pending = await eventRepo.findPendingReview('workspace-1');
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ type: 'olx_category_mismatch', status: 'pending_review' });
+    expect(pending[0].proposedChange).toEqual(expect.objectContaining({
+      kind: 'category_recreation', listingId: 'listing-projector',
+      currentCategory: headphonesCategory, proposedCategory: projectorCategory,
+      operations: [
+        expect.objectContaining({ kind: 'delist', status: 'pending_review', providerSideEffectAllowed: false, quotaUnitsRestored: 0 }),
+        expect.objectContaining({ kind: 'recreate', status: 'blocked_pending_quota_review', providerSideEffectAllowed: false, quotaGuardRequired: true }),
+      ],
+    }));
+    expect(correctionOperations.createPair).toHaveBeenCalledTimes(1);
+    expect(correctionOperations.createPair).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'delist', recommendationEventId: pending[0].id }),
+      expect.objectContaining({ kind: 'recreate', targetCategory: projectorCategory }),
+    );
+    expect(adapter.delist).not.toHaveBeenCalled();
+    expect(adapter.publish).not.toHaveBeenCalled();
   });
 
   it('returns item-level failed preview entries for unmappable discovered adverts', async () => {

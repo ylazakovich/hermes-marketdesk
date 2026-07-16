@@ -17,6 +17,8 @@ import {
 import type { IdGenerator } from '../ports/IdGenerator';
 import type { MarketplaceAccountRepository, MarketplaceAccountRecord } from './MarketplaceOAuthService';
 import type { OlxQuotaConfidence, OlxQuotaSource, OlxQuotaStatus } from '../../domain/entities/OlxPublicationQuota';
+import { evaluateOlxCategory, parseMarketplaceCategoryMetadata } from '../../domain/services/OlxCategoryGuard';
+import type { MarketplaceCategoryMetadata } from '../../../shared/types';
 
 export interface OlxSubcategoryResolver {
   resolve(domainCategory: string): string | null;
@@ -162,14 +164,21 @@ export class OlxPublicationQuotaService {
     marketplace: Marketplace;
   }): Promise<OlxQuotaDecisionView> {
     if (input.marketplace.key !== 'olx') return this.notApplicable();
+    const category = parseMarketplaceCategoryMetadata(input.listing.marketplaceCategory);
+    const categoryDecision = evaluateOlxCategory(input.product, category, this.now());
+    if (!categoryDecision.allowed || !category) {
+      return this.unknown(
+        `category_${categoryDecision.reason ?? 'invalid'}`,
+        undefined,
+        category?.providerCategoryId,
+        false,
+      );
+    }
     const account = await this.accountRepo.findByMarketplaceId(input.marketplace.id);
     if (!account || account.status !== 'connected') {
       return this.unknown('marketplace_account_unknown', undefined, undefined, false);
     }
-    const subcategoryId = this.subcategories.resolve(input.product.category);
-    if (!subcategoryId) {
-      return this.unknown('olx_subcategory_unknown', account.id, undefined, false);
-    }
+    const subcategoryId = category.providerCategoryId;
     const at = this.now();
     const quota = await this.quotaRepo.findCurrent({
       workspaceId: input.product.workspaceId,
@@ -195,16 +204,29 @@ export class OlxPublicationQuotaService {
 
   async authorize(input: {
     operationId: string;
-    mode: 'publish' | 'relist';
+    mode: 'publish' | 'relist' | 'recreate';
     listing: Listing;
     product: Product;
     marketplace: Marketplace;
     actorId?: string;
     override?: OlxQuotaOverride;
+    marketplaceCategory?: MarketplaceCategoryMetadata;
   }): Promise<OlxQuotaDecisionView> {
     if (input.marketplace.key !== 'olx') return this.notApplicable();
+    const category = parseMarketplaceCategoryMetadata(input.marketplaceCategory ?? input.listing.marketplaceCategory);
+    const categoryDecision = evaluateOlxCategory(input.product, category, this.now());
+    if (!categoryDecision.allowed || !category) {
+      const decision = this.unknown(
+        `category_${categoryDecision.reason ?? 'invalid'}`,
+        undefined,
+        category?.providerCategoryId,
+        false,
+      );
+      await this.auditDecision(input, decision);
+      return decision;
+    }
     const account = await this.accountRepo.findByMarketplaceId(input.marketplace.id);
-    const subcategoryId = this.subcategories.resolve(input.product.category);
+    const subcategoryId = category.providerCategoryId;
     if (!account || account.status !== 'connected' || !subcategoryId) {
       const decision = this.unknown(
         !account || account.status !== 'connected'
@@ -240,6 +262,25 @@ export class OlxPublicationQuotaService {
     const decision = this.presentAuthorization(authorization, account.id, subcategoryId);
     await this.auditDecision(input, decision, input.override?.reason);
     return decision;
+  }
+
+  async consumeReservation(operationId: string): Promise<OlxQuotaDecisionView> {
+    const authorization = await this.quotaRepo.consume(operationId, this.now());
+    const quota = authorization.quota;
+    return {
+      applicable: true,
+      marketplaceKey: 'olx',
+      ...(quota ? {
+        marketplaceAccountId: quota.marketplaceAccountId,
+        subcategoryId: quota.subcategoryId,
+        quota: this.presentQuota(quota),
+      } : {}),
+      status: authorization.status,
+      decision: authorization.decision,
+      reason: authorization.reason,
+      requiresOverride: authorization.decision === 'block',
+      consumedUnit: authorization.consumedUnit,
+    };
   }
 
   guardError(decision: OlxQuotaDecisionView): GuardrailViolationError {
@@ -337,7 +378,7 @@ export class OlxPublicationQuotaService {
   private async auditDecision(
     input: {
       operationId: string;
-      mode: 'publish' | 'relist';
+      mode: 'publish' | 'relist' | 'recreate';
       listing: Listing;
       product: Product;
       marketplace: Marketplace;

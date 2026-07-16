@@ -15,7 +15,7 @@ export interface OlxQuotaLookup {
 export interface AuthorizeOlxPublicationInput extends OlxQuotaLookup {
   operationId: string;
   listingId: string;
-  mode: 'publish' | 'relist';
+  mode: 'publish' | 'relist' | 'recreate';
   overrideConfirmed: boolean;
   overrideReason?: string;
   actorId?: string;
@@ -41,4 +41,5 @@ export interface IOlxPublicationQuotaRepository {
   }): Promise<OlxPublicationQuota[]>;
   save(quota: OlxPublicationQuota): Promise<void>;
   authorize(input: AuthorizeOlxPublicationInput): Promise<OlxPublicationAuthorization>;
+  consume(operationId: string, at: Date): Promise<OlxPublicationAuthorization>;
 }

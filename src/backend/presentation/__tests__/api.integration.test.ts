@@ -27,6 +27,7 @@ import type { AnalyticsApplicationService } from '../../application/services/Ana
 import type { MarketplaceOAuthService } from '../../application/services/MarketplaceOAuthService';
 import type { MarketplaceImportService } from '../../application/services/MarketplaceImportService';
 import type { OlxPublicationQuotaService } from '../../application/services/OlxPublicationQuotaService';
+import type { CategoryCorrectionOperationService } from '../../application/services/CategoryCorrectionOperationService';
 import type { IProductRepository } from '../../domain/repositories/interfaces/IProductRepository';
 import type { IListingRepository } from '../../domain/repositories/interfaces/IListingRepository';
 import type { IMarketplaceRepository } from '../../domain/repositories/interfaces/IMarketplaceRepository';
@@ -304,6 +305,26 @@ function stubOlxPublicationQuotaService(): OlxPublicationQuotaService {
   } as unknown as OlxPublicationQuotaService;
 }
 
+function stubCategoryCorrectionOperationService(): CategoryCorrectionOperationService {
+  const base = {
+    id: 'recreate-1', workspaceId: 'ws-1', recommendationEventId: 'e1', listingId: 'listing-1',
+    marketplaceId: 'marketplace-olx', kind: 'recreate' as const, state: 'requested' as const,
+    targetCategory: null, paidOverrideReason: null, requestedBy: null, approvedBy: null, result: null,
+    requestedAt: new Date(), approvedAt: null, executedAt: null, failedAt: null, updatedAt: new Date(),
+  };
+  return {
+    async list(_eventId: string, workspaceId: string) { return [{ ...base, workspaceId }]; },
+    async approve(input: { operationId: string; workspaceId: string; actorId: string; paidOverrideReason?: string }) {
+      return { ...base, id: input.operationId, workspaceId: input.workspaceId, state: 'approved' as const,
+        approvedBy: input.actorId, paidOverrideReason: input.paidOverrideReason ?? null, approvedAt: new Date() };
+    },
+    async execute(input: { operationId: string; workspaceId: string }) {
+      return { ...base, id: input.operationId, workspaceId: input.workspaceId, state: 'executed' as const,
+        result: { externalListingId: 'new-advert' }, approvedAt: new Date(), executedAt: new Date() };
+    },
+  } as unknown as CategoryCorrectionOperationService;
+}
+
 async function buildTestApp() {
   const authUserStore = new InMemoryAuthStore();
   const productRepo = new InMemoryProductRepository();
@@ -331,6 +352,7 @@ async function buildTestApp() {
     marketplaceSyncScheduler: { reconcile: async () => ({ mode: 'manual', scheduled: false }) },
     marketplaceImportService: stubMarketplaceImportService(),
     olxPublicationQuotaService: stubOlxPublicationQuotaService(),
+    categoryCorrectionOperationService: stubCategoryCorrectionOperationService(),
     marketplaceOAuthReturnUrl: 'http://localhost:5173/marketplaces',
     workspaceRepo: workspaceRepo as IWorkspaceRepository,
     authUserStore,
@@ -380,6 +402,12 @@ async function seedPreviewListing(listingRepo: InMemoryListingRepository): Promi
     productId: 'p-real',
     marketplaceId: 'marketplace-olx',
     price: price.value,
+    marketplaceCategory: {
+      providerCategoryId: '2000', name: 'Widgets', path: ['Home', 'Tools', 'Widgets'],
+      source: 'provider_taxonomy', confidence: 1, isLeaf: true,
+      taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
+      taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
+    },
   });
   if (listing.isErr()) throw listing.error;
   await listingRepo.save(listing.value);
@@ -784,6 +812,10 @@ describe('Presentation API', () => {
       });
       expect(res.body.data.payload.productName).toBe('Real widget');
       expect(res.body.data.payload.price).toBe(20);
+      expect(res.body.data.marketplaceCategory).toEqual(expect.objectContaining({
+        providerCategoryId: '2000', path: ['Home', 'Tools', 'Widgets'],
+      }));
+      expect(res.body.data.payload.marketplaceCategory).toEqual(res.body.data.marketplaceCategory);
       expect(before?.status).toBe('draft');
       expect(after?.status).toBe('draft');
       expect(after?.marketplaceListingId).toBeNull();
@@ -905,6 +937,28 @@ describe('Presentation API', () => {
         }),
       );
       expect(next).not.toHaveBeenCalled();
+    });
+
+    it('exposes separate authenticated list, approve, and execute operation workflows', async () => {
+      const { app } = await buildTestApp();
+      const unauthenticated = await request(app).get('/api/hermes/events/e1/category-correction-operations');
+      expect(unauthenticated.status).toBe(401);
+
+      const listed = await auth(request(app).get('/api/hermes/events/e1/category-correction-operations'));
+      expect(listed.status).toBe(200);
+      expect(listed.body.data).toEqual([expect.objectContaining({ id: 'recreate-1', kind: 'recreate', state: 'requested' })]);
+
+      const approved = await auth(request(app)
+        .post('/api/hermes/category-correction-operations/recreate-1/approve'))
+        .send({ paidOverrideReason: 'Operator accepts possible paid placement' });
+      expect(approved.status).toBe(200);
+      expect(approved.body.data).toMatchObject({ state: 'approved', approvedBy: 'u-1' });
+
+      const executed = await auth(request(app)
+        .post('/api/hermes/category-correction-operations/recreate-1/execute'))
+        .send({});
+      expect(executed.status).toBe(200);
+      expect(executed.body.data).toMatchObject({ state: 'executed', result: { externalListingId: 'new-advert' } });
     });
 
     it('returns a 404 error envelope for an unknown event', async () => {

@@ -41,6 +41,8 @@ import type { MarketplaceOAuthService } from '../../application/services/Marketp
 import type { MarketplaceSyncScheduler } from '../../application/services/MarketplaceSyncScheduler';
 import type { MarketplaceImportService } from '../../application/services/MarketplaceImportService';
 import type { OlxPublicationQuotaService } from '../../application/services/OlxPublicationQuotaService';
+import type { OlxTrustedTaxonomyResolver } from '../../infrastructure/adapters/OlxTaxonomyResolver';
+import type { CategoryCorrectionOperationService } from '../../application/services/CategoryCorrectionOperationService';
 import { createApiRouter } from './routes';
 import { createErrorHandler, type ErrorLogger } from './middleware/ErrorHandlingMiddleware';
 
@@ -58,6 +60,8 @@ export interface AppDeps {
   marketplaceSyncScheduler: MarketplaceSyncScheduler;
   marketplaceImportService: MarketplaceImportService;
   olxPublicationQuotaService?: OlxPublicationQuotaService;
+  olxTaxonomyResolver?: (marketplaceId: string) => Promise<OlxTrustedTaxonomyResolver>;
+  categoryCorrectionOperationService?: CategoryCorrectionOperationService;
   marketplaceOAuthReturnUrl: string;
   workspaceRepo: IWorkspaceRepository;
   authUserStore: IAuthUserStore;
@@ -183,6 +187,7 @@ export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
       idGenerator: deps.idGenerator,
       productRepo: deps.productRepo,
       marketplaceRepo: deps.marketplaceRepo,
+      olxTaxonomyResolver: deps.olxTaxonomyResolver,
       olxQuotaService: deps.olxPublicationQuotaService,
     }),
     marketplaces: new MarketplaceController(
@@ -195,7 +200,7 @@ export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
       deps.marketplaceOAuthReturnUrl,
       deps.logger,
     ),
-    hermes: new HermesController(deps.hermesService),
+    hermes: new HermesController(deps.hermesService, deps.categoryCorrectionOperationService),
     analytics: new AnalyticsController(deps.analyticsService),
     workspaces: new WorkspaceController(deps.workspaceRepo),
     uploads: new ProductImageUploadController(productImageUploadService),

@@ -11,6 +11,9 @@ import type {
   HermesEventStatus,
   HermesSeverity,
   SyncMode,
+  MarketplaceCategoryMetadata,
+  CategoryRecreationOperationAction,
+  CategoryRecreationOperationStatus,
 } from '@shared/types';
 
 // ----------------------------------------------------------------------------
@@ -81,10 +84,18 @@ export interface PublishListingPreview {
     price: number;
     currency: string;
     category: string;
+    marketplaceCategory?: MarketplaceCategoryMetadata | null;
     condition: Product['condition'];
     imageCount: number;
   } | null;
   warnings: string[];
+  marketplaceCategory?: MarketplaceCategoryMetadata | null;
+  quotaDecision?: {
+    status: string;
+    decision: string;
+    reason: string;
+    subcategoryId?: string;
+  };
 }
 
 // Canonical route: PATCH /listings/:id with body { price, reason? }.
@@ -239,6 +250,21 @@ export interface HermesRunInput {
 // POST /hermes/run responds with the array of generated events (HermesEventView[]).
 
 export type HermesEventResolution = HermesEvent;
+
+/** Contract expected from separately durable and audited category operations. */
+export interface CategoryRecreationOperationCommand {
+  action: CategoryRecreationOperationAction;
+  operation: 'delist' | 'recreate';
+  paidOverrideReason?: string;
+}
+
+export interface CategoryRecreationOperationResolution {
+  id: string;
+  recommendationEventId: string;
+  kind: 'delist' | 'recreate';
+  state: 'requested' | 'approved' | 'executing' | 'executed' | 'failed';
+  result: Record<string, unknown> | null;
+}
 
 // ----------------------------------------------------------------------------
 // Analytics (no shared entity — response shapes defined here)

@@ -32,13 +32,17 @@ function isCreateListingRequest(config: HttpRequestConfig): boolean {
 export class FetchMarketplaceHttpClient implements MarketplaceHttpClient {
   constructor(private readonly options: FetchMarketplaceHttpClientOptions = {}) {}
 
-  async request<T = unknown>(config: HttpRequestConfig): Promise<HttpResponse<T>> {
+  assertRequestAllowed(config: HttpRequestConfig): void {
     if (isCreateListingRequest(config) && this.options.livePublishEnabled !== true) {
       throw new HttpError(
         412,
         'Live marketplace publish is disabled by OLX_LIVE_PUBLISH_ENABLED=false',
       );
     }
+  }
+
+  async request<T = unknown>(config: HttpRequestConfig): Promise<HttpResponse<T>> {
+    this.assertRequestAllowed(config);
 
     const controller = new AbortController();
     const timeout = setTimeout(

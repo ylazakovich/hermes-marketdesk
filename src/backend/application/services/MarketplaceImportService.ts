@@ -2,8 +2,12 @@ import { randomUUID } from 'crypto';
 import type { MarketplaceKey, ProductCondition } from '../../../shared/types';
 import { Product } from '../../domain/entities/Product';
 import { Listing } from '../../domain/entities/Listing';
+import { HermesEvent } from '../../domain/entities/HermesEvent';
+import { evaluateOlxCategory } from '../../domain/services/OlxCategoryGuard';
 import type { IProductRepository } from '../../domain/repositories/interfaces/IProductRepository';
 import type { IListingRepository } from '../../domain/repositories/interfaces/IListingRepository';
+import type { IEventRepository } from '../../domain/repositories/interfaces/IEventRepository';
+import type { ICategoryCorrectionOperationRepository } from '../../domain/repositories/interfaces/ICategoryCorrectionOperationRepository';
 import type { IMarketplaceRepository } from '../../domain/repositories/interfaces/IMarketplaceRepository';
 import type {
   ActivityLogEntry,
@@ -83,6 +87,8 @@ export interface MarketplaceImportRepositories {
   productRepo: IProductRepository;
   listingRepo: IListingRepository;
   activityLog?: IActivityLogRepository;
+  eventRepo: IEventRepository;
+  correctionOperations: ICategoryCorrectionOperationRepository;
 }
 
 export type MarketplaceImportUnitOfWork = <T>(
@@ -132,7 +138,9 @@ export class MarketplaceImportService {
     private readonly idGenerator: IdGenerator = randomUUID,
     private readonly unitOfWork: MarketplaceImportUnitOfWork = async () => {
       throw new InvalidStateError('MarketplaceImportService requires a transactional unit of work');
-    }
+    },
+    private readonly eventRepo?: IEventRepository,
+    private readonly correctionOperations?: ICategoryCorrectionOperationRepository,
   ) {}
 
   async preview(input: ImportPreviewInput): Promise<Result<ImportPreviewResult>> {
@@ -148,6 +156,30 @@ export class MarketplaceImportService {
         context.value.failedItems
       )
     );
+  }
+
+  async recommendSyncedCategoryMismatch(input: {
+    listing: Listing;
+    workspaceId: string;
+    currentCategory: ImportedMarketplaceListing['marketplaceCategory'];
+    proposedCategory: ImportedMarketplaceListing['marketplaceCategory'];
+  }): Promise<void> {
+    await this.unitOfWork(async (repos) => {
+      const product = await repos.productRepo.findByIdForWorkspace(
+        input.listing.productId,
+        input.workspaceId,
+      );
+      await this.createCategoryMismatchRecommendation(
+        input.listing,
+        product,
+        input.currentCategory,
+        input.proposedCategory,
+        input.workspaceId,
+        repos.activityLog,
+        repos.eventRepo,
+        repos.correctionOperations,
+      );
+    });
   }
 
   async import(input: ImportApplyInput): Promise<Result<ImportApplyResult>> {
@@ -211,6 +243,16 @@ export class MarketplaceImportService {
           );
           await repos.productRepo.save(product);
           await repos.listingRepo.save(listing);
+          await this.createCategoryMismatchRecommendation(
+            listing,
+            product,
+            item.proposed.marketplaceCategory ?? null,
+            null,
+            input.workspaceId,
+            repos.activityLog,
+            repos.eventRepo,
+            repos.correctionOperations,
+          );
           await repos.activityLog?.record(
             this.activityEntry(
               input.workspaceId,
@@ -435,6 +477,7 @@ export class MarketplaceImportService {
       status: partial?.status ?? 'error',
       remoteStatus: partial?.remoteStatus ?? null,
       category: partial?.category ?? null,
+      marketplaceCategory: partial?.marketplaceCategory ?? null,
       imageUrls: partial?.imageUrls ?? [],
       remoteUpdatedAt: partial?.remoteUpdatedAt ?? null,
       metrics: partial?.metrics ?? {},
@@ -478,6 +521,8 @@ export class MarketplaceImportService {
       changes.push('price');
     }
     if (listing.externalUrl !== (remote.externalUrl ?? null)) changes.push('external_url');
+    if (JSON.stringify(listing.marketplaceCategory) !== JSON.stringify(remote.marketplaceCategory ?? null))
+      changes.push('marketplace_category');
     if (listing.status !== remote.status) changes.push('status');
     if (remote.metrics?.views !== undefined && listing.views !== remote.metrics.views)
       changes.push('views');
@@ -488,7 +533,6 @@ export class MarketplaceImportService {
     if (product) {
       if (product.name !== remote.title) changes.push('product_title');
       if ((remote.description ?? '') !== product.description) changes.push('product_description');
-      if (remote.category && product.category !== remote.category) changes.push('product_category');
       if (!this.sameStringList([...product.images], remote.imageUrls))
         changes.push('product_images');
       if (
@@ -543,6 +587,8 @@ export class MarketplaceImportService {
       externalUrl: remote.externalUrl ?? null,
       price: sellingPrice,
       status: remote.status,
+      remoteStatus: remote.remoteStatus ?? null,
+      marketplaceCategory: remote.marketplaceCategory ?? null,
       views: remote.metrics?.views ?? null,
       watchers: remote.metrics?.watchers ?? null,
       messages: remote.metrics?.messages ?? null,
@@ -564,6 +610,7 @@ export class MarketplaceImportService {
     actorId: string | undefined,
     repos: MarketplaceImportRepositories
   ): Promise<void> {
+    const proposedCategory = listing.marketplaceCategory;
     if (remote.price !== null && remote.price !== undefined) {
       const price = this.unwrapMoney(remote.price, remote.currency ?? listing.price.currency);
       const priceResult = listing.updatePrice(price);
@@ -587,10 +634,8 @@ export class MarketplaceImportService {
         const described = product.updateDescription(remote.description);
         if (described.isErr()) throw described.error;
       }
-      if (remote.category && product.category !== remote.category) {
-        const categorized = product.updateCategory(remote.category);
-        if (categorized.isErr()) throw categorized.error;
-      }
+      // A provider category label is marketplace metadata, not the product's broad
+      // semantic identity. Preserve the local category until a user changes it.
       if (!this.sameStringList([...product.images], remote.imageUrls)) {
         product.clearImages();
         for (const imageUrl of remote.imageUrls) {
@@ -613,11 +658,22 @@ export class MarketplaceImportService {
       await repos.productRepo.save(product);
     }
     listing.recordExternalUrl(remote.externalUrl ?? null);
+    listing.recordMarketplaceCategory(remote.marketplaceCategory ?? null);
     const statusRecorded = listing.recordImportedStatus(remote.status, product ?? null);
     if (statusRecorded.isErr()) throw statusRecorded.error;
     listing.recordSyncStats(remote.metrics ?? {}, new Date());
     listing.recordSyncStatusNote(null);
     await repos.listingRepo.save(listing);
+    await this.createCategoryMismatchRecommendation(
+      listing,
+      product,
+      remote.marketplaceCategory ?? null,
+      proposedCategory,
+      workspaceId,
+      repos.activityLog,
+      repos.eventRepo,
+      repos.correctionOperations,
+    );
     await repos.activityLog?.record(
       this.activityEntry(
         workspaceId,
@@ -627,6 +683,95 @@ export class MarketplaceImportService {
         this.auditMetadata(marketplaceAccountId, remote, 'updated')
       )
     );
+  }
+
+  private async createCategoryMismatchRecommendation(
+    listing: Listing,
+    product: Product | null,
+    currentCategory: ImportedMarketplaceListing['marketplaceCategory'],
+    proposedCategory: ImportedMarketplaceListing['marketplaceCategory'],
+    workspaceId: string,
+    activityLog: IActivityLogRepository | undefined,
+    transactionEventRepo: IEventRepository,
+    transactionCorrectionOperations: ICategoryCorrectionOperationRepository,
+  ): Promise<void> {
+    if (!product || listing.status !== 'live' || !currentCategory) return;
+    const currentDecision = evaluateOlxCategory(product, currentCategory);
+    const proposedDecision = proposedCategory ? evaluateOlxCategory(product, proposedCategory) : null;
+    if (currentDecision.reason !== 'semantic_mismatch') return;
+    const usableProposedCategory: NonNullable<ImportedMarketplaceListing['marketplaceCategory']> | null =
+      proposedDecision?.allowed ? (proposedCategory ?? null) : null;
+    const eventId = this.idGenerator();
+    const delistIntentId = this.idGenerator();
+    const recreateIntentId = this.idGenerator();
+    const created = HermesEvent.create({
+      id: eventId,
+      workspaceId,
+      productId: product.id,
+      type: 'olx_category_mismatch',
+      severity: 'critical',
+      status: 'pending_review',
+      title: 'OLX advert category mismatch requires recreation',
+      detail: `Current: ${currentCategory.path.join(' → ')}. Proposed: ${usableProposedCategory ? usableProposedCategory.path.join(' → ') : 'select an exact verified OLX leaf category'}. OLX category is not corrected through a normal PUT; delist and recreate remain separate human-reviewed operations.`,
+      proposedChange: {
+        kind: 'category_recreation',
+        listingId: listing.id,
+        currentCategory: currentCategory!,
+        proposedCategory: usableProposedCategory,
+        operations: [
+          {
+            kind: 'delist', intentId: delistIntentId, status: 'pending_review',
+            providerSideEffectAllowed: false, quotaUnitsRestored: 0,
+          },
+          {
+            kind: 'recreate', intentId: recreateIntentId,
+            status: 'blocked_pending_quota_review', providerSideEffectAllowed: false,
+            quotaGuardRequired: true,
+          },
+        ],
+      },
+      autonomyDecision: 'pending_review',
+    });
+    if (created.isErr()) throw created.error;
+    const inserted = await transactionEventRepo.saveRecommendationIfAbsent(
+      created.value,
+      `olx-category-mismatch:${listing.id}:${currentCategory.providerCategoryId}:${usableProposedCategory?.providerCategoryId ?? 'unresolved'}`,
+    );
+    if (!inserted) return;
+    {
+      const requestedAt = new Date();
+      await transactionCorrectionOperations.createPair(
+        {
+          id: delistIntentId, workspaceId, recommendationEventId: eventId,
+          listingId: listing.id, marketplaceId: listing.marketplaceId, kind: 'delist',
+          state: 'requested', targetCategory: null, paidOverrideReason: null,
+          requestedBy: null, approvedBy: null, result: null, requestedAt,
+          approvedAt: null, executedAt: null, failedAt: null, updatedAt: requestedAt,
+        },
+        {
+          id: recreateIntentId, workspaceId, recommendationEventId: eventId,
+          listingId: listing.id, marketplaceId: listing.marketplaceId, kind: 'recreate',
+          state: 'requested', targetCategory: usableProposedCategory, paidOverrideReason: null,
+          requestedBy: null, approvedBy: null, result: null, requestedAt,
+          approvedAt: null, executedAt: null, failedAt: null, updatedAt: requestedAt,
+        },
+      );
+    }
+    await activityLog?.record(this.activityEntry(
+      workspaceId,
+      listing.id,
+      undefined,
+      'olx.category_recreation_recommended',
+      {
+        eventId,
+        currentCategory,
+        proposedCategory: usableProposedCategory,
+        delistIntentId,
+        recreateIntentId,
+        deletionRestoresQuota: false,
+        recreateRequiresQuotaGuard: true,
+      },
+    ));
   }
 
   private importedCondition(_remote: ImportedMarketplaceListing): ProductCondition {
@@ -710,6 +855,7 @@ export class MarketplaceImportService {
       externalUrl: remote.externalUrl ?? null,
       remoteStatus: remote.remoteStatus ?? remote.status,
       remoteUpdatedAt: remote.remoteUpdatedAt?.toISOString?.() ?? null,
+      marketplaceCategory: remote.marketplaceCategory ?? null,
       importedAt: new Date().toISOString(),
       action,
       readOnlyProviderOperation: true,

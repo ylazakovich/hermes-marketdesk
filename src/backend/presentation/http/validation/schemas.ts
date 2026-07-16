@@ -109,6 +109,10 @@ export const publishListingSchema = z.object({
     .optional(),
 });
 
+export const marketplaceCategorySchema = z.object({
+  providerCategoryId: z.string().trim().min(1).max(100),
+});
+
 export const setOlxPublicationQuotaSchema = z.object({
   subcategoryId: z.string().trim().min(1).max(100),
   cycleStartedAt: z.iso.datetime(),
@@ -167,3 +171,9 @@ export const dismissEventSchema = z.object({
 export const approveEventSchema = z.object({
   actorId: z.string().optional(),
 });
+
+export const approveCategoryCorrectionOperationSchema = z.object({
+  paidOverrideReason: z.string().trim().min(10).max(500).optional(),
+});
+
+export const executeCategoryCorrectionOperationSchema = z.object({});

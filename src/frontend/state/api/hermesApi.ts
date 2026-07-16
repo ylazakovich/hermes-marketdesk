@@ -4,7 +4,12 @@ import { baseApi } from './baseApi.js';
 import { buildQueryString } from './queryString.js';
 import { unwrap, unwrapPaginated } from './envelope.js';
 import type { PaginatedApiResponse } from './envelope.js';
-import type { HermesEventListParams, HermesRunInput } from './dto.js';
+import type {
+  CategoryRecreationOperationCommand,
+  CategoryRecreationOperationResolution,
+  HermesEventListParams,
+  HermesRunInput,
+} from './dto.js';
 
 export const hermesApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
@@ -50,6 +55,25 @@ export const hermesApi = baseApi.injectEndpoints({
       ],
     }),
 
+    executeCategoryRecreationOperation: builder.mutation<
+      CategoryRecreationOperationResolution,
+      CategoryRecreationOperationCommand
+    >({
+      query: ({ action, paidOverrideReason }) => ({
+        url: action.href,
+        method: action.method,
+        body: action.kind === 'approve' && paidOverrideReason
+          ? { paidOverrideReason }
+          : {},
+      }),
+      transformResponse: (res: ApiResponse<CategoryRecreationOperationResolution>) => unwrap(res),
+      invalidatesTags: (result) => [
+        { type: 'HermesEvent', id: result?.recommendationEventId ?? 'LIST' },
+        { type: 'HermesEvent', id: 'LIST' },
+        { type: 'Listing', id: 'LIST' },
+      ],
+    }),
+
     // POST /hermes/run — trigger an analysis run; responds 202 with the array of
     // generated events (HermesEventView[]).
     runHermes: builder.mutation<HermesEvent[], HermesRunInput | void>({
@@ -65,5 +89,6 @@ export const {
   useGetHermesEventQuery,
   useApproveHermesEventMutation,
   useDismissHermesEventMutation,
+  useExecuteCategoryRecreationOperationMutation,
   useRunHermesMutation,
 } = hermesApi;

@@ -9,7 +9,7 @@ import type {
   IMarketplaceAdapter,
   SyncedListing,
 } from '../../../domain/services/MarketplaceAdapter';
-import type { MarketplaceKey } from '../../../../shared/types';
+import type { MarketplaceKey, MarketplaceCategoryMetadata } from '../../../../shared/types';
 import type { Listing } from '../../../domain/entities/Listing';
 import type { Marketplace } from '../../../domain/entities/Marketplace';
 import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
@@ -44,6 +44,12 @@ export interface SyncMarketplaceHandlerDeps {
   accessTokens?: SyncMarketplaceAccessTokenProvider;
   authenticatedHttpClient?: (accessToken: string) => MarketplaceHttpClient;
   eventPublisher?: IEventPublisher;
+  recommendCategoryMismatch?: (input: {
+    listing: Listing;
+    workspaceId: string;
+    currentCategory: MarketplaceCategoryMetadata | null;
+    proposedCategory: MarketplaceCategoryMetadata | null;
+  }) => Promise<void>;
 }
 
 export interface SyncMarketplaceJobData {
@@ -126,6 +132,7 @@ export class SyncMarketplaceHandler {
     if (!store || synced.length === 0) return 0;
 
     const listings = await store.findByMarketplace(marketplaceId);
+    const marketplace = await this.deps.marketplaceStore?.findById(marketplaceId);
     const byExternalId = new Map<string, Listing>();
     for (const listing of listings) {
       if (listing.marketplaceListingId) {
@@ -134,6 +141,11 @@ export class SyncMarketplaceHandler {
     }
 
     const updated: Listing[] = [];
+    const mismatchCandidates: Array<{
+      listing: Listing;
+      currentCategory: MarketplaceCategoryMetadata | null;
+      proposedCategory: MarketplaceCategoryMetadata | null;
+    }> = [];
     for (const s of synced) {
       const listing = byExternalId.get(s.externalListingId);
       if (!listing) continue;
@@ -146,10 +158,23 @@ export class SyncMarketplaceHandler {
       if (s.externalUrl !== undefined) {
         listing.recordExternalUrl(s.externalUrl);
       }
+      if (s.marketplaceCategory !== undefined) {
+        const proposedCategory = listing.marketplaceCategory;
+        listing.recordMarketplaceCategory(s.marketplaceCategory);
+        mismatchCandidates.push({ listing, currentCategory: s.marketplaceCategory, proposedCategory });
+      }
       await this.reconcileStatus(listing, s);
       updated.push(listing);
     }
 
+    // Build the idempotent durable mismatch pair before persisting the remote
+    // category. If recommendation creation fails, a retry still sees the prior
+    // verified category and can reconstruct the original mismatch.
+    if (marketplace && this.deps.recommendCategoryMismatch) {
+      for (const candidate of mismatchCandidates) {
+        await this.deps.recommendCategoryMismatch({ ...candidate, workspaceId: marketplace.workspaceId });
+      }
+    }
     if (updated.length > 0) await store.saveAll(updated);
     return updated.length;
   }

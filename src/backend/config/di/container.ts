@@ -31,6 +31,7 @@ import { ActivityLogRepository } from '../../infrastructure/persistence/reposito
 import { AuthUserRepository } from '../../infrastructure/persistence/repositories/AuthUserRepository';
 import { PriceHistoryRepository } from '../../infrastructure/persistence/repositories/PriceHistoryRepository';
 import { OlxPublicationQuotaRepository } from '../../infrastructure/persistence/repositories/OlxPublicationQuotaRepository';
+import { CategoryCorrectionOperationRepository } from '../../infrastructure/persistence/repositories/CategoryCorrectionOperationRepository';
 
 async function withPoolTransaction<T>(
   pool: Pool,
@@ -70,6 +71,7 @@ import type { RedisCache } from '../../infrastructure/cache/RedisCache';
 import { BullJobQueue } from '../../infrastructure/jobQueue/BullJobQueue';
 import { MarketplaceAdapterFactory } from '../../infrastructure/adapters/MarketplaceAdapterFactory';
 import { FetchMarketplaceHttpClient } from '../../infrastructure/adapters/FetchMarketplaceHttpClient';
+import { OlxTaxonomyResolver } from '../../infrastructure/adapters/OlxTaxonomyResolver';
 import { RedisMarketplaceOAuthStateStore } from '../../infrastructure/cache/RedisMarketplaceOAuthStateStore';
 import { RedisMarketplaceOAuthRefreshLock } from '../../infrastructure/cache/RedisMarketplaceOAuthRefreshLock';
 import { AesGcmCredentialVault } from '../../infrastructure/security/AesGcmCredentialVault';
@@ -109,6 +111,7 @@ import { MarketplaceOAuthService } from '../../application/services/MarketplaceO
 import { MarketplaceSyncScheduler } from '../../application/services/MarketplaceSyncScheduler';
 import { MarketplaceImportService } from '../../application/services/MarketplaceImportService';
 import { OlxPublicationQuotaService } from '../../application/services/OlxPublicationQuotaService';
+import { CategoryCorrectionOperationService } from '../../application/services/CategoryCorrectionOperationService';
 import type { IdGenerator } from '../../application/ports/IdGenerator';
 import type {
   IJobQueue,
@@ -242,7 +245,6 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
       baseUrl: env.marketplaces.olx.apiBaseUrl,
       requirePublishDetails: env.marketplaces.olx.adapterMode === 'real',
       categoryIds: env.marketplaces.olx.categoryIds,
-      defaultCategoryId: env.marketplaces.olx.defaultCategoryId,
       cityId: env.marketplaces.olx.cityId,
       districtId: env.marketplaces.olx.districtId,
       contactName: env.marketplaces.olx.contactName,
@@ -275,6 +277,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
   const authUserStore = new AuthUserRepository(pool);
   const priceHistoryRepo = new PriceHistoryRepository(pool);
   const olxPublicationQuotaRepo = new OlxPublicationQuotaRepository(pool);
+  const categoryCorrectionOperationRepo = new CategoryCorrectionOperationRepository(pool);
   const marketplaceOAuthService = new MarketplaceOAuthService({
     marketplaceRepo,
     accountRepo: marketplaceAccountRepo,
@@ -309,9 +312,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     {
       resolve: (domainCategory) => {
         const normalized = domainCategory.trim().toLowerCase();
-        const categoryId =
-          env.marketplaces.olx.categoryIds[normalized] ??
-          env.marketplaces.olx.defaultCategoryId;
+        const categoryId = env.marketplaces.olx.categoryIds[normalized];
         return categoryId === undefined ? null : String(categoryId);
       },
     },
@@ -411,6 +412,31 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     listingRepo,
     marketplaceRepo
   );
+  const categoryCorrectionOperationService = new CategoryCorrectionOperationService(
+    categoryCorrectionOperationRepo,
+    eventRepo,
+    listingRepo,
+    productRepo,
+    marketplaceRepo,
+    olxPublicationQuotaService,
+    {
+      resolve: async (marketplace) => {
+        if (env.marketplaces.olx.adapterMode !== 'real') return adapterFactory.create(marketplace.key);
+        const accessToken = await marketplaceOAuthService.getValidAccessToken(marketplace.id);
+        return adapterFactory.create(
+          marketplace.key,
+          new FetchMarketplaceHttpClient({
+            defaultHeaders: buildOlxHeaders(accessToken),
+            timeoutMs: env.marketplaces.olx.requestTimeoutMs,
+            livePublishEnabled: env.marketplaces.olx.livePublishEnabled,
+          }),
+        );
+      },
+    },
+    activityLogRepo,
+    idGenerator,
+    publishAttemptRepo,
+  );
   const marketplaceImportService = new MarketplaceImportService(
     marketplaceRepo,
     productRepo,
@@ -432,8 +458,12 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           productRepo: new ProductRepository(pool, client),
           listingRepo: new ListingRepository(pool, client),
           activityLog: new ActivityLogRepository(pool, client),
+          eventRepo: new EventRepository(pool, client),
+          correctionOperations: new CategoryCorrectionOperationRepository(pool, client),
         })
-      )
+      ),
+    eventRepo,
+    categoryCorrectionOperationRepo,
   );
 
   // 9. Register job handlers now that their collaborators exist. The publish
@@ -453,7 +483,8 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
             livePublishEnabled: env.marketplaces.olx.livePublishEnabled,
           })
       : undefined,
-    publishAttemptRepo
+    publishAttemptRepo,
+    olxPublicationQuotaService
   );
   publishQueue.registerHandler((data) => publishHandler.handle(data));
 
@@ -473,6 +504,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
             })
         : undefined,
     eventPublisher,
+    recommendCategoryMismatch: (input) => marketplaceImportService.recommendSyncedCategoryMismatch(input),
   });
   syncQueue.registerHandler((data) => syncHandler.handle(data));
 
@@ -510,7 +542,17 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     marketplaceOAuthService,
     marketplaceSyncScheduler,
     marketplaceImportService,
+    olxTaxonomyResolver: async (marketplaceId) => {
+      const accessToken = await marketplaceOAuthService.getValidAccessToken(marketplaceId);
+      const http = new FetchMarketplaceHttpClient({
+        defaultHeaders: buildOlxHeaders(accessToken),
+        timeoutMs: env.marketplaces.olx.requestTimeoutMs,
+        livePublishEnabled: false,
+      });
+      return new OlxTaxonomyResolver(http, env.marketplaces.olx.apiBaseUrl);
+    },
     olxPublicationQuotaService,
+    categoryCorrectionOperationService,
     marketplaceOAuthReturnUrl: env.marketplaces.olx.oauthSuccessUrl,
     workspaceRepo,
     authUserStore,

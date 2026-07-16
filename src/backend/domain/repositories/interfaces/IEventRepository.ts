@@ -9,6 +9,8 @@ export interface IEventRepository {
   findByStatus(workspaceId: string, status: HermesEventStatus): Promise<HermesEvent[]>;
   findPendingReview(workspaceId: string): Promise<HermesEvent[]>;
   save(event: HermesEvent): Promise<void>;
+  /** Atomically inserts a semantic recommendation once. */
+  saveRecommendationIfAbsent(event: HermesEvent, idempotencyKey: string): Promise<boolean>;
   saveAll(events: HermesEvent[]): Promise<void>;
   deleteOlderThan(cutoff: Date): Promise<void>;
 }

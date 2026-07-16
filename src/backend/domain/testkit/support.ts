@@ -143,6 +143,7 @@ export class InMemoryMarketplaceRepository implements IMarketplaceRepository {
 export class InMemoryEventRepository implements IEventRepository {
   readonly items = new Map<string, HermesEvent>();
   readonly savedBatches: HermesEvent[][] = [];
+  readonly recommendationKeys = new Set<string>();
 
   async findById(id: string): Promise<HermesEvent | null> {
     return this.items.get(id) ?? null;
@@ -167,6 +168,13 @@ export class InMemoryEventRepository implements IEventRepository {
   }
   async save(event: HermesEvent): Promise<void> {
     this.items.set(event.id, event);
+  }
+  async saveRecommendationIfAbsent(event: HermesEvent, idempotencyKey: string): Promise<boolean> {
+    const key = `${event.workspaceId}:${idempotencyKey}`;
+    if (this.recommendationKeys.has(key)) return false;
+    this.recommendationKeys.add(key);
+    this.items.set(event.id, event);
+    return true;
   }
   async saveAll(events: HermesEvent[]): Promise<void> {
     this.savedBatches.push(events);

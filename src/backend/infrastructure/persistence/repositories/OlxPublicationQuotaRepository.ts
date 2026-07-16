@@ -154,7 +154,7 @@ export class OlxPublicationQuotaRepository implements IOlxPublicationQuotaReposi
          WHERE operation_id = $1`,
         [input.operationId],
       );
-      if (replay.rows[0]) {
+      if (replay.rows[0] && replay.rows[0].decision !== 'block') {
         const quota = replay.rows[0].quota_id
           ? await this.findQuotaById(client, replay.rows[0].quota_id)
           : null;
@@ -195,29 +195,30 @@ export class OlxPublicationQuotaRepository implements IOlxPublicationQuotaReposi
       const evaluation = quota?.evaluate(input.at);
       const status = evaluation?.status ?? 'unknown';
       const reason = evaluation?.reason ?? 'quota_unknown';
-      const { decision, consumedUnit } = decideOlxPublication(
+      const { decision } = decideOlxPublication(
         evaluation,
         input.overrideConfirmed,
         quota !== null,
       );
 
-      if (consumedUnit && quota) {
-        const updated = await client.query<OlxQuotaRow>(
-          `UPDATE olx_publication_quotas
-           SET consumed = consumed + 1, updated_at = NOW()
-           WHERE id = $1
-           RETURNING ${QUOTA_COLUMNS}`,
-          [quota.id],
-        );
-        quota = toQuota(updated.rows[0]);
-      }
+      const consumedUnit = false;
 
       await client.query(
         `INSERT INTO olx_publication_operations
            (operation_id, workspace_id, marketplace_id, marketplace_account_id, quota_id,
             listing_id, subcategory_id, mode, decision, quota_status, reason,
             consumed_unit, override_reason, actor_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         ON CONFLICT (operation_id) DO UPDATE SET
+           quota_id = EXCLUDED.quota_id,
+           decision = EXCLUDED.decision,
+           quota_status = EXCLUDED.quota_status,
+           reason = EXCLUDED.reason,
+           consumed_unit = false,
+           override_reason = EXCLUDED.override_reason,
+           actor_id = EXCLUDED.actor_id,
+           created_at = EXCLUDED.created_at
+         WHERE olx_publication_operations.consumed_unit = false`,
         [
           input.operationId,
           input.workspaceId,
@@ -246,6 +247,78 @@ export class OlxPublicationQuotaRepository implements IOlxPublicationQuotaReposi
         consumedUnit,
         replayed: false,
       };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch { /* preserve original error */ }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async consume(operationId: string, at: Date): Promise<OlxPublicationAuthorization> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `olx-quota-operation:${operationId}`,
+      ]);
+      const operation = await client.query<OlxQuotaOperationRow>(
+        `SELECT operation_id, decision, quota_status, reason, consumed_unit, quota_id
+         FROM olx_publication_operations
+         WHERE operation_id = $1
+         FOR UPDATE`,
+        [operationId],
+      );
+      const row = operation.rows[0];
+      if (!row) throw new Error(`OLX quota reservation not found: ${operationId}`);
+
+      let quota: OlxPublicationQuota | null = null;
+      if (row.quota_id) {
+        const quotaResult = await client.query<OlxQuotaRow>(
+          `SELECT ${QUOTA_COLUMNS} FROM olx_publication_quotas WHERE id = $1 FOR UPDATE`,
+          [row.quota_id],
+        );
+        quota = quotaResult.rows[0] ? toQuota(quotaResult.rows[0]) : null;
+      }
+      if (row.consumed_unit || row.decision === 'block') {
+        await client.query('COMMIT');
+        return {
+          operationId,
+          decision: row.decision,
+          status: row.quota_status,
+          reason: row.reason,
+          quota,
+          consumedUnit: row.consumed_unit,
+          replayed: true,
+        };
+      }
+
+      const evaluation = quota?.evaluate(at);
+      let decision: OlxQuotaOperationRow['decision'] = row.decision;
+      const status: OlxQuotaOperationRow['quota_status'] = evaluation?.status ?? 'unknown';
+      const reason = evaluation?.reason ?? 'quota_unknown';
+      if (decision === 'allow' && !evaluation?.canPublishForFree) decision = 'block';
+
+      let consumedUnit = false;
+      if (decision !== 'block' && quota) {
+        const updated = await client.query<OlxQuotaRow>(
+          `UPDATE olx_publication_quotas
+           SET consumed = consumed + 1, updated_at = NOW()
+           WHERE id = $1
+           RETURNING ${QUOTA_COLUMNS}`,
+          [quota.id],
+        );
+        quota = toQuota(updated.rows[0]);
+        consumedUnit = true;
+      }
+      await client.query(
+        `UPDATE olx_publication_operations
+         SET decision = $2, quota_status = $3, reason = $4, consumed_unit = $5
+         WHERE operation_id = $1`,
+        [operationId, decision, status, reason, consumedUnit],
+      );
+      await client.query('COMMIT');
+      return { operationId, decision, status, reason, quota, consumedUnit, replayed: false };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch { /* preserve original error */ }
       throw error;

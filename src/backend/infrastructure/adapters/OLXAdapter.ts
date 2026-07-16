@@ -7,6 +7,7 @@ import {
   type MarketplaceHttpClient,
   StubMarketplaceHttpClient,
   HttpError,
+  type HttpRequestConfig,
   type StubResponder,
   type HttpResponse,
 } from './MarketplaceHttpClient';
@@ -17,6 +18,8 @@ import type {
   PublishResult,
   SyncedListing,
 } from '../../domain/services/MarketplaceAdapter';
+import { evaluateOlxCategory } from '../../domain/services/OlxCategoryGuard';
+import { OlxTaxonomyResolver, type OlxTrustedTaxonomyResolver } from './OlxTaxonomyResolver';
 
 const OLX_PARTNER_BASE_URL = 'https://www.olx.pl/api/partner';
 
@@ -82,7 +85,7 @@ interface OlxAdvertResponse {
   status: string;
   title?: string;
   description?: string | null;
-  category?: { id?: string | number; name?: string } | string | null;
+  category?: { id?: string | number; name?: string; path?: string[] | string; leaf?: boolean } | string | null;
   url?: string | null;
   public_url?: string | null;
   external_url?: string | null;
@@ -119,23 +122,44 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     http?: MarketplaceHttpClient,
     options?: MarketplaceAdapterOptions,
     private readonly config: OlxAdapterConfig = {},
+    private readonly taxonomy: OlxTrustedTaxonomyResolver = new OlxTaxonomyResolver(
+      http ?? new StubMarketplaceHttpClient(OLXAdapter.stubResponder),
+      config.baseUrl ?? OLX_PARTNER_BASE_URL,
+    ),
   ) {
     super(http ?? new StubMarketplaceHttpClient(OLXAdapter.stubResponder), 'olx', options);
     this.baseUrl = (config.baseUrl ?? OLX_PARTNER_BASE_URL).replace(/\/$/, '');
   }
 
   protected async doPublish(input: ListingPublishInput): Promise<PublishResult> {
-    const categoryId = this.mapCategory(input.category);
+    const categoryId = this.resolvePublishCategory(input);
+    this.assertPublishDetails(categoryId);
+    return this.sendPreparedAdvert(this.createAdvertRequest(this.buildAdvertPayload(input, categoryId)));
+  }
+
+  async preparePublish(input: ListingPublishInput): Promise<{ execute(): Promise<PublishResult> }> {
+    const categoryId = this.resolvePublishCategory(input);
     this.assertPublishDetails(categoryId);
     const body = this.buildAdvertPayload(input, categoryId);
+    const request = this.createAdvertRequest(body);
+    this.http.assertRequestAllowed?.(request);
+    return {
+      execute: () => this.execute('publish', () => this.sendPreparedAdvert(request), { retry: false }),
+    };
+  }
 
-    const res = await this.http.request<
-      OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>
-    >({
+  private createAdvertRequest(body: Record<string, unknown>): HttpRequestConfig {
+    return {
       method: 'POST',
       url: `${this.baseUrl}/adverts`,
       body,
-    });
+    };
+  }
+
+  private async sendPreparedAdvert(request: HttpRequestConfig): Promise<PublishResult> {
+    const res = await this.http.request<
+      OlxAdvertResponse | OlxResponseEnvelope<OlxAdvertResponse>
+    >(request);
     const advert = this.unwrapAdvert(res.data);
     return {
       externalListingId: String(advert.id),
@@ -152,7 +176,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     current: ListingPublishInput,
   ): Promise<void> {
     const updated = { ...current, ...changes };
-    const categoryId = this.mapCategory(updated.category);
+    const categoryId = this.resolvePublishCategory(updated);
     this.assertPublishDetails(categoryId);
     const body = this.buildAdvertPayload(updated, categoryId);
     await this.http.request({
@@ -326,7 +350,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     return statistics ? { ...advert, statistics } : advert;
   }
 
-  private toSyncedListing(data: OlxAdvertResponse): SyncedListing {
+  private async toSyncedListing(data: OlxAdvertResponse): Promise<SyncedListing> {
     const remoteStatus = String(data.status ?? 'unknown').toLowerCase();
     return {
       externalListingId: String(data.id),
@@ -336,10 +360,11 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       views: this.extractViews(data),
       watchers: this.extractWatchers(data),
       messages: this.extractMessages(data),
+      marketplaceCategory: await this.extractMarketplaceCategory(data),
     };
   }
 
-  private toImportedListing(data: OlxAdvertResponse): ImportedMarketplaceListing {
+  private async toImportedListing(data: OlxAdvertResponse): Promise<ImportedMarketplaceListing> {
     const price = this.extractPrice(data.price);
     const views = this.extractViews(data);
     const watchers = this.extractWatchers(data);
@@ -354,6 +379,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       status: OLX_STATUS_TO_LOCAL[String(data.status ?? 'unknown').toLowerCase()] ?? 'draft',
       remoteStatus: data.status,
       category: typeof data.category === 'string' ? data.category : data.category?.name ?? null,
+      marketplaceCategory: await this.extractMarketplaceCategory(data),
       imageUrls: this.extractImageUrls(data),
       remoteUpdatedAt: data.updated_at ? new Date(data.updated_at) : null,
       metrics: {
@@ -478,6 +504,33 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     if (!this.config.cityId) throw new Error('OLX city id is required for live publish');
     if (!this.config.contactName?.trim()) {
       throw new Error('OLX contact name is required for live publish');
+    }
+  }
+
+  private resolvePublishCategory(input: ListingPublishInput): number | undefined {
+    if (this.config.requirePublishDetails) {
+      const decision = evaluateOlxCategory({
+        name: input.productName, description: input.description, category: input.category,
+      }, input.marketplaceCategory ?? null);
+      if (!decision.allowed) throw new Error(decision.message ?? 'OLX category validation failed');
+      const exact = input.marketplaceCategory!;
+      const id = Number(exact.providerCategoryId);
+      return Number.isSafeInteger(id) && id > 0 ? id : undefined;
+    }
+    return input.marketplaceCategory
+      ? Number(input.marketplaceCategory.providerCategoryId)
+      : this.mapCategory(input.category);
+  }
+
+  private async extractMarketplaceCategory(data: OlxAdvertResponse) {
+    if (!data.category || typeof data.category === 'string' || data.category.id === undefined) return null;
+    try {
+      return await this.taxonomy.verify(String(data.category.id));
+    } catch {
+      // Advert payloads do not attest taxonomy path, leafness, confidence, or freshness.
+      // Resolver failure is transient/unknown: preserve previously verified sync metadata.
+      // Null remains reserved for provider-declared absence or invalid category data.
+      return undefined;
     }
   }
 

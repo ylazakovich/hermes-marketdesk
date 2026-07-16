@@ -20,6 +20,22 @@ export type ProductCondition =
 
 export type ListingStatus = 'live' | 'draft' | 'expired' | 'error';
 
+export type MarketplaceCategorySource =
+  | 'provider_taxonomy'
+  | 'remote_import'
+  | 'user_confirmed';
+
+export interface MarketplaceCategoryMetadata {
+  providerCategoryId: string;
+  name: string;
+  path: string[];
+  source: MarketplaceCategorySource;
+  confidence: number;
+  isLeaf: boolean;
+  taxonomyVerifiedAt: string;
+  taxonomyStaleAt: string;
+}
+
 export type AutonomyLevel = 'suggest_only' | 'balanced' | 'full_auto';
 
 export type HermesSeverity = 'info' | 'success' | 'warning' | 'critical';
@@ -48,6 +64,7 @@ export type HermesEventType =
   | 'suggested_more_photos'
   | 'create_listing'
   | 'update_description'
+  | 'olx_category_mismatch'
   | 'relist';
 
 export type ChangedBy = 'user' | 'hermes';
@@ -92,12 +109,68 @@ export interface CreateListingChangePayload {
   marketplaceKey: MarketplaceKey;
 }
 
+export type CategoryRecreationOperationStatus =
+  | 'pending_review'
+  | 'blocked_pending_quota_review'
+  | 'approved'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed';
+
+/**
+ * Server-authorized operation capability. The UI never invents an execution
+ * route: an action is enabled only when the authenticated API includes one of
+ * these relative links in the event representation.
+ */
+export type CategoryRecreationOperationAction = {
+  [Action in 'approve' | 'execute']: {
+    kind: Action;
+    method: 'POST';
+    href: `/hermes/category-correction-operations/${string}/${Action}`;
+    label?: string;
+  };
+}['approve' | 'execute'];
+
+export interface CategoryRecreationQuotaReview {
+  status: 'available' | 'unknown' | 'stale' | 'exhausted' | 'paid_risk';
+  cycleStartedAt?: string;
+  cycleEndsAt?: string;
+  remaining?: number | null;
+  paidRisk: boolean;
+  reason?: string;
+}
+
+export interface CategoryRecreationChangePayload {
+  kind: 'category_recreation';
+  listingId: string;
+  currentCategory: MarketplaceCategoryMetadata;
+  /** Null until a trusted server-side taxonomy selection is available. */
+  proposedCategory: MarketplaceCategoryMetadata | null;
+  operations: readonly [
+    {
+      kind: 'delist'; intentId: string; status: CategoryRecreationOperationStatus;
+      providerSideEffectAllowed: boolean; quotaUnitsRestored: 0;
+      availableActions?: CategoryRecreationOperationAction[];
+      failureReason?: string;
+    },
+    {
+      kind: 'recreate'; intentId: string; status: CategoryRecreationOperationStatus;
+      providerSideEffectAllowed: boolean; quotaGuardRequired: true;
+      quota?: CategoryRecreationQuotaReview;
+      availableActions?: CategoryRecreationOperationAction[];
+      failureReason?: string;
+    }
+  ];
+}
+
 export type ProposedChange =
   | PriceChangePayload
   | TitleChangePayload
   | DescriptionChangePayload
   | RelistChangePayload
   | CreateListingChangePayload
+  | CategoryRecreationChangePayload
   | null;
 
 // ============================================================================
@@ -224,6 +297,7 @@ export interface Listing {
   price: number;
   status: ListingStatus;
   remoteStatus?: string;
+  marketplaceCategory?: MarketplaceCategoryMetadata;
   remoteStatusLabel?: string;
   isRemotePending?: boolean;
   views: number | null;

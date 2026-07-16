@@ -2,7 +2,7 @@
 // (OLXAdapter, AllegroAdapter, ...) are implemented in infrastructure (Group 3B).
 // The domain stays completely agnostic to marketplace specifics.
 
-import type { MarketplaceKey, ListingStatus } from '../../../shared/types';
+import type { MarketplaceKey, ListingStatus, MarketplaceCategoryMetadata } from '../../../shared/types';
 
 export interface ListingPublishInput {
   productName: string;
@@ -10,6 +10,7 @@ export interface ListingPublishInput {
   price: number;
   currency: string;
   category: string;
+  marketplaceCategory?: MarketplaceCategoryMetadata | null;
   condition: string;
   imageUrls: string[];
 }
@@ -21,6 +22,10 @@ export interface PublishResult {
   remoteStatus?: string | null;
   remoteImageUrls?: string[];
 }
+export interface PreparedMarketplacePublish {
+  execute(): Promise<PublishResult>;
+}
+
 export interface SyncedListing {
   externalListingId: string;
   externalUrl?: string | null;
@@ -30,6 +35,7 @@ export interface SyncedListing {
   views?: number | null;
   watchers?: number | null;
   messages?: number | null;
+  marketplaceCategory?: MarketplaceCategoryMetadata | null;
 }
 
 export interface ImportedMarketplaceListing {
@@ -42,6 +48,7 @@ export interface ImportedMarketplaceListing {
   status: ListingStatus;
   remoteStatus?: string | null;
   category?: string | null;
+  marketplaceCategory?: MarketplaceCategoryMetadata | null;
   imageUrls: string[];
   remoteUpdatedAt?: Date | null;
   metrics?: { views?: number; watchers?: number; messages?: number };
@@ -57,6 +64,9 @@ export interface IMarketplaceAdapter {
 
   // Publish a new listing to the marketplace.
   publish(input: ListingPublishInput): Promise<PublishResult>;
+  // Validate and prepare all local provider payload state before a durable
+  // publication fence is claimed. execute() begins the provider request.
+  preparePublish?(input: ListingPublishInput): Promise<PreparedMarketplacePublish>;
 
   // Update fields of an existing marketplace listing.
   updateListing(
