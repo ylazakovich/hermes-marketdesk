@@ -397,7 +397,7 @@ class ProductService {
 
 // Application Service (ProductApplicationService)
 class ProductApplicationService {
-  createProduct(dto: CreateProductDTO): Promise<void> {
+  createProduct(dto: CreateProductDTO): Promise<Result<Product>> {
     // 1. Fetch context
     const workspace = await this.workspaceRepo.getById(dto.workspaceId);
     
@@ -591,8 +591,8 @@ function useHermesLive() {
   useEffect(() => {
     const ws = new WebSocket('ws://api/hermes/live');
     
-    ws.onmessage = (event) => {
-      const event = JSON.parse(event.data);
+    ws.onmessage = (messageEvent) => {
+      const event = JSON.parse(messageEvent.data);
       // Update RTK Query cache or Redux state
       dispatch(hermesApi.util.updateQueryData(
         'getHermesEvents',
@@ -610,221 +610,30 @@ function useHermesLive() {
 
 ---
 
-## 7. Database Schema
+## 7. Database Schema and Evolution
 
-### PostgreSQL Tables
+### Canonical executable sources
 
-```sql
--- Workspaces (multi-tenancy root)
-CREATE TABLE workspaces (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(255) NOT NULL,
-  currency VARCHAR(3) DEFAULT 'PLN',
-  timezone VARCHAR(100) DEFAULT 'Europe/Warsaw',
-  autonomy_level VARCHAR(50) DEFAULT 'suggest_only',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+The canonical PostgreSQL definitions are executable repository files, not duplicated pseudo-DDL in this document:
 
--- Products
-CREATE TABLE products (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  sku VARCHAR(100) NOT NULL UNIQUE,
-  name VARCHAR(255) NOT NULL,
-  description TEXT NOT NULL,
-  cost_price DECIMAL(10, 2) NOT NULL,
-  selling_price DECIMAL(10, 2) NOT NULL,
-  condition VARCHAR(50) NOT NULL,
-  category VARCHAR(100) NOT NULL,
-  status VARCHAR(50) DEFAULT 'draft',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT check_price CHECK (selling_price >= 0),
-  INDEX idx_workspace_status (workspace_id, status),
-  INDEX idx_sku (workspace_id, sku)
-);
+- `src/backend/persistence/schema.sql` — complete bootstrap schema for a new database;
+- `src/backend/persistence/migrations/*.sql` — ordered, forward-only changes for existing databases;
+- `src/backend/persistence/migrate.ts` — lexical migration runner.
 
--- Product Tags
-CREATE TABLE product_tags (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  tag VARCHAR(100) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_product (product_id)
-);
+All DDL uses PostgreSQL syntax. Indexes are separate `CREATE INDEX` statements, marketplace credentials are application-encrypted into an authenticated envelope before that envelope is persisted as JSONB, workspace guardrails are JSONB, and analytics sale events snapshot `cost_at_sale`. Repository mappers and integration tests are part of the schema contract.
 
--- Product Images
-CREATE TABLE product_images (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  url VARCHAR(500) NOT NULL,
-  position INT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_product (product_id)
-);
+### Implemented migration strategy
 
--- Marketplaces
-CREATE TABLE marketplaces (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  key VARCHAR(50) NOT NULL,
-  name VARCHAR(100) NOT NULL,
-  connected BOOLEAN DEFAULT FALSE,
-  sync_mode VARCHAR(50) DEFAULT 'manual',
-  last_sync_at TIMESTAMP,
-  error_count INT DEFAULT 0,
-  capacity INT DEFAULT 100,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT unique_marketplace UNIQUE(workspace_id, key),
-  INDEX idx_workspace (workspace_id)
-);
+MarketDesk uses ordered, idempotent SQL migrations. Ordinary files execute through PostgreSQL in lexical order. A migration containing `CREATE INDEX CONCURRENTLY` executes outside a transaction while holding a PostgreSQL advisory lock, because concurrent index DDL cannot run inside a transaction.
 
--- Marketplace Accounts
-CREATE TABLE marketplace_accounts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  marketplace_id UUID NOT NULL REFERENCES marketplaces(id) ON DELETE CASCADE,
-  handle VARCHAR(255) NOT NULL,
-  credentials JSONB NOT NULL ENCRYPTED,
-  status VARCHAR(50) DEFAULT 'connected',
-  scopes TEXT[] DEFAULT '{}',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_marketplace (marketplace_id)
-);
+The current runner deliberately has no migration ledger and no automatic down migration. Therefore deployment uses a forward-recovery discipline:
 
--- Listings (per product × marketplace)
-CREATE TABLE listings (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  marketplace_id UUID NOT NULL REFERENCES marketplaces(id),
-  marketplace_listing_id VARCHAR(255),
-  price DECIMAL(10, 2) NOT NULL,
-  status VARCHAR(50) DEFAULT 'draft',
-  views INT DEFAULT 0,
-  watchers INT DEFAULT 0,
-  messages INT DEFAULT 0,
-  published_at TIMESTAMP,
-  expires_at TIMESTAMP,
-  sync_error TEXT,
-  last_sync_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT unique_listing UNIQUE(product_id, marketplace_id),
-  INDEX idx_product (product_id),
-  INDEX idx_marketplace (marketplace_id),
-  INDEX idx_status (status),
-  INDEX idx_expires (expires_at)
-);
+1. create and verify a fresh live backup before schema mutation;
+2. execute the ordered migrations;
+3. verify schema-dependent application flows and health endpoints;
+4. recover forward from the verified backup if required.
 
--- Price History
-CREATE TABLE price_history (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
-  old_price DECIMAL(10, 2),
-  new_price DECIMAL(10, 2) NOT NULL,
-  changed_by VARCHAR(50) NOT NULL, -- 'user' | 'hermes'
-  reason VARCHAR(255),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_listing (listing_id),
-  INDEX idx_created (created_at)
-);
-
--- Hermes Events
-CREATE TABLE hermes_events (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
-  type VARCHAR(100) NOT NULL,
-  severity VARCHAR(50) NOT NULL,
-  status VARCHAR(50) NOT NULL,
-  title VARCHAR(255) NOT NULL,
-  detail TEXT,
-  proposed_change JSONB,
-  autonomy_decision VARCHAR(50),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  resolved_at TIMESTAMP,
-  INDEX idx_workspace (workspace_id),
-  INDEX idx_product (product_id),
-  INDEX idx_status (status),
-  INDEX idx_created (created_at)
-);
-
--- Activity Log (Audit Trail)
-CREATE TABLE activity_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  entity_type VARCHAR(100) NOT NULL,
-  entity_id UUID NOT NULL,
-  actor_type VARCHAR(50) NOT NULL, -- 'user' | 'hermes'
-  actor_id VARCHAR(100),
-  action VARCHAR(100) NOT NULL,
-  metadata JSONB,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_entity (entity_type, entity_id),
-  INDEX idx_workspace (workspace_id),
-  INDEX idx_created (created_at)
-);
-
--- Analytics Events
-CREATE TABLE analytics_events (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  listing_id UUID REFERENCES listings(id) ON DELETE SET NULL,
-  event_type VARCHAR(50) NOT NULL, -- 'view' | 'message' | 'sale'
-  quantity INT DEFAULT 1,
-  amount DECIMAL(10, 2),
-  occurred_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_workspace_type (workspace_id, event_type),
-  INDEX idx_listing (listing_id),
-  INDEX idx_occurred (occurred_at)
-);
-
--- User Sessions / API Keys
-CREATE TABLE api_keys (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  name VARCHAR(100) NOT NULL,
-  key_hash VARCHAR(255) NOT NULL UNIQUE,
-  last_used_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  revoked BOOLEAN DEFAULT FALSE,
-  INDEX idx_workspace (workspace_id)
-);
-```
-
-### Key Indexes for Performance
-
-```sql
--- Fast product lookup by workspace + status
-CREATE INDEX idx_products_workspace_status ON products(workspace_id, status);
-
--- Fast listing queries for sync operations
-CREATE INDEX idx_listings_marketplace_status ON listings(marketplace_id, status);
-
--- Price history queries for charts
-CREATE INDEX idx_price_history_listing_date ON price_history(listing_id, created_at DESC);
-
--- Analytics aggregation
-CREATE INDEX idx_analytics_workspace_date ON analytics_events(workspace_id, occurred_at DESC);
-CREATE INDEX idx_analytics_type ON analytics_events(workspace_id, event_type, occurred_at DESC);
-
--- Audit trail searches
-CREATE INDEX idx_activity_workspace_date ON activity_log(workspace_id, created_at DESC);
-CREATE INDEX idx_activity_entity ON activity_log(entity_type, entity_id);
-```
-
-### Why This Schema?
-
-- **Workspace isolation**: True multi-tenancy; workspaces are logical tenants
-- **Normalized design**: Avoids duplication; easy to update shared data
-- **JSONB for flexibility**: Credentials, metadata, proposed changes without schema changes
-- **Immutable logs**: Activity & analytics are append-only; never deleted
-- **Efficient queries**: Strategic indexes for common searches (by status, date, marketplace)
-- **Encryption at rest**: Credentials and sensitive fields encrypted in DB layer
-
----
+`node-pg-migrate`, Agenda/MongoDB and other uninstalled libraries are not part of the implemented architecture. Adopting a migration ledger or reversible framework requires a separate approved migration plan. See `ARCHITECTURE_AMENDMENTS.md` fix 2 for the historical decision.
 
 ## 8. Repository Structure
 
@@ -1116,6 +925,8 @@ export class MarketplaceSyncService {
 ---
 
 ## 10. Hermes AI Architecture
+
+> **Implemented lifecycle:** persistence, API and domain currently use `pending_review`, `applied` and `dismissed`. The larger seven-state lifecycle is an accepted target tracked by issue #178, not current runtime behavior. Any transition must update database, API, domain and UI together.
 
 ### Agent State Machine
 
@@ -1707,106 +1518,19 @@ eventBroker.subscribe('job.failed', async (event) => {
 
 ---
 
-## 13. Scheduler
+## 13. Scheduling and Durable Jobs
 
-### Agenda-based Cron Jobs
+### Implemented strategy
 
-```typescript
-// infrastructure/scheduler/TaskScheduler.ts
-import Agenda from 'agenda';
+MarketDesk uses Bull backed by Redis for durable work and repeatable schedules. `MarketplaceSyncScheduler` reconciles one deterministic repeatable job per connected hourly marketplace; `BullJobQueue` owns queue registration, retries and worker execution.
 
-export class TaskScheduler {
-  private agenda: Agenda;
-  
-  constructor(mongoUri: string) {
-    // Note: Agenda uses MongoDB. For pure SQL solution, use node-cron or custom scheduler
-    this.agenda = new Agenda({ mongo: { address: mongoUri } });
-  }
-  
-  async start(): Promise<void> {
-    this.registerJobs();
-    await this.agenda.start();
-  }
-  
-  private registerJobs(): void {
-    // Sync all connected marketplaces hourly
-    this.agenda.define('sync-all-marketplaces', async (job) => {
-      const workspaceId = job.attrs.data.workspaceId;
-      const marketplaces = await this.marketplaceRepo.findConnected(workspaceId);
-      
-      for (const marketplace of marketplaces) {
-        await this.jobQueueService.enqueueSync(marketplace.id);
-      }
-    });
-    
-    // Run Hermes agent twice daily
-    this.agenda.define('run-hermes', async (job) => {
-      const workspaceId = job.attrs.data.workspaceId;
-      await this.jobQueueService.enqueueHermesRun(workspaceId);
-    });
-    
-    // Aggregate analytics hourly
-    this.agenda.define('aggregate-analytics', async (job) => {
-      const workspaceId = job.attrs.data.workspaceId;
-      await this.jobQueueService.enqueueAnalytics(workspaceId, 'hourly');
-    });
-    
-    // Daily summary email
-    this.agenda.define('send-daily-summary', async (job) => {
-      const workspaceId = job.attrs.data.workspaceId;
-      const summary = await this.analyticsService.getDailySummary(workspaceId);
-      await this.emailService.sendDailySummary(workspaceId, summary);
-    });
-    
-    // Cleanup old events (retain 90 days)
-    this.agenda.define('cleanup-old-events', async () => {
-      const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-      await this.eventRepo.deleteOlderThan(cutoff);
-    });
-    
-    // Schedule the jobs
-    await this.agenda.every('0 * * * *', 'sync-all-marketplaces', { workspaceId: 'all' });
-    await this.agenda.every('0 8,20 * * *', 'run-hermes', { workspaceId: 'all' });
-    await this.agenda.every('0 * * * *', 'aggregate-analytics', { workspaceId: 'all' });
-    await this.agenda.every('0 6 * * *', 'send-daily-summary', { workspaceId: 'all' });
-    await this.agenda.every('0 2 * * 0', 'cleanup-old-events'); // Weekly Sunday 2am
-  }
-}
-```
+- `manual`: no repeatable job; synchronization requires an explicit action;
+- `hourly`: one deterministic Bull repeatable job per connected marketplace;
+- `realtime`: fails closed until verified marketplace webhooks are available.
 
-### Alternative: Node.js Native (no MongoDB)
+The scheduling layer only enqueues durable work. Job handlers perform provider side effects and rely on queue retry/checkpoint behavior. Agenda/MongoDB and `node-cron` are not runtime dependencies.
 
-```typescript
-// For purely self-hosted without MongoDB dependency
-export class NativeScheduler {
-  private jobs: Map<string, NodeJS.Timer> = new Map();
-  
-  registerJob(name: string, cronExpression: string, handler: () => Promise<void>): void {
-    const schedule = cronExpression; // Use node-cron library
-    const task = cron.schedule(schedule, async () => {
-      try {
-        await handler();
-      } catch (error) {
-        console.error(`Job ${name} failed:`, error);
-      }
-    });
-    
-    this.jobs.set(name, task as unknown as NodeJS.Timer);
-  }
-  
-  start(): void {
-    // All jobs auto-start with cron.schedule
-  }
-  
-  stop(): void {
-    for (const task of this.jobs.values()) {
-      clearInterval(task);
-    }
-  }
-}
-```
-
----
+Evidence: `src/backend/application/services/MarketplaceSyncScheduler.ts`, `src/backend/infrastructure/jobQueue/BullJobQueue.ts`, DI wiring, and `MarketplaceSyncScheduler.test.ts`.
 
 ## 14. Notification System
 
@@ -2731,7 +2455,7 @@ Metrics to track:
 | **Cache** | Redis | Fast in-memory, event broker, job queue backing |
 | **Events** | Redis Streams | Simple, append-only, self-hosted friendly |
 | **Jobs** | Bull + Redis | Node.js native, reliable, excellent for VPS |
-| **Scheduler** | node-cron | Lightweight, no MongoDB dependency |
+| **Scheduler** | Bull repeatable jobs + Redis | Durable deterministic schedules share the existing queue/runtime |
 | **AI** | Hermes Agent API Server | Uses the native Hermes instance on the same VPS; provider/model/tooling stays centralized |
 | **Email** | SendGrid / Mailgun | Transactional reliability, SMTP fallback |
 | **Telegram** | node-telegram-bot-api | Direct bot integration |
@@ -2755,7 +2479,7 @@ Metrics to track:
 | **Database** | PostgreSQL | MongoDB, MySQL | PG has JSONB (flexibility) + ACID (safety) |
 | **Marketplace Abstraction** | Adapter pattern | Strategy, Factory | Adapter is industry standard; easy to understand |
 | **Hermes AI** | Hermes Agent API Server | Direct vendor APIs, standalone app LLM key | Keeps MarketDesk on the same native Hermes runtime and avoids duplicating provider credentials |
-| **Scheduler** | node-cron | Agenda, Bull | node-cron is lightweight; no external DB needed |
+| **Scheduler** | Bull repeatable jobs | Agenda, node-cron | Reuses durable Redis-backed jobs, retries and worker checkpoints |
 | **Auth** | JWT | Session cookies, OAuth | JWT is stateless; OAuth adds complexity |
 | **API Style** | REST | GraphQL | REST is simpler for CRUD; GraphQL overkill for v1 |
 

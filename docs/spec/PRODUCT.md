@@ -10,7 +10,7 @@ Use these artifacts in this order. A lower item may clarify a higher item, but m
 
 1. **Product behavior and acceptance:** [`../design/MarketDesk PRD.dc.html`](../design/MarketDesk%20PRD.dc.html). This original 18-section PRD is the canonical product contract.
 2. **Visual composition and interaction usage:** [`../design/MarketDesk.dc.html`](../design/MarketDesk.dc.html) and curated [`../design/screenshots/`](../design/screenshots/). The companion is an implementation reference, not a separate product scope.
-3. **Architecture:** [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md), with [`../../ARCHITECTURE_AMENDMENTS.md`](../../ARCHITECTURE_AMENDMENTS.md) taking precedence where it explicitly amends the baseline.
+3. **Architecture:** [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) is canonical. [`../../ARCHITECTURE_AMENDMENTS.md`](../../ARCHITECTURE_AMENDMENTS.md) preserves historical review decisions and never overrides current code or the canonical architecture.
 4. **Current maturity and approved deviations:** this file. Maturity limits must be represented honestly in the UI; they do not remove the PRD capability or roadmap surface.
 5. **Delivery state:** [`TRACEABILITY.md`](TRACEABILITY.md), GitHub issues and merged PR evidence.
 

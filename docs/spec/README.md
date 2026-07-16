@@ -4,7 +4,7 @@
 
 1. [`../design/MarketDesk PRD.dc.html`](../design/MarketDesk%20PRD.dc.html) — canonical product behavior and acceptance contract.
 2. [`../design/MarketDesk.dc.html`](../design/MarketDesk.dc.html) and [`../design/screenshots/`](../design/screenshots/) — canonical visual composition and interaction usage.
-3. [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) plus later [`../../ARCHITECTURE_AMENDMENTS.md`](../../ARCHITECTURE_AMENDMENTS.md) — architecture and safety constraints.
+3. [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) — canonical architecture, including explicit implemented-versus-target annotations. [`../../ARCHITECTURE_AMENDMENTS.md`](../../ARCHITECTURE_AMENDMENTS.md) is a historical review/decision record, not an active patch overlay.
 4. [`PRODUCT.md`](PRODUCT.md) — current maturity and explicitly approved deviations; it constrains claims but does not erase PRD requirements.
 5. [`TRACEABILITY.md`](TRACEABILITY.md) — implementation status, evidence and active issues.
 
