@@ -1,5 +1,6 @@
 import express from 'express';
 import request from 'supertest';
+import sharp from 'sharp';
 import type {
   IProductImageStorage,
   StoreProductImageInput,
@@ -12,7 +13,15 @@ import { authMiddleware, requireWorkspace, signToken } from '../http/middleware/
 import { createUploadRoutes } from '../http/routes/uploads';
 
 const IMAGE_ID = '123e4567-e89b-42d3-a456-426614174000';
-const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]);
+let jpeg: Buffer;
+
+beforeAll(async () => {
+  jpeg = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: '#663399' },
+  })
+    .jpeg()
+    .toBuffer();
+});
 
 class RecordingStorage implements IProductImageStorage {
   stored: StoreProductImageInput[] = [];
@@ -34,7 +43,7 @@ class RecordingStorage implements IProductImageStorage {
   }
 }
 
-function buildUploadApp(maxFileSize = 8) {
+function buildUploadApp(maxFileSize = 1024 * 1024) {
   const storage = new RecordingStorage();
   const service = new ProductImageUploadService(storage, maxFileSize);
   const controller = new ProductImageUploadController(service);
@@ -87,7 +96,7 @@ describe('product image upload HTTP contract', () => {
         id: IMAGE_ID,
         url: `/uploads/workspaces/scope/products/${IMAGE_ID}.jpg`,
         mediaType: 'image/jpeg',
-        size: jpeg.length,
+        size: expect.any(Number),
       },
     });
     expect(storage.stored[0]).toMatchObject({

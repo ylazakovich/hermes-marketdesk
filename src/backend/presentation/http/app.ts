@@ -145,7 +145,14 @@ export function buildApp(deps: AppDeps, options: AppOptions = {}): Express {
   const productImageUploadService =
     deps.productImageUploadService ??
     new DefaultProductImageUploadService(
-      new FilesystemProductImageStorage(path.resolve(process.cwd(), env.upload.uploadDir)),
+      new FilesystemProductImageStorage(
+        path.resolve(process.cwd(), env.upload.uploadDir),
+        crypto.randomUUID,
+        {
+          maxWorkspaceBytes: env.upload.maxWorkspaceBytes,
+          maxWorkspaceFiles: env.upload.maxWorkspaceFiles,
+        },
+      ),
       maxUploadFileSize,
     );
 

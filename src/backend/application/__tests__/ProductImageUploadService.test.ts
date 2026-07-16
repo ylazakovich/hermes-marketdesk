@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import type {
   IProductImageStorage,
   StoredProductImage,
@@ -29,25 +30,39 @@ class RecordingStorage implements IProductImageStorage {
   }
 }
 
-const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]);
-const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const webp = Buffer.from('RIFF\u0004\u0000\u0000\u0000WEBPVP8 ', 'binary');
+let jpeg: Buffer;
+let png: Buffer;
+let webp: Buffer;
+
+beforeAll(async () => {
+  const source = sharp({
+    create: { width: 2, height: 2, channels: 3, background: '#663399' },
+  });
+  [jpeg, png, webp] = await Promise.all([
+    source.clone().jpeg().toBuffer(),
+    source.clone().png().toBuffer(),
+    source.clone().webp().toBuffer(),
+  ]);
+});
 
 describe('ProductImageUploadService', () => {
   it.each([
-    ['image/jpeg' as const, jpeg, 'jpg' as const],
-    ['image/png' as const, png, 'png' as const],
-    ['image/webp' as const, webp, 'webp' as const],
-  ])('stores a validated %s image in the authenticated workspace', async (mediaType, bytes, extension) => {
+    ['image/jpeg' as const, () => jpeg, 'jpg' as const, 'jpeg'],
+    ['image/png' as const, () => png, 'png' as const, 'png'],
+    ['image/webp' as const, () => webp, 'webp' as const, 'webp'],
+  ])('stores a fully decoded %s image in the authenticated workspace', async (mediaType, bytes, extension, decodedFormat) => {
     const storage = new RecordingStorage();
-    const service = new ProductImageUploadService(storage, 1024);
+    const service = new ProductImageUploadService(storage, 1024 * 1024);
 
-    const result = await service.upload({ workspaceId: 'ws-1', mediaType, bytes });
+    const result = await service.upload({ workspaceId: 'ws-1', mediaType, bytes: bytes() });
 
     expect(result.url).toMatch(/^\/uploads\//);
-    expect(storage.stored).toEqual([
-      { workspaceId: 'ws-1', mediaType, extension, bytes },
-    ]);
+    expect(storage.stored[0]).toMatchObject({ workspaceId: 'ws-1', mediaType, extension });
+    await expect(sharp(storage.stored[0]!.bytes).metadata()).resolves.toMatchObject({
+      format: decodedFormat,
+      width: 2,
+      height: 2,
+    });
   });
 
   it('rejects an empty image', async () => {
@@ -58,23 +73,53 @@ describe('ProductImageUploadService', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('rejects a MIME type that does not match the decoded signature', async () => {
-    const service = new ProductImageUploadService(new RecordingStorage(), 1024);
+  it('rejects a MIME type that does not match the decoded format', async () => {
+    const service = new ProductImageUploadService(new RecordingStorage(), 1024 * 1024);
 
     await expect(
       service.upload({ workspaceId: 'ws-1', mediaType: 'image/png', bytes: jpeg }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
-  it('rejects unsupported and oversized image data', async () => {
-    const service = new ProductImageUploadService(new RecordingStorage(), 4);
+  it('rejects truncated and magic-prefix-only payloads', async () => {
+    const service = new ProductImageUploadService(new RecordingStorage(), 1024);
 
     await expect(
-      service.upload({ workspaceId: 'ws-1', mediaType: 'image/gif', bytes: Buffer.from('GIF89a') }),
+      service.upload({
+        workspaceId: 'ws-1',
+        mediaType: 'image/jpeg',
+        bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]),
+      }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     await expect(
-      service.upload({ workspaceId: 'ws-1', mediaType: 'image/jpeg', bytes: jpeg }),
+      service.upload({
+        workspaceId: 'ws-1',
+        mediaType: 'image/png',
+        bytes: png.subarray(0, 16),
+      }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('rejects unsupported and oversized image data through distinct validation paths', async () => {
+    const largeLimitService = new ProductImageUploadService(new RecordingStorage(), 1024);
+    await expect(
+      largeLimitService.upload({
+        workspaceId: 'ws-1',
+        mediaType: 'image/gif',
+        bytes: Buffer.from('GIF89a'),
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    const smallLimitService = new ProductImageUploadService(new RecordingStorage(), 4);
+    await expect(
+      smallLimitService.upload({ workspaceId: 'ws-1', mediaType: 'image/jpeg', bytes: jpeg }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('fails fast for an invalid configured file-size limit', () => {
+    expect(() => new ProductImageUploadService(new RecordingStorage(), Number.NaN)).toThrow(
+      /positive integer/,
+    );
   });
 
   it('deletes only through the authenticated workspace scope', async () => {

@@ -1,3 +1,5 @@
+import sharp from 'sharp';
+import { isUuid } from '../../../shared/validation/identifiers';
 import { ValidationError } from '../../domain/shared/DomainError';
 import type {
   IProductImageStorage,
@@ -6,67 +8,81 @@ import type {
   StoredProductImage,
 } from '../ports/IProductImageStorage';
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_INPUT_PIXELS = 40_000_000;
 
-function hasPrefix(bytes: Buffer, signature: readonly number[]): boolean {
-  return signature.every((value, index) => bytes[index] === value);
-}
-
-function detectedImage(bytes: Buffer): {
-  mediaType: ProductImageMediaType;
-  extension: ProductImageExtension;
-} | null {
-  if (bytes.length >= 3 && hasPrefix(bytes, [0xff, 0xd8, 0xff])) {
-    return { mediaType: 'image/jpeg', extension: 'jpg' };
-  }
-  if (
-    bytes.length >= 8 &&
-    hasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-  ) {
-    return { mediaType: 'image/png', extension: 'png' };
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-  ) {
-    return { mediaType: 'image/webp', extension: 'webp' };
-  }
-  return null;
-}
+const FORMATS: Record<
+  string,
+  { mediaType: ProductImageMediaType; extension: ProductImageExtension; sharpFormat: 'jpeg' | 'png' | 'webp' }
+> = {
+  jpeg: { mediaType: 'image/jpeg', extension: 'jpg', sharpFormat: 'jpeg' },
+  png: { mediaType: 'image/png', extension: 'png', sharpFormat: 'png' },
+  webp: { mediaType: 'image/webp', extension: 'webp', sharpFormat: 'webp' },
+};
 
 export class ProductImageUploadService {
   constructor(
     private readonly storage: IProductImageStorage,
     private readonly maxFileSize: number,
-  ) {}
+  ) {
+    if (!Number.isSafeInteger(maxFileSize) || maxFileSize <= 0) {
+      throw new Error('Product image maxFileSize must be a positive integer');
+    }
+  }
 
   async upload(input: {
     workspaceId: string;
     mediaType: string;
     bytes: Buffer;
   }): Promise<StoredProductImage> {
+    if (typeof input.workspaceId !== 'string' || input.workspaceId.length === 0) {
+      throw new ValidationError('Workspace id is required');
+    }
+    if (typeof input.mediaType !== 'string' || !Buffer.isBuffer(input.bytes)) {
+      throw new ValidationError('Image request is malformed');
+    }
     if (input.bytes.length === 0) throw new ValidationError('Image body is required');
     if (input.bytes.length > this.maxFileSize) {
       throw new ValidationError(`Image exceeds the ${this.maxFileSize} byte limit`);
     }
 
-    const detected = detectedImage(input.bytes);
-    if (!detected) throw new ValidationError('Unsupported image signature');
-    if (input.mediaType !== detected.mediaType) {
-      throw new ValidationError('Content-Type does not match the image signature');
+    let normalized: Buffer;
+    let format: (typeof FORMATS)[string];
+    try {
+      const decoder = sharp(input.bytes, {
+        failOn: 'error',
+        limitInputPixels: MAX_INPUT_PIXELS,
+      });
+      const metadata = await decoder.metadata();
+      format = FORMATS[metadata.format ?? ''];
+      if (!format || !metadata.width || !metadata.height) {
+        throw new Error('Unsupported or dimensionless image');
+      }
+      if (input.mediaType !== format.mediaType) {
+        throw new ValidationError('Content-Type does not match the decoded image format');
+      }
+
+      // Force a full decode and re-encode. This rejects truncated/polyglot payloads,
+      // applies EXIF orientation, and strips untrusted metadata before persistence.
+      normalized = await decoder.rotate().toFormat(format.sharpFormat).toBuffer();
+    } catch (error) {
+      if (error instanceof ValidationError) throw error;
+      throw new ValidationError('Image cannot be decoded as JPEG, PNG, or WebP');
+    }
+
+    if (normalized.length > this.maxFileSize) {
+      throw new ValidationError(`Normalized image exceeds the ${this.maxFileSize} byte limit`);
     }
 
     return this.storage.store({
       workspaceId: input.workspaceId,
-      bytes: Buffer.from(input.bytes),
-      extension: detected.extension,
-      mediaType: detected.mediaType,
+      bytes: normalized,
+      extension: format.extension,
+      mediaType: format.mediaType,
     });
   }
 
   async delete(workspaceId: string, imageId: string): Promise<boolean> {
-    if (!UUID_PATTERN.test(imageId)) throw new ValidationError('Invalid image id');
+    if (!isUuid(imageId)) throw new ValidationError('Invalid image id');
     return this.storage.delete(workspaceId, imageId);
   }
 }

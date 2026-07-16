@@ -55,4 +55,47 @@ describe('FilesystemProductImageStorage', () => {
     await expect(storage.delete('workspace-a', IMAGE_ID)).resolves.toBe(true);
     await expect(storage.delete('workspace-a', IMAGE_ID)).resolves.toBe(false);
   });
+
+  it('enforces workspace byte and file quotas before writing another image', async () => {
+    const ids = [
+      IMAGE_ID,
+      '223e4567-e89b-42d3-a456-426614174000',
+      '323e4567-e89b-42d3-a456-426614174000',
+    ];
+    const storage = new FilesystemProductImageStorage(
+      uploadDir,
+      () => ids.shift()!,
+      { maxWorkspaceBytes: 8, maxWorkspaceFiles: 2 },
+    );
+    const input = {
+      workspaceId: 'workspace-a',
+      bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      extension: 'jpg' as const,
+      mediaType: 'image/jpeg' as const,
+    };
+
+    await expect(storage.store(input)).resolves.toBeDefined();
+    await expect(storage.store(input)).resolves.toBeDefined();
+    await expect(storage.store(input)).rejects.toMatchObject({
+      code: 'GUARDRAIL_VIOLATION',
+    });
+  });
+
+  it('serializes concurrent writes so quota checks cannot race in one app process', async () => {
+    const ids = [IMAGE_ID, '223e4567-e89b-42d3-a456-426614174000'];
+    const storage = new FilesystemProductImageStorage(
+      uploadDir,
+      () => ids.shift()!,
+      { maxWorkspaceBytes: 4, maxWorkspaceFiles: 10 },
+    );
+    const input = {
+      workspaceId: 'workspace-a',
+      bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      extension: 'jpg' as const,
+      mediaType: 'image/jpeg' as const,
+    };
+
+    const results = await Promise.allSettled([storage.store(input), storage.store(input)]);
+    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
+  });
 });
