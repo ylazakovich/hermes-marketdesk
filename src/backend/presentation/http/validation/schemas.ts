@@ -17,22 +17,32 @@ import {
 
 const conditionEnum = z.enum(['new', 'like_new', 'good', 'fair', 'poor', 'refurbished', 'unknown']);
 
-export const createProductSchema = z.object({
-  sku: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().min(1),
-  costPrice: z.number().nonnegative(),
-  sellingPrice: z.number().nonnegative(),
-  currency: z
-    .string()
-    .regex(/^[A-Z]{3}$/)
-    .optional(),
-  condition: conditionEnum,
-  category: z.string().min(1),
-  tags: z.array(z.string()).optional(),
-  images: z.array(z.string()).optional(),
-  allowBelowCost: z.boolean().optional(),
-});
+export const createProductSchema = z
+  .object({
+    sku: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    costPrice: z.number().nonnegative(),
+    sellingPrice: z.number().nonnegative(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    condition: conditionEnum,
+    category: z.string().min(1),
+    tags: z.array(z.string()).optional(),
+    images: z.array(z.string()).optional(),
+    allowBelowCost: z.boolean().optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.sellingPrice < body.costPrice && body.allowBelowCost !== true) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['allowBelowCost'],
+        message: 'must be true when sellingPrice is below costPrice',
+      });
+    }
+  });
 
 export const updateProductSchema = z
   .object({
@@ -50,6 +60,20 @@ export const updateProductSchema = z
     tags: z.array(z.string()).optional(),
     images: z.array(z.string()).optional(),
     allowBelowCost: z.boolean().optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (
+      typeof body.costPrice === 'number' &&
+      typeof body.sellingPrice === 'number' &&
+      body.sellingPrice < body.costPrice &&
+      body.allowBelowCost !== true
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['allowBelowCost'],
+        message: 'must be true when sellingPrice is below costPrice',
+      });
+    }
   })
   .refine((obj) => Object.keys(obj).length > 0, {
     message: 'At least one field must be provided',

@@ -1,9 +1,10 @@
 // Single-page product create/edit form. Owns local field state + validation;
 // the parent supplies onSubmit (wired to a create/update mutation) and busy flag.
 import React, { useMemo, useState } from 'react';
-import { Alert, Button, Stack } from '@mui/material';
+import { Alert, Button, Checkbox, FormControlLabel, Stack } from '@mui/material';
 import type { Product } from '@shared/types';
 import {
+  belowCostConfirmationRequired,
   emptyProductValues,
   marginWarning,
   productToValues,
@@ -38,9 +39,15 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     initial ? productToValues(initial) : emptyProductValues(),
   );
   const [errors, setErrors] = useState<ProductFieldErrors>({});
+  const [belowCostConfirmed, setBelowCostConfirmed] = useState(false);
+  const [confirmationError, setConfirmationError] = useState(false);
 
   const change = <K extends keyof ProductFormValues>(field: K, value: ProductFormValues[K]) => {
     setValues((prev) => ({ ...prev, [field]: value }));
+    if (field === 'costPrice' || field === 'sellingPrice') {
+      setBelowCostConfirmed(false);
+      setConfirmationError(false);
+    }
   };
 
   const warning = useMemo(() => marginWarning(values), [values]);
@@ -51,6 +58,10 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     const validation = validateProductValues(values);
     setErrors(validation);
     if (Object.keys(validation).length > 0) return;
+    if (belowCostConfirmationRequired(values, belowCostConfirmed)) {
+      setConfirmationError(true);
+      return;
+    }
     onSubmit(toProductSubmissionValues(values));
   };
 
@@ -60,7 +71,23 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         <NameSkuFields {...fieldProps} />
         <DescriptionTagsFields {...fieldProps} />
         <PriceFields {...fieldProps} />
-        {warning && <Alert severity="warning">{warning}</Alert>}
+        {warning && (
+          <Alert severity={confirmationError ? 'error' : 'warning'}>
+            {warning}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={belowCostConfirmed}
+                  onChange={(event) => {
+                    setBelowCostConfirmed(event.target.checked);
+                    setConfirmationError(false);
+                  }}
+                />
+              }
+              label="I confirm this product may be sold below cost."
+            />
+          </Alert>
+        )}
         <StatusField {...fieldProps} />
         <ImagesField {...fieldProps} />
 

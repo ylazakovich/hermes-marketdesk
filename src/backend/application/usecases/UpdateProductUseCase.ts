@@ -30,6 +30,8 @@ export class UpdateProductUseCase {
     if (!product) {
       return Err(new NotFoundError(`Product not found: ${dto.productId}`));
     }
+    const previousCostPrice = product.costPrice?.amount ?? null;
+    const previousSellingPrice = product.sellingPrice.amount;
 
     if (dto.name !== undefined) {
       const r = product.rename(dto.name);
@@ -106,7 +108,14 @@ export class UpdateProductUseCase {
     await this.productRepo.save(product);
 
     try {
-      await this.eventPublisher.publish(this.updatedEvent(product));
+      await this.eventPublisher.publish(
+        this.updatedEvent(product, {
+          pricesChanged: dto.costPrice !== undefined || dto.sellingPrice !== undefined,
+          belowCostConfirmed: dto.allowBelowCost === true,
+          previousCostPrice,
+          previousSellingPrice,
+        })
+      );
     } catch {
       // Product already persisted; don't fail the request over a best-effort
       // event publication failure. Consider logging/metrics here.
@@ -115,12 +124,38 @@ export class UpdateProductUseCase {
     return Ok(product);
   }
 
-  private updatedEvent(product: Product): DomainEvent {
+  private updatedEvent(
+    product: Product,
+    pricing: {
+      pricesChanged: boolean;
+      belowCostConfirmed: boolean;
+      previousCostPrice: number | null;
+      previousSellingPrice: number;
+    }
+  ): DomainEvent {
+    const payload: Record<string, unknown> = {
+      productId: product.id,
+      workspaceId: product.workspaceId,
+    };
+    if (pricing.pricesChanged) {
+      payload.pricingDecision = {
+        belowCost: Boolean(product.costPrice?.isGreaterThan(product.sellingPrice)),
+        confirmed: pricing.belowCostConfirmed,
+        before: {
+          costPrice: pricing.previousCostPrice,
+          sellingPrice: pricing.previousSellingPrice,
+        },
+        after: {
+          costPrice: product.costPrice?.amount ?? null,
+          sellingPrice: product.sellingPrice.amount,
+        },
+      };
+    }
     return {
       type: 'product.updated',
       aggregateType: 'Product',
       aggregateId: product.id,
-      payload: { productId: product.id, workspaceId: product.workspaceId },
+      payload,
       occurredAt: new Date(),
     };
   }

@@ -1,5 +1,5 @@
 // Product aggregate root. Enforces the invariants from ARCHITECTURE.md §3:
-//   - sellingPrice >= 0 (selling below cost is allowed but surfaced as a warning upstream)
+//   - sellingPrice >= 0; below-cost pricing requires an explicit caller confirmation
 //   - description length in [20, 2000]
 //   - status transitions are forward-only: draft -> active -> attention -> sold
 
@@ -29,7 +29,7 @@ export interface CreateProductProps {
   images?: string[];
   createdAt?: Date;
   updatedAt?: Date;
-  // Backwards-compatible API flag; below-cost selling is now always allowed.
+  // Explicit confirmation required when sellingPrice is below costPrice.
   allowBelowCost?: boolean;
 }
 
@@ -79,6 +79,9 @@ export class Product {
     }
     if (props.costPrice && props.costPrice.currency !== props.sellingPrice.currency) {
       return Err(new ValidationError('costPrice and sellingPrice must share a currency'));
+    }
+    if (props.costPrice?.isGreaterThan(props.sellingPrice) && props.allowBelowCost !== true) {
+      return Err(new ValidationError('sellingPrice below costPrice requires allowBelowCost: true'));
     }
     const now = new Date();
     return Ok(
@@ -209,24 +212,30 @@ export class Product {
     return this.transitionTo('sold');
   }
 
-  updateSellingPrice(price: Money, _allowBelowCost = false): Result<void> {
+  updateSellingPrice(price: Money, allowBelowCost = false): Result<void> {
     if (price.isNegative()) {
       return Err(new ValidationError('sellingPrice must be >= 0'));
     }
     if (this._costPrice && price.currency !== this._costPrice.currency) {
       return Err(new ValidationError('sellingPrice currency must match costPrice'));
     }
+    if (this._costPrice?.isGreaterThan(price) && !allowBelowCost) {
+      return Err(new ValidationError('sellingPrice below costPrice requires allowBelowCost: true'));
+    }
     this._sellingPrice = price;
     this.touch();
     return Ok(undefined);
   }
 
-  updateCostPrice(price: Money): Result<void> {
+  updateCostPrice(price: Money, allowBelowCost = false): Result<void> {
     if (price.isNegative()) {
       return Err(new ValidationError('costPrice must be >= 0'));
     }
     if (price.currency !== this._sellingPrice.currency) {
       return Err(new ValidationError('costPrice currency must match sellingPrice'));
+    }
+    if (price.isGreaterThan(this._sellingPrice) && !allowBelowCost) {
+      return Err(new ValidationError('sellingPrice below costPrice requires allowBelowCost: true'));
     }
     this._costPrice = price;
     this.touch();
@@ -245,6 +254,7 @@ export class Product {
     sellingPrice: Money | null,
     allowBelowCost = false
   ): Result<void> {
+    if (!costPrice && !sellingPrice) return Ok(undefined);
     const nextCost = costPrice ?? this._costPrice;
     const nextSelling = sellingPrice ?? this._sellingPrice;
 
@@ -257,7 +267,9 @@ export class Product {
     if (nextCost && nextCost.currency !== nextSelling.currency) {
       return Err(new ValidationError('costPrice and sellingPrice must share a currency'));
     }
-    void allowBelowCost;
+    if (nextCost?.isGreaterThan(nextSelling) && !allowBelowCost) {
+      return Err(new ValidationError('sellingPrice below costPrice requires allowBelowCost: true'));
+    }
 
     if (costPrice) this._costPrice = costPrice;
     if (sellingPrice) this._sellingPrice = sellingPrice;

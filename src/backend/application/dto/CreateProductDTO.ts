@@ -16,6 +16,6 @@ export interface CreateProductDTO {
   category: string;
   tags?: string[];
   images?: string[];
-  // Allow sellingPrice < costPrice (surfaced as a warning upstream).
+  // Explicit confirmation required when sellingPrice < costPrice.
   allowBelowCost?: boolean;
 }

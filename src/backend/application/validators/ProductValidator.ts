@@ -20,20 +20,30 @@ const CONDITIONS = ['new', 'like_new', 'good', 'fair', 'poor', 'refurbished', 'u
 const conditionSchema = z.enum(CONDITIONS);
 const currencySchema = z.string().regex(/^[A-Z]{3}$/, 'currency must be an ISO-4217 code');
 
-const createProductSchema = z.object({
-  workspaceId: z.string().trim().min(1, 'workspaceId is required'),
-  sku: z.string().trim().min(1, 'sku is required'),
-  name: z.string().trim().min(1, 'name is required'),
-  description: z.string().min(PRODUCT_DESCRIPTION_MIN_LENGTH).max(PRODUCT_DESCRIPTION_MAX_LENGTH),
-  costPrice: z.number().finite().nonnegative(),
-  sellingPrice: z.number().finite().nonnegative(),
-  currency: currencySchema.optional(),
-  condition: conditionSchema,
-  category: z.string().trim().min(1, 'category is required'),
-  tags: z.array(z.string().trim().min(1)).optional(),
-  images: z.array(z.string().trim().min(1)).optional(),
-  allowBelowCost: z.boolean().optional(),
-});
+const createProductSchema = z
+  .object({
+    workspaceId: z.string().trim().min(1, 'workspaceId is required'),
+    sku: z.string().trim().min(1, 'sku is required'),
+    name: z.string().trim().min(1, 'name is required'),
+    description: z.string().min(PRODUCT_DESCRIPTION_MIN_LENGTH).max(PRODUCT_DESCRIPTION_MAX_LENGTH),
+    costPrice: z.number().finite().nonnegative(),
+    sellingPrice: z.number().finite().nonnegative(),
+    currency: currencySchema.optional(),
+    condition: conditionSchema,
+    category: z.string().trim().min(1, 'category is required'),
+    tags: z.array(z.string().trim().min(1)).optional(),
+    images: z.array(z.string().trim().min(1)).optional(),
+    allowBelowCost: z.boolean().optional(),
+  })
+  .superRefine((dto, ctx) => {
+    if (dto.sellingPrice < dto.costPrice && dto.allowBelowCost !== true) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['allowBelowCost'],
+        message: 'must be true when sellingPrice is below costPrice',
+      });
+    }
+  });
 
 const updateProductSchema = z
   .object({
@@ -57,6 +67,20 @@ const updateProductSchema = z
     tags: z.array(z.string().trim().min(1)).optional(),
     images: z.array(z.string().trim().min(1)).optional(),
     allowBelowCost: z.boolean().optional(),
+  })
+  .superRefine((dto, ctx) => {
+    if (
+      typeof dto.costPrice === 'number' &&
+      typeof dto.sellingPrice === 'number' &&
+      dto.sellingPrice < dto.costPrice &&
+      dto.allowBelowCost !== true
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['allowBelowCost'],
+        message: 'must be true when sellingPrice is below costPrice',
+      });
+    }
   })
   .refine(
     (dto) =>

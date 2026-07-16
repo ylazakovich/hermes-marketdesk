@@ -49,6 +49,14 @@ export class ProductService {
       workspaceId: product.workspaceId,
       sku: product.sku,
       name: product.name,
+      pricingDecision: {
+        belowCost: Boolean(product.costPrice?.isGreaterThan(product.sellingPrice)),
+        confirmed: command.allowBelowCost === true,
+        after: {
+          costPrice: product.costPrice?.amount ?? null,
+          sellingPrice: product.sellingPrice.amount,
+        },
+      },
     });
 
     return Ok(product);
@@ -72,6 +80,18 @@ export class ProductService {
       workspaceId: product.workspaceId,
       oldPrice,
       newPrice: product.sellingPrice.amount,
+      pricingDecision: {
+        belowCost: Boolean(product.costPrice?.isGreaterThan(product.sellingPrice)),
+        confirmed: allowBelowCost,
+        before: {
+          costPrice: product.costPrice?.amount ?? null,
+          sellingPrice: oldPrice,
+        },
+        after: {
+          costPrice: product.costPrice?.amount ?? null,
+          sellingPrice: product.sellingPrice.amount,
+        },
+      },
     });
 
     return Ok(product);

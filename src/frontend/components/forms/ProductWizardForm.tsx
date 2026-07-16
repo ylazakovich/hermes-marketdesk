@@ -30,6 +30,7 @@ import type {
   ProductAIDraftRequest,
 } from '@shared/types';
 import {
+  belowCostConfirmationRequired,
   emptyProductValues,
   marginWarning,
   toProductSubmissionValues,
@@ -264,6 +265,8 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
   );
   const [draftError, setDraftError] = useState<string | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
+  const [belowCostConfirmed, setBelowCostConfirmed] = useState(false);
+  const [belowCostConfirmationError, setBelowCostConfirmationError] = useState(false);
   const [targetMarketplace, setTargetMarketplace] = useState<MarketplaceKey | null>(
     initialDraft?.targetMarketplace ?? null
   );
@@ -290,6 +293,10 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
 
   const change = <K extends keyof ProductFormValues>(field: K, value: ProductFormValues[K]) => {
     setValues((prev) => ({ ...prev, [field]: value }));
+    if (field === 'costPrice' || field === 'sellingPrice') {
+      setBelowCostConfirmed(false);
+      setBelowCostConfirmationError(false);
+    }
     setErrors((prev) => {
       if (!prev[field]) return prev;
       const next = { ...prev };
@@ -315,7 +322,13 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
     const validation = validationFor(step);
     setErrors(validation.fieldErrors);
     setMarketplaceError(validation.marketplaceError ?? null);
-    return Object.keys(validation.fieldErrors).length === 0 && !validation.marketplaceError;
+    const pricingNeedsConfirmation = step === 2 && belowCostConfirmationRequired(values, belowCostConfirmed);
+    setBelowCostConfirmationError(pricingNeedsConfirmation);
+    return (
+      Object.keys(validation.fieldErrors).length === 0 &&
+      !validation.marketplaceError &&
+      !pricingNeedsConfirmation
+    );
   };
 
   const requestDraft = async (mode: ProductAIDraftRequest['mode']) => {
@@ -343,6 +356,10 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
 
   const applyDraft = (fields: Array<keyof ProductFormValues>) => {
     if (!draft) return;
+    if (fields.includes('costPrice') || fields.includes('sellingPrice')) {
+      setBelowCostConfirmed(false);
+      setBelowCostConfirmationError(false);
+    }
     setValues((prev) => {
       const next = { ...prev };
       for (const field of fields) {
@@ -372,9 +389,15 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
   const handleFinish = () => {
     for (let step = 0; step <= 4; step += 1) {
       const validation = validationFor(step);
-      if (Object.keys(validation.fieldErrors).length > 0 || validation.marketplaceError) {
+      const pricingNeedsConfirmation = step === 2 && belowCostConfirmationRequired(values, belowCostConfirmed);
+      if (
+        Object.keys(validation.fieldErrors).length > 0 ||
+        validation.marketplaceError ||
+        pricingNeedsConfirmation
+      ) {
         setErrors(validation.fieldErrors);
         setMarketplaceError(validation.marketplaceError ?? null);
+        setBelowCostConfirmationError(pricingNeedsConfirmation);
         setActiveStep(step);
         return;
       }
@@ -525,7 +548,23 @@ export const ProductWizardForm: React.FC<ProductWizardFormProps> = ({
               Hermes suggestion: compare similar OLX listings, keep a margin target, and adjust
               before publishing.
             </Alert>
-            {warning && <Alert severity="warning">{warning}</Alert>}
+            {warning && (
+              <Alert severity={belowCostConfirmationError ? 'error' : 'warning'}>
+                {warning}
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={belowCostConfirmed}
+                      onChange={(event) => {
+                        setBelowCostConfirmed(event.target.checked);
+                        setBelowCostConfirmationError(false);
+                      }}
+                    />
+                  }
+                  label="I confirm this product may be sold below cost."
+                />
+              </Alert>
+            )}
           </Stack>
         )}
         {activeStep === 3 && (

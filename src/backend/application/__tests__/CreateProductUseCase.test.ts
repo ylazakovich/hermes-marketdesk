@@ -50,13 +50,21 @@ describe('CreateProductUseCase', () => {
     expect(publisher.published.map((e) => e.type)).toContain('product.created');
   });
 
-  it('creates a product with an intentional below-cost selling price', async () => {
-    const { useCase, productRepo } = setup();
+  it('requires and audits confirmation for an intentional below-cost price', async () => {
+    const { useCase, productRepo, publisher } = setup();
+
+    const rejected = await useCase.execute({
+      ...validDto,
+      costPrice: 649,
+      sellingPrice: 399,
+    });
+    expect(rejected.isErr()).toBe(true);
 
     const result = await useCase.execute({
       ...validDto,
       costPrice: 649,
       sellingPrice: 399,
+      allowBelowCost: true,
     });
 
     expect(result.isOk()).toBe(true);
@@ -64,6 +72,11 @@ describe('CreateProductUseCase', () => {
     expect(product.costPrice.amount).toBe(649);
     expect(product.sellingPrice.amount).toBe(399);
     expect(productRepo.items.get(product.id)).toBe(product);
+    expect(publisher.published.at(-1)?.payload.pricingDecision).toMatchObject({
+      belowCost: true,
+      confirmed: true,
+      after: { costPrice: 649, sellingPrice: 399 },
+    });
   });
 
   it('fails validation when the description is too short', async () => {

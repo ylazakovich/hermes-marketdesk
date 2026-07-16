@@ -1,4 +1,5 @@
 import {
+  belowCostConfirmationRequired,
   emptyProductValues,
   marginWarning,
   productToValues,
@@ -28,7 +29,18 @@ describe('productFormModel below-cost pricing', () => {
   });
 
   it('marks below-cost submissions with the documented API flag', () => {
+    expect(belowCostConfirmationRequired(validValues(), false)).toBe(true);
+    expect(belowCostConfirmationRequired(validValues(), true)).toBe(false);
     expect(toProductSubmissionValues(validValues()).allowBelowCost).toBe(true);
+  });
+
+  it('does not require confirmation at or above the cost boundary', () => {
+    expect(belowCostConfirmationRequired({ ...validValues(), sellingPrice: 649 }, false)).toBe(
+      false
+    );
+    expect(
+      belowCostConfirmationRequired({ ...validValues(), costPrice: 0, sellingPrice: 0 }, false)
+    ).toBe(false);
   });
 
   it('warns and marks zero-price submissions when cost is positive', () => {

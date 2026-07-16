@@ -30,6 +30,12 @@ Status vocabulary:
 | §17 | Dark theme | Partial | `src/frontend/theme`, `src/frontend/state/slices/uiSlice.ts`; global toggle retained in contextual shell | Live dark-theme audit 2026-07-16; persistence code review | Shell delivery: #171; appearance gap: #146 |
 | §18 | Delivery and assets | Partial | `docs/design`, `docs/design/screenshots` | `npm run verify:spec`; curated screenshots present | Open gaps: #171, #174 |
 
+## Cross-cutting product decisions
+
+| Decision | Runtime contract | Evidence | Tracking |
+| --- | --- | --- | --- |
+| Draft and below-cost pricing | Cost and selling price may be zero for incomplete drafts; negative prices are rejected. Selling below cost requires an explicit confirmation in create/edit UI and `allowBelowCost: true` at HTTP, application and domain boundaries. Approved Hermes recommendations provide an existing human-approval boundary; remote imports fail closed against known local cost. Accepted exceptions are included in product event payloads as `pricingDecision` audit evidence. Equal-to-cost needs no exception. No bulk-price mutation exists yet; any future bulk path must reuse this contract. | `Product.ts`, `ProductValidator.ts`, HTTP schemas, `ProductForm.tsx`, `ProductWizardForm.tsx`; domain/use-case/API boundary tests | Approved deviation in `PRODUCT.md`; [#177](https://github.com/ylazakovich/hermes-marketdesk/issues/177) |
+
 ## Screen acceptance map
 
 | Screen | Canonical visual state | Route/code | Minimum verification before closing |

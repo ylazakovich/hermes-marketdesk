@@ -29,13 +29,21 @@ function setup() {
 }
 
 describe('UpdateProductUseCase', () => {
-  it('updates an existing product to an intentional below-cost selling price', async () => {
+  it('requires and audits confirmation for an intentional below-cost update', async () => {
     const { useCase, productRepo, publisher, product } = setup();
+
+    const rejected = await useCase.execute({
+      productId: product.id,
+      workspaceId: product.workspaceId,
+      sellingPrice: 399,
+    });
+    expect(rejected.isErr()).toBe(true);
 
     const result = await useCase.execute({
       productId: product.id,
       workspaceId: product.workspaceId,
       sellingPrice: 399,
+      allowBelowCost: true,
     });
 
     expect(result.isOk()).toBe(true);
@@ -43,6 +51,12 @@ describe('UpdateProductUseCase', () => {
     expect(updated.sellingPrice.amount).toBe(399);
     expect(productRepo.items.get(product.id)?.sellingPrice.amount).toBe(399);
     expect(publisher.published.map((event) => event.type)).toContain('product.updated');
+    expect(publisher.published.at(-1)?.payload.pricingDecision).toMatchObject({
+      belowCost: true,
+      confirmed: true,
+      before: { costPrice: 649, sellingPrice: 799 },
+      after: { costPrice: 649, sellingPrice: 399 },
+    });
   });
 
   it('updates editable product details including cost price, condition and category', async () => {
@@ -82,6 +96,42 @@ describe('UpdateProductUseCase', () => {
     expect(productRepo.saved).toHaveLength(1);
     expect(productRepo.saved[0]?.costPrice.amount).toBe(699);
     expect(productRepo.saved[0]?.sellingPrice.amount).toBe(799);
+  });
+
+  it('checks a cost-only partial update against the persisted selling price', async () => {
+    const { useCase, productRepo, product } = setup();
+
+    const rejected = await useCase.execute({
+      productId: product.id,
+      workspaceId: product.workspaceId,
+      costPrice: 899,
+    });
+    expect(rejected.isErr()).toBe(true);
+    expect(product.costPrice?.amount).toBe(649);
+
+    const accepted = await useCase.execute({
+      productId: product.id,
+      workspaceId: product.workspaceId,
+      costPrice: 899,
+      allowBelowCost: true,
+    });
+    expect(accepted.isOk()).toBe(true);
+    expect(productRepo.saved.at(-1)?.costPrice?.amount).toBe(899);
+  });
+
+  it('allows unrelated edits to an existing confirmed below-cost product', async () => {
+    const { useCase, publisher, product } = setup();
+    expect(product.updateSellingPrice(money(399), true).isOk()).toBe(true);
+
+    const result = await useCase.execute({
+      productId: product.id,
+      workspaceId: product.workspaceId,
+      name: 'AirPods 4 clearance',
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(product.name).toBe('AirPods 4 clearance');
+    expect(publisher.published.at(-1)?.payload.pricingDecision).toBeUndefined();
   });
 
   it('applies simultaneous cost and selling price increases without transient invariant failure', async () => {
