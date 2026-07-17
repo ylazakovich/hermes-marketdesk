@@ -305,10 +305,13 @@ try {
     'runtime environment must not be able to relabel the built artifact',
   );
   assert.equal(rendered.services.app.build.context, immutableComposeDir);
-  const migrationMount = rendered.services.postgres.volumes.find(
-    (volume) => volume.target === '/docker-entrypoint-initdb.d',
+  assert.equal(
+    rendered.services.postgres.volumes.some(
+      (volume) => volume.target === '/docker-entrypoint-initdb.d',
+    ),
+    false,
+    'fresh PostgreSQL must not execute migrations from the mutable project checkout',
   );
-  assert.equal(migrationMount.source, join(composeDir, 'src/backend/persistence/migrations'));
   const uploadMount = rendered.services.app.volumes.find((volume) => volume.target === '/app/uploads');
   assert.equal(uploadMount.source, join(composeDir, 'uploads'));
 

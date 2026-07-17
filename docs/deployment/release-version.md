@@ -30,7 +30,10 @@ The wrapper:
 
 When `DATABASE_URL` is non-empty in the snapshotted environment, the wrapper
 scales the bundled PostgreSQL service to zero. Internal deployments start the
-bundled service and the migration retry absorbs its startup interval.
+bundled service and the migration retry absorbs its startup interval. The
+bundled PostgreSQL service initializes only the database and role; it does not
+mount SQL into `/docker-entrypoint-initdb.d`. Fresh and existing databases are
+therefore migrated only by the immutable bundle in the one-shot release image.
 
 The command exits before invoking Compose when `HEAD` is not an exact valid release tag, the checkout is dirty, `.env` contains any `COMPOSE_*` control variable, or an existing `marketdesk-app` belongs to a different directory-derived project. The application image is built only from the validated commit archive; the original project directory remains authoritative for deployment-local bind mounts, uploads, and existing Compose resources. These safeguards prevent a release from silently changing services, switching PostgreSQL/Redis volumes, or incorporating a checkout mutation into the labeled image after validation. The migration service receives only the database subset interpolated from the same snapshot used by the application, and both services use the same image. The application reads only the image file; runtime environment values cannot relabel an old image as a newer release. Do not manually persist a release tag in `.env`.
 
