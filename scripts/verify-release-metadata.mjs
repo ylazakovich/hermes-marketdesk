@@ -84,6 +84,41 @@ try {
   );
   assert.equal(releaseUsesExternalDatabase(databaseModeEnv), true);
 
+  const referencedEnvironment = join(tempRoot, 'referenced.env');
+  writeFileSync(
+    referencedEnvironment,
+    'DATABASE_URL=${RELEASE_DATABASE_URL}\nDB_SSL_MODE=$RELEASE_DB_SSL_MODE\n',
+    { mode: 0o600 },
+  );
+  assert.throws(
+    () => releaseUsesExternalDatabase(referencedEnvironment),
+    /DATABASE_URL, DB_SSL_MODE/,
+  );
+  assert.throws(
+    () => buildReleaseComposeEnvironment(
+      'hermes-marketdesk-v0.10.0',
+      {
+        RELEASE_DATABASE_URL: 'postgresql://ambient.example.invalid/marketdesk',
+        RELEASE_DB_SSL_MODE: 'disable',
+      },
+      undefined,
+      referencedEnvironment,
+    ),
+    /DATABASE_URL, DB_SSL_MODE/,
+  );
+  writeFileSync(
+    referencedEnvironment,
+    'DATABASE_URL=\nLITERAL_DOLLAR=$${NOT_AN_INTERPOLATION}\n',
+    { mode: 0o600 },
+  );
+  assert.equal(releaseUsesExternalDatabase(referencedEnvironment), false);
+  assert.doesNotThrow(() => buildReleaseComposeEnvironment(
+    'hermes-marketdesk-v0.10.0',
+    {},
+    undefined,
+    referencedEnvironment,
+  ));
+
   assert.doesNotThrow(() => assertExistingProjectIdentity('hermes-marketdesk', undefined));
   assert.doesNotThrow(() => assertExistingProjectIdentity('hermes-marketdesk', 'hermes-marketdesk'));
   assert.throws(

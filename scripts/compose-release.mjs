@@ -235,8 +235,44 @@ export function buildReleaseComposeArgs(
   ];
 }
 
+function interpolationBearingKeys(environment) {
+  const keys = [];
+  for (const [key, value] of Object.entries(environment)) {
+    for (let offset = 0; offset < value.length;) {
+      if (value[offset] !== '$') {
+        offset += 1;
+        continue;
+      }
+      let end = offset;
+      while (value[end] === '$') end += 1;
+      const activeDollar = (end - offset) % 2 === 1;
+      const suffix = value.slice(end);
+      if (
+        activeDollar
+        && (/^[A-Za-z_][A-Za-z0-9_]*/.test(suffix)
+          || /^\{[A-Za-z_][A-Za-z0-9_]*/.test(suffix))
+      ) {
+        keys.push(key);
+        break;
+      }
+      offset = end;
+    }
+  }
+  return keys;
+}
+
+function assertLiteralReleaseEnvironment(environment) {
+  const keys = interpolationBearingKeys(environment);
+  if (keys.length > 0) {
+    throw new Error(
+      `Release environment values must not reference ambient variables: ${keys.sort().join(', ')}`,
+    );
+  }
+}
+
 export function releaseUsesExternalDatabase(envFile) {
   const parsed = parseDotenv(readFileSync(resolve(envFile)));
+  assertLiteralReleaseEnvironment(parsed);
   return Boolean(parsed.DATABASE_URL?.trim());
 }
 
@@ -253,7 +289,9 @@ export function buildReleaseComposeEnvironment(
 
   const interpolationNames = new Set();
   if (releaseEnvFile) {
-    for (const name of Object.keys(parseDotenv(readFileSync(resolve(releaseEnvFile))))) {
+    const parsed = parseDotenv(readFileSync(resolve(releaseEnvFile)));
+    assertLiteralReleaseEnvironment(parsed);
+    for (const name of Object.keys(parsed)) {
       interpolationNames.add(name);
     }
   }
