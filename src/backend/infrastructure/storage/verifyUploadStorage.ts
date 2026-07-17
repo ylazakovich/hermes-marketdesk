@@ -22,8 +22,8 @@ function errorSummary(error: unknown): string {
 
 /**
  * Prove that upload storage supports the operations required by image upload.
- * The short-lived probe is created at the root so both the legacy directories
- * and the workspace layout remain untouched.
+ * The short-lived probe is created inside the workspace root, matching the
+ * directory where current product-image uploads write their files.
  */
 export async function verifyUploadStorageWritable(
   configuredUploadDir: string,
@@ -31,19 +31,24 @@ export async function verifyUploadStorageWritable(
 ): Promise<string> {
   const uploadDir = path.resolve(process.cwd(), configuredUploadDir);
   const workspacesDir = path.join(uploadDir, 'workspaces');
-  const probePath = path.join(uploadDir, `.marketdesk-write-probe-${randomUUID()}`);
+  const probePath = path.join(workspacesDir, `.marketdesk-write-probe-${randomUUID()}`);
   let probe: UploadStorageFileHandle | undefined;
+  let probeCreated = false;
 
   try {
     await filesystem.mkdir(workspacesDir, { recursive: true });
     probe = await filesystem.open(probePath, 'wx', 0o600);
+    probeCreated = true;
     await probe.close();
     probe = undefined;
     await filesystem.unlink(probePath);
+    probeCreated = false;
     return uploadDir;
   } catch (error) {
     if (probe) await probe.close().catch(() => undefined);
-    await filesystem.unlink(probePath).catch(() => undefined);
+    if (probeCreated) {
+      await filesystem.unlink(probePath).catch(() => undefined);
+    }
     const startupError = new Error(
       `Upload storage is not writable at ${uploadDir}. ` +
         `Check directory ownership for the application user (UID 1001): ${errorSummary(error)}`,

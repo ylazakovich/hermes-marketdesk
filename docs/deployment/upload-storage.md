@@ -33,8 +33,10 @@ docker compose run --rm --no-deps app sh -ceu '
 Treat an existing upload tree as live data. Back it up and verify the archive before changing ownership:
 
 ```bash
-tar -C . -czf "${HOME}/marketdesk-uploads-$(date -u +%Y%m%dT%H%M%SZ).tgz" uploads
-tar -tzf "$(find "${HOME}" -maxdepth 1 -name 'marketdesk-uploads-*.tgz' -print | sort | tail -1)" >/dev/null
+set -euo pipefail
+BACKUP="${HOME}/marketdesk-uploads-$(date -u +%Y%m%dT%H%M%SZ).tgz"
+tar -C . -czf "$BACKUP" uploads
+tar -tzf "$BACKUP" >/dev/null
 ```
 
 Then rerun the reviewed initializer and recreate the app only after it succeeds:
@@ -73,15 +75,32 @@ curl --retry 20 --retry-connrefused --retry-delay 1 -fsS \
 curl -fsS "${MARKETDESK_BASE_URL}${IMAGE_URL}" -o /tmp/marketdesk-upload-probe-after-restart.jpg
 test -s /tmp/marketdesk-upload-probe-after-restart.jpg
 
+SECOND_UPLOAD_RESPONSE=$(curl -fsS \
+  -H "Authorization: Bearer ${MARKETDESK_TOKEN}" \
+  -H 'Content-Type: image/jpeg' \
+  --data-binary "@${PROBE_IMAGE}" \
+  "${MARKETDESK_BASE_URL}/api/uploads/images")
+SECOND_IMAGE_ID=$(printf '%s' "${SECOND_UPLOAD_RESPONSE}" | jq -er '.data.id')
+SECOND_IMAGE_URL=$(printf '%s' "${SECOND_UPLOAD_RESPONSE}" | jq -er '.data.url')
+curl -fsS "${MARKETDESK_BASE_URL}${SECOND_IMAGE_URL}" -o /tmp/marketdesk-upload-probe-second.jpg
+test -s /tmp/marketdesk-upload-probe-second.jpg
+
 curl -fsS -X DELETE \
   -H "Authorization: Bearer ${MARKETDESK_TOKEN}" \
   "${MARKETDESK_BASE_URL}/api/uploads/images/${IMAGE_ID}"
 ! curl -fsS "${MARKETDESK_BASE_URL}${IMAGE_URL}" -o /dev/null
-rm -f /tmp/marketdesk-upload-probe-read.jpg /tmp/marketdesk-upload-probe-after-restart.jpg
-unset MARKETDESK_TOKEN UPLOAD_RESPONSE IMAGE_ID IMAGE_URL
+curl -fsS -X DELETE \
+  -H "Authorization: Bearer ${MARKETDESK_TOKEN}" \
+  "${MARKETDESK_BASE_URL}/api/uploads/images/${SECOND_IMAGE_ID}"
+! curl -fsS "${MARKETDESK_BASE_URL}${SECOND_IMAGE_URL}" -o /dev/null
+rm -f /tmp/marketdesk-upload-probe-read.jpg \
+  /tmp/marketdesk-upload-probe-after-restart.jpg \
+  /tmp/marketdesk-upload-probe-second.jpg
+unset MARKETDESK_TOKEN UPLOAD_RESPONSE IMAGE_ID IMAGE_URL \
+  SECOND_UPLOAD_RESPONSE SECOND_IMAGE_ID SECOND_IMAGE_URL
 ```
 
-Use a matching `Content-Type` when `PROBE_IMAGE` is PNG or WebP. The final failed public read is expected and proves API deletion removed the object. This scenario does not require or perform a database migration.
+Use a matching `Content-Type` when `PROBE_IMAGE` is PNG or WebP. The two failed public reads are expected and prove API deletion removed both objects. This scenario does not require or perform a database migration.
 
 Run the static Compose safety regression with:
 
