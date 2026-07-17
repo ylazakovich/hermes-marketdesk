@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 
@@ -34,10 +34,16 @@ if (!svg.includes('viewBox="0 0 64 64"') || !svg.includes('#5B55E7')) {
 
 for (const [filename, size] of expected) {
   const file = path.join(publicDir, filename);
-  await access(file);
-  const metadata = await sharp(file).metadata();
+  const [actual, rendered, metadata] = await Promise.all([
+    readFile(file),
+    sharp(Buffer.from(svg)).resize(size, size).png({ compressionLevel: 9 }).toBuffer(),
+    sharp(file).metadata(),
+  ]);
   if (metadata.format !== 'png' || metadata.width !== size || metadata.height !== size) {
     throw new Error(`${filename} must be a ${size}x${size} PNG`);
+  }
+  if (!actual.equals(rendered)) {
+    throw new Error(`${filename} is stale; run npm run generate:brand-assets`);
   }
 }
 
