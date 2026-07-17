@@ -1,31 +1,13 @@
 import dotenv from 'dotenv';
 import { readEmbeddedApplicationVersion } from './applicationVersion';
+import { resolveDatabaseSslMode } from './databaseConfig';
+export { resolveDatabaseSslMode, type DatabaseSslMode } from './databaseConfig';
 
 dotenv.config();
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 const runningInProduction = nodeEnv === 'production';
 
-export type DatabaseSslMode = 'disable' | 'verify-full';
-
-export function resolveDatabaseSslMode(
-  value: string | undefined,
-  isProd: boolean = runningInProduction,
-): DatabaseSslMode {
-  const mode = value?.trim();
-  if (!mode) {
-    if (isProd) {
-      throw new Error(
-        'DB_SSL_MODE must be set in production (use "disable" or "verify-full")',
-      );
-    }
-    return 'disable';
-  }
-  if (mode !== 'disable' && mode !== 'verify-full') {
-    throw new Error('DB_SSL_MODE must be either "disable" or "verify-full"');
-  }
-  return mode;
-}
 
 export function optionalPositiveInt(value: string | undefined): number | undefined {
   if (!value?.trim()) return undefined;
@@ -98,7 +80,7 @@ export const env = {
     name: process.env.DB_NAME || 'marketdesk',
     poolMin: parseInt(process.env.DB_POOL_MIN || '2', 10),
     poolMax: parseInt(process.env.DB_POOL_MAX || '10', 10),
-    sslMode: resolveDatabaseSslMode(process.env.DB_SSL_MODE),
+    sslMode: resolveDatabaseSslMode(process.env.DB_SSL_MODE, runningInProduction),
   },
 
   // Redis

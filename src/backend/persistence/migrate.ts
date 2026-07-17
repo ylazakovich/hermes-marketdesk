@@ -1,15 +1,19 @@
 import path from 'path';
 import fs from 'fs';
-import type { PoolClient } from 'pg';
-import { createPool, closePool } from '../config/database.js';
+import { Pool, type PoolClient } from 'pg';
+import dotenv from 'dotenv';
+import { migrationPoolConfig } from '../config/databaseConfig.js';
 import pino from 'pino';
 
+dotenv.config();
 const logger = pino();
-const migrationsDir = path.join(process.cwd(), 'src/backend/persistence/migrations');
+const migrationsDir = process.env.MARKETDESK_MIGRATIONS_DIR
+  ? path.resolve(process.env.MARKETDESK_MIGRATIONS_DIR)
+  : path.join(process.cwd(), 'src/backend/persistence/migrations');
 const MIGRATION_LOCK_KEY = 'marketdesk:migrations';
 
 async function runMigrations() {
-  const pool = createPool();
+  const pool = new Pool(migrationPoolConfig());
   let client: PoolClient | undefined;
   let locked = false;
 
@@ -81,7 +85,7 @@ async function runMigrations() {
       }
     }
     client?.release();
-    await closePool();
+    await pool.end();
   }
 }
 

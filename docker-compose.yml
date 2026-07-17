@@ -10,6 +10,15 @@ x-app-image: &app-image
     args:
       MARKETDESK_RELEASE_TAG: ${MARKETDESK_RELEASE_TAG:-}
 
+x-database-environment: &database-environment
+  DATABASE_URL: ${DATABASE_URL:-}
+  DB_SSL_MODE: ${DB_SSL_MODE:?DB_SSL_MODE must be set (use disable for internal Compose PostgreSQL)}
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_USER: ${DB_USER:-marketdesk}
+  DB_PASSWORD: ${DB_PASSWORD:-${DATABASE_URL:+external-database-unused}}
+  DB_NAME: ${DB_NAME:-marketdesk}
+
 services:
   postgres:
     image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
@@ -83,28 +92,37 @@ services:
     network_mode: none
     restart: "no"
 
+  migrate:
+    <<: *app-image
+    command: ["node", "dist/backend/migrate.js"]
+    env_file:
+      - ${MARKETDESK_ENV_FILE:-./.env}
+    environment:
+      <<: *database-environment
+      NODE_ENV: ${NODE_ENV:-development}
+      MARKETDESK_MIGRATIONS_DIR: /app/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - marketdesk-network
+    restart: "no"
+
   app:
     <<: *app-image
     container_name: marketdesk-app
     env_file:
       - ${MARKETDESK_ENV_FILE:-./.env}
     environment:
+      <<: *database-environment
       NODE_ENV: ${NODE_ENV:-development}
       APP_NAME: ${APP_NAME:-hermes-marketdesk}
       APP_PORT: ${APP_PORT:-3000}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       # Leave DATABASE_URL empty to use the individual internal-Compose fields below,
       # or set it explicitly for a managed/external PostgreSQL endpoint.
-      DATABASE_URL: ${DATABASE_URL:-}
-      # The Compose PostgreSQL service is plaintext inside the private Docker network.
-      DB_SSL_MODE: ${DB_SSL_MODE:?DB_SSL_MODE must be set (use disable for internal Compose PostgreSQL)}
-      # DATABASE_URL takes precedence for external databases. Without it, always
-      # target the bundled service rather than inheriting native-dev localhost.
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-marketdesk}
-      DB_PASSWORD: ${DB_PASSWORD:-${DATABASE_URL:+external-database-unused}}
-      DB_NAME: ${DB_NAME:-marketdesk}
+      # DATABASE_URL takes precedence for external databases. The shared database
+      # environment keeps the app and one-shot migration service identical.
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -126,6 +144,8 @@ services:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
     depends_on:
       upload-storage-init:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
