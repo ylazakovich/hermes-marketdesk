@@ -29,7 +29,6 @@ export interface CreateProductProps {
   sellingPrice: Money;
   condition: ProductCondition;
   category: string;
-  categoryProvenance?: ProductCategoryProvenance | null;
   status?: ProductStatus;
   tags?: string[];
   images?: string[];
@@ -102,7 +101,7 @@ export class Product {
         props.sellingPrice,
         props.condition,
         props.category,
-        props.categoryProvenance ?? null,
+        null,
         props.status ?? 'draft',
         props.tags ? [...props.tags] : [],
         props.images ? [...props.images] : [],
@@ -114,7 +113,7 @@ export class Product {
 
   // Rehydrate from persistence without re-running invariants (data is trusted).
   static reconstitute(
-    props: Required<Omit<CreateProductProps, 'allowBelowCost' | 'categoryProvenance'>>
+    props: Required<Omit<CreateProductProps, 'allowBelowCost'>>
       & { categoryProvenance?: ProductCategoryProvenance | null }
   ): Product {
     return new Product(
@@ -322,7 +321,7 @@ export class Product {
     }
     const current = this._categoryProvenance;
     const sameSources = current?.status === 'synced'
-      && Product.sameCandidateSet(current.sources, normalizedSources);
+      && Product.sameSourceState(current.sources, normalizedSources);
     const categoryChanged = this._category !== normalized;
     if (!categoryChanged && sameSources) {
       return Ok({ categoryChanged: false, stateChanged: false });
@@ -431,6 +430,20 @@ export class Product {
   ): boolean {
     const keys = (values: ProductCategorySource[]) => values
       .map(Product.categorySourceKey)
+      .sort();
+    return JSON.stringify(keys(left)) === JSON.stringify(keys(right));
+  }
+
+  private static sameSourceState(
+    left: ProductCategorySource[],
+    right: ProductCategorySource[],
+  ): boolean {
+    const keys = (values: ProductCategorySource[]) => values
+      .map((source) => [
+        Product.categorySourceKey(source),
+        source.taxonomyVerifiedAt,
+        source.syncedAt,
+      ].join('\u0000'))
       .sort();
     return JSON.stringify(keys(left)) === JSON.stringify(keys(right));
   }

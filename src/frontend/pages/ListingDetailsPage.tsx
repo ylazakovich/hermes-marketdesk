@@ -529,7 +529,7 @@ const ListingDetailsPage: React.FC = () => {
             {p.categoryProvenance?.status === 'synced' && (
               <DetailRow label="Category source">
                 {p.categoryProvenance.sources.map((source) => (
-                  <Typography key={`${source.marketplaceId}:${source.listingId}`} variant="body2">
+                  <Typography key={`${source.marketplaceId}:${source.listingId}`} variant="body2" component="span" sx={{ display: 'block' }}>
                     {source.marketplaceKey.toUpperCase()} · {source.path.join(' › ')} · ID {source.providerCategoryId}
                   </Typography>
                 ))}
@@ -537,7 +537,7 @@ const ListingDetailsPage: React.FC = () => {
             )}
             {p.categoryProvenance?.status === 'conflict' && (
               <DetailRow label="Category source">
-                <Typography variant="body2" color="warning.main" sx={{ fontWeight: 600 }}>
+                <Typography component="span" variant="body2" color="warning.main" sx={{ display: 'block', fontWeight: 600 }}>
                   Conflicting active listing categories require review
                 </Typography>
               </DetailRow>

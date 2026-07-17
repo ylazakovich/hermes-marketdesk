@@ -418,6 +418,27 @@ describe('MarketplaceImportService', () => {
     expect(listing.status).toBe('live');
   });
 
+  it('detects refreshed trust metadata even when the category identity is unchanged', async () => {
+    const existingCategory = { ...headphonesCategory, taxonomyVerifiedAt: '2026-01-10T11:00:00.000Z' };
+    const refreshedCategory = { ...headphonesCategory, taxonomyVerifiedAt: '2026-01-10T12:00:00.000Z' };
+    const existing = unwrap(Listing.create({
+      id: 'listing-trust-refresh', productId: 'product-1', marketplaceId: 'marketplace-1',
+      marketplaceListingId: 'olx-1', price: money(100), status: 'live',
+      marketplaceCategory: existingCategory,
+    }));
+    const { service } = createService([
+      remoteListing({ marketplaceCategory: refreshedCategory }),
+    ], [existing]);
+
+    const preview = await service.preview({ workspaceId: 'workspace-1', marketplaceId: 'marketplace-1' });
+    if (preview.isErr()) throw preview.error;
+
+    expect(preview.value.items[0]).toMatchObject({
+      status: 'changed',
+      proposedChanges: expect.arrayContaining(['marketplace_category']),
+    });
+  });
+
   it('reconciles a stale product category even when the imported listing itself is unchanged', async () => {
     const product = unwrap(Product.create({
       id: 'product-projector-import', workspaceId: 'workspace-1', sku: 'PROJECTOR-IMPORT',

@@ -1,5 +1,6 @@
 import { Product, CreateProductProps } from '../entities/Product';
 import { unwrap, money } from '../testkit/support';
+import type { ProductCategorySource } from '../../../shared/types';
 
 function baseProps(overrides: Partial<CreateProductProps> = {}): CreateProductProps {
   return {
@@ -21,6 +22,14 @@ describe('Product invariants', () => {
     const product = unwrap(Product.create(baseProps()));
     expect(product.status).toBe('draft');
     expect(product.sellingPrice.amount).toBeCloseTo(80);
+  });
+
+  it('does not accept marketplace provenance through ordinary creation', () => {
+    const product = unwrap(Product.create({
+      ...baseProps(),
+      categoryProvenance: { status: 'synced', sources: [] },
+    } as CreateProductProps & { categoryProvenance: unknown }));
+    expect(product.categoryProvenance).toBeNull();
   });
 
   it('rejects a description shorter than 20 chars', () => {
@@ -124,5 +133,31 @@ describe('Product price / description updates', () => {
   it('validates description length on update', () => {
     const product = unwrap(Product.create(baseProps()));
     expect(product.updateDescription('short').isErr()).toBe(true);
+  });
+});
+
+describe('Product category provenance', () => {
+  const source = (overrides: Partial<ProductCategorySource> = {}): ProductCategorySource => ({
+    marketplaceKey: 'olx', marketplaceId: 'm1', listingId: 'l1',
+    providerCategoryId: '100', name: 'Projectors', path: ['Electronics', 'Projectors'],
+    taxonomyVerifiedAt: '2026-07-15T00:00:00.000Z',
+    syncedAt: '2026-07-15T01:00:00.000Z',
+    ...overrides,
+  });
+
+  it('refreshes provenance timestamps without reporting a category change', () => {
+    const product = unwrap(Product.create(baseProps({ category: 'Projectors' })));
+    unwrap(product.synchronizeCategory('Projectors', [source()]));
+
+    const result = unwrap(product.synchronizeCategory('Projectors', [source({
+      taxonomyVerifiedAt: '2026-07-16T00:00:00.000Z',
+      syncedAt: '2026-07-16T01:00:00.000Z',
+    })]));
+
+    expect(result).toEqual({ categoryChanged: false, stateChanged: true });
+    expect(product.categoryProvenance).toMatchObject({
+      status: 'synced',
+      sources: [expect.objectContaining({ syncedAt: '2026-07-16T01:00:00.000Z' })],
+    });
   });
 });

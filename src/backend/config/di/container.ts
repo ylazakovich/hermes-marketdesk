@@ -110,7 +110,10 @@ import { AnalyticsApplicationService } from '../../application/services/Analytic
 import { MarketplaceOAuthService } from '../../application/services/MarketplaceOAuthService';
 import { MarketplaceSyncScheduler } from '../../application/services/MarketplaceSyncScheduler';
 import { MarketplaceImportService } from '../../application/services/MarketplaceImportService';
-import { ProductCategorySyncService } from '../../application/services/ProductCategorySyncService';
+import {
+  ProductCategorySyncService,
+  selectProductCategoryTriggerListings,
+} from '../../application/services/ProductCategorySyncService';
 import { OlxPublicationQuotaService } from '../../application/services/OlxPublicationQuotaService';
 import { CategoryCorrectionOperationService } from '../../application/services/CategoryCorrectionOperationService';
 import type { IdGenerator } from '../../application/ports/IdGenerator';
@@ -530,13 +533,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           eventRepo: new EventRepository(pool, client),
         };
         await repositories.listingRepo.saveAll(listings);
-        const firstListingByProduct = new Map<string, typeof listings[number]>();
-        for (const listing of listings) {
-          if (!firstListingByProduct.has(listing.productId)) {
-            firstListingByProduct.set(listing.productId, listing);
-          }
-        }
-        for (const listing of firstListingByProduct.values()) {
+        for (const listing of selectProductCategoryTriggerListings(listings)) {
           await productCategorySyncService.reconcileWithRepositories(
             {
               workspaceId: marketplace.workspaceId,

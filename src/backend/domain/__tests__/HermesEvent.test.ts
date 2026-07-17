@@ -130,8 +130,8 @@ describe('HermesEvent lifecycle transitions', () => {
     expect(event.markApplied().isErr()).toBe(true);
   });
 
-  it('keeps product category conflicts dismiss-only', () => {
-    const event = unwrap(HermesEvent.create({
+  it('keeps product category conflicts pending-review and dismiss-only', () => {
+    const conflictProps: CreateHermesEventProps = {
       id: 'category-conflict-1', workspaceId: 'w1', productId: 'p1',
       type: 'product_category_conflict', severity: 'warning',
       title: 'Category conflict', status: 'pending_review',
@@ -145,9 +145,12 @@ describe('HermesEvent lifecycle transitions', () => {
           syncedAt: '2026-07-15T01:00:00.000Z',
         }],
       },
-    }));
+    };
+    expect(HermesEvent.create({ ...conflictProps, status: 'pending_decision' }).isErr()).toBe(true);
 
+    const event = unwrap(HermesEvent.create(conflictProps));
     expect(event.approve().isErr()).toBe(true);
+    expect(event.beginAutoApply().isErr()).toBe(true);
     expect(event.status).toBe('pending_review');
     expect(event.dismiss().isOk()).toBe(true);
     expect(event.status).toBe('dismissed');

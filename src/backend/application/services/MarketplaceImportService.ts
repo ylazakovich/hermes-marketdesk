@@ -884,7 +884,10 @@ export class MarketplaceImportService {
       name: category.name.trim().toLocaleLowerCase(),
       path: category.path.map((part) => part.trim().toLocaleLowerCase()),
       source: category.source,
+      confidence: category.confidence,
       isLeaf: category.isLeaf,
+      taxonomyVerifiedAt: category.taxonomyVerifiedAt,
+      taxonomyStaleAt: category.taxonomyStaleAt,
     });
     return canonical(left) === canonical(right);
   }

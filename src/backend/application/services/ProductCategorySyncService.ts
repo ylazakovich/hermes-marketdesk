@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ActorType, ProductCategorySource } from '../../../shared/types';
 import { HermesEvent } from '../../domain/entities/HermesEvent';
+import type { Listing } from '../../domain/entities/Listing';
 import type { IProductRepository } from '../../domain/repositories/interfaces/IProductRepository';
 import type { IListingRepository } from '../../domain/repositories/interfaces/IListingRepository';
 import type { IMarketplaceRepository } from '../../domain/repositories/interfaces/IMarketplaceRepository';
@@ -32,6 +33,16 @@ export interface ProductCategorySyncResult {
   outcome: 'synced' | 'conflict' | 'unchanged' | 'ignored';
   categoryChanged: boolean;
   reason?: string;
+}
+
+export function selectProductCategoryTriggerListings(listings: readonly Listing[]): Listing[] {
+  const byProduct = new Map<string, Listing>();
+  for (const listing of listings) {
+    if (listing.isLive() && listing.marketplaceCategory && !byProduct.has(listing.productId)) {
+      byProduct.set(listing.productId, listing);
+    }
+  }
+  return [...byProduct.values()];
 }
 
 export class ProductCategorySyncService {

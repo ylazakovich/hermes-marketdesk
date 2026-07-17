@@ -1,4 +1,7 @@
-import { ProductCategorySyncService } from '../ProductCategorySyncService';
+import {
+  ProductCategorySyncService,
+  selectProductCategoryTriggerListings,
+} from '../ProductCategorySyncService';
 import { Product } from '../../../domain/entities/Product';
 import { Listing } from '../../../domain/entities/Listing';
 import { Marketplace } from '../../../domain/entities/Marketplace';
@@ -89,6 +92,18 @@ function setup(initialProduct = product()) {
 
 const projector = category('100', 'Projectors', ['Electronics', 'Video', 'Projectors']);
 const headphones = category('200', 'Wireless headphones', ['Electronics', 'Audio', 'Wireless headphones']);
+
+describe('selectProductCategoryTriggerListings', () => {
+  it('skips an arbitrary draft first listing and selects one eligible trigger per product', () => {
+    const draft = unwrap(Listing.create({
+      id: 'listing-draft', productId: 'product-1', marketplaceId: 'marketplace-1',
+      price: money(100), status: 'draft', marketplaceCategory: null,
+    }));
+    const live = listing('listing-live', projector);
+
+    expect(selectProductCategoryTriggerListings([draft, live])).toEqual([live]);
+  });
+});
 
 describe('ProductCategorySyncService', () => {
   it('synchronizes one trusted live OLX leaf with full provenance and one real-change activity', async () => {

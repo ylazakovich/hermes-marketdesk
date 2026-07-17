@@ -67,6 +67,9 @@ export class HermesEvent {
     if (!HERMES_EVENT_STATUSES.includes(status)) {
       return Err(new ValidationError(`Unknown HermesEvent status: ${status}`));
     }
+    if (props.type === 'product_category_conflict' && status !== 'pending_review') {
+      return Err(new ValidationError('Product category conflicts must start in pending_review'));
+    }
     const terminal = ['applied', 'dismissed', 'failed', 'reverted'].includes(status);
     const resolvedAt = props.resolvedAt ?? null;
     if (terminal !== (resolvedAt !== null)) {
@@ -215,6 +218,9 @@ export class HermesEvent {
   }
 
   beginAutoApply(): Result<void> {
+    if (this.type === 'product_category_conflict') {
+      return Err(new InvalidStateError('Product category conflicts cannot be auto-applied'));
+    }
     if (this._status !== 'pending_decision') {
       return Err(
         new InvalidStateError(`Cannot auto-apply event in ${this._status} state`),

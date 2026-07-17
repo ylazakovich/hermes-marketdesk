@@ -8,7 +8,7 @@ Automatic synchronization is currently OLX-only. Evidence is accepted only when 
 
 - comes from the provider taxonomy;
 - is an exact leaf with a provider category ID and full non-empty path;
-- has confidence `1`;
+- has confidence at or above the OLX guard threshold (`0.8`);
 - has a valid, non-stale taxonomy verification window;
 - is semantically compatible with stable product identity (`name` and `description`). The current `Product.category` is deliberately excluded from this check so a stale category cannot block its own correction.
 
