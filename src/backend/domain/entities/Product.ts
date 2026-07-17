@@ -302,7 +302,7 @@ export class Product {
       return Err(new ValidationError('Product category is required'));
     }
     const normalized = category.trim();
-    if (normalized === this._category && this._categoryProvenance === null) return Ok(undefined);
+    if (normalized === this._category) return Ok(undefined);
     this._category = normalized;
     this._categoryProvenance = null;
     this.touch();

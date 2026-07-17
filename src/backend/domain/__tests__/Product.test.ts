@@ -157,7 +157,22 @@ describe('Product category provenance', () => {
     expect(result).toEqual({ categoryChanged: false, stateChanged: true });
     expect(product.categoryProvenance).toMatchObject({
       status: 'synced',
-      sources: [expect.objectContaining({ syncedAt: '2026-07-16T01:00:00.000Z' })],
+      sources: [expect.objectContaining({
+        taxonomyVerifiedAt: '2026-07-16T00:00:00.000Z',
+        syncedAt: '2026-07-16T01:00:00.000Z',
+      })],
     });
+  });
+
+  it('preserves provenance and updatedAt when an ordinary edit resubmits the same category', () => {
+    const product = unwrap(Product.create(baseProps({ category: 'Projectors' })));
+    unwrap(product.synchronizeCategory('Projectors', [source()]));
+    const provenance = product.categoryProvenance;
+    const updatedAt = product.updatedAt;
+
+    unwrap(product.updateCategory(' Projectors '));
+
+    expect(product.categoryProvenance).toEqual(provenance);
+    expect(product.updatedAt).toBe(updatedAt);
   });
 });

@@ -17,7 +17,7 @@ import EditIcon from '@mui/icons-material/EditOutlined';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import type { HermesEvent, Listing, Marketplace } from '@shared/types';
+import type { HermesEvent, Listing, Marketplace, ProductCategoryProvenance } from '@shared/types';
 import type { PublishListingInput, PublishListingPreview } from '../state/api/dto.js';
 import {
   useProduct,
@@ -60,6 +60,19 @@ export const mainPreviewImageSx = {
 
 export const MIN_QUOTA_OVERRIDE_REASON_LENGTH = 10;
 export const MAX_QUOTA_OVERRIDE_REASON_LENGTH = 500;
+
+type CategoryConflictProvenance = Extract<ProductCategoryProvenance, { status: 'conflict' }>;
+
+export function categoryConflictEvidenceLines(provenance: CategoryConflictProvenance): string[] {
+  return [
+    ...(provenance.currentSources ?? []).map(
+      (source) => `Current · listing ${source.listingId} · ${source.path.join(' › ')}`,
+    ),
+    ...provenance.candidates.map(
+      (source) => `Candidate · listing ${source.listingId} · ${source.path.join(' › ')} · ID ${source.providerCategoryId}`,
+    ),
+  ];
+}
 
 export function buildPublishListingInput(
   listingId: string,
@@ -539,6 +552,14 @@ const ListingDetailsPage: React.FC = () => {
               <DetailRow label="Category source">
                 <Typography component="span" variant="body2" color="warning.main" sx={{ display: 'block', fontWeight: 600 }}>
                   Conflicting active listing categories require review
+                </Typography>
+                {categoryConflictEvidenceLines(p.categoryProvenance).map((line) => (
+                  <Typography key={line} component="span" variant="body2" sx={{ display: 'block' }}>
+                    {line}
+                  </Typography>
+                ))}
+                <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                  Detected {new Date(p.categoryProvenance.detectedAt).toLocaleString()}
                 </Typography>
               </DetailRow>
             )}
