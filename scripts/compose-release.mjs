@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -16,10 +16,19 @@ import { fileURLToPath } from 'node:url';
 const RELEASE_TAG_PATTERN = /^hermes-marketdesk-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const RELEASE_CONTEXT_PREFIX = 'marketdesk-release-context-';
 
+
 function runGit(args, cwd, failureMessage) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
   if (result.status !== 0) throw new Error(failureMessage);
   return result.stdout.trim();
+}
+
+function canonicalReleaseTags(commit, cwd) {
+  return runGit(
+    ['tag', '--points-at', commit],
+    cwd,
+    'Unable to resolve release tags for the exact commit',
+  ).split(/\r?\n/).filter((tag) => RELEASE_TAG_PATTERN.test(tag));
 }
 
 export function resolveCheckoutRelease(cwd = process.cwd()) {
@@ -28,14 +37,21 @@ export function resolveCheckoutRelease(cwd = process.cwd()) {
     cwd,
     'Unable to resolve the release commit',
   );
-  const tag = runGit(
-    ['describe', '--tags', '--exact-match', '--match', 'hermes-marketdesk-v[0-9]*', commit],
+  const allTags = runGit(
+    ['tag', '--points-at', commit],
     cwd,
-    'Release deployment requires HEAD to be checked out at an exact MarketDesk release tag',
-  );
-  if (!RELEASE_TAG_PATTERN.test(tag)) {
-    throw new Error(`Invalid MarketDesk release tag: ${tag || '(empty)'}`);
+    'Unable to resolve release tags for the exact commit',
+  ).split(/\r?\n/).filter(Boolean);
+  const releaseTags = allTags.filter((tag) => RELEASE_TAG_PATTERN.test(tag));
+  if (releaseTags.length === 0) {
+    const marketDeskTag = allTags.find((tag) => tag.startsWith('hermes-marketdesk-v'));
+    if (marketDeskTag) throw new Error(`Invalid MarketDesk release tag: ${marketDeskTag}`);
+    throw new Error('Release deployment requires HEAD to be checked out at an exact MarketDesk release tag');
   }
+  if (releaseTags.length !== 1) {
+    throw new Error('Release deployment requires exactly one valid MarketDesk release tag on the commit');
+  }
+  const [tag] = releaseTags;
 
   const status = spawnSync(
     'git',
@@ -53,6 +69,10 @@ export function resolveCheckoutRelease(cwd = process.cwd()) {
   if (currentCommit !== commit) {
     throw new Error('Release checkout changed while it was being validated');
   }
+  const currentReleaseTags = canonicalReleaseTags(commit, cwd);
+  if (currentReleaseTags.length !== 1 || currentReleaseTags[0] !== tag) {
+    throw new Error('Release tag association changed while it was being validated');
+  }
   return { commit, tag };
 }
 
@@ -60,50 +80,64 @@ export function resolveCheckoutReleaseTag(cwd = process.cwd()) {
   return resolveCheckoutRelease(cwd).tag;
 }
 
-export function scavengeStaleReleaseContexts(baseDirectory = tmpdir()) {
-  let entries;
-  try {
-    entries = readdirSync(baseDirectory, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith(RELEASE_CONTEXT_PREFIX)) continue;
-    const root = join(baseDirectory, entry.name);
-    let ownerPid;
-    try {
-      ownerPid = Number.parseInt(readFileSync(join(root, 'owner.pid'), 'utf8'), 10);
-    } catch {
-      ownerPid = Number.NaN;
-    }
-    let active = false;
-    if (Number.isSafeInteger(ownerPid) && ownerPid > 0) {
-      try {
-        process.kill(ownerPid, 0);
-        active = true;
-      } catch (error) {
-        active = error?.code === 'EPERM';
-      }
-    }
-    if (!active) {
-      try {
-        rmSync(root, { recursive: true, force: true });
-      } catch {
-        // Another user may own a similarly named private directory; leave it untouched.
-      }
-    }
+export function assertReleaseAssociation(release, cwd = process.cwd()) {
+  const currentCommit = runGit(
+    ['rev-parse', '--verify', 'HEAD'],
+    cwd,
+    'Unable to revalidate the release commit before Compose startup',
+  );
+  const tags = canonicalReleaseTags(release.commit, cwd);
+  if (currentCommit !== release.commit || tags.length !== 1 || tags[0] !== release.tag) {
+    throw new Error('Release commit or tag association changed before Compose startup');
   }
 }
 
-export function createImmutableReleaseContext(commit, cwd = process.cwd()) {
+function privateReleaseBase() {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'user';
+  const directory = join('/tmp', `marketdesk-release-${uid}`);
+  try {
+    mkdirSync(directory, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+  }
+  const metadata = lstatSync(directory);
+  const ownedByCurrentUser = typeof process.getuid !== 'function' || metadata.uid === process.getuid();
+  if (!metadata.isDirectory() || !ownedByCurrentUser || (metadata.mode & 0o077) !== 0) {
+    throw new Error('Release runtime directory must be a private directory owned by the current user');
+  }
+  return directory;
+}
+
+function acquirePersistentReleaseLock(cwd) {
+  const projectName = basename(resolve(cwd));
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(projectName)) {
+    throw new Error(`Checkout directory is not a valid canonical Compose project name: ${projectName}`);
+  }
+  const lockRoot = join(privateReleaseBase(), `${projectName}.lock`);
+  try {
+    mkdirSync(lockRoot, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      throw new Error(
+        `A MarketDesk release lock already exists at ${lockRoot}; verify that no release process is active before removing it manually`,
+      );
+    }
+    throw error;
+  }
+  return lockRoot;
+}
+
+export function createImmutableReleaseContext(commit, cwd = process.cwd(), root) {
   if (!/^[0-9a-f]{40}$/.test(commit)) {
     throw new Error('Release context requires an exact commit SHA');
   }
-  scavengeStaleReleaseContexts();
-  const root = mkdtempSync(join(tmpdir(), RELEASE_CONTEXT_PREFIX));
-  writeFileSync(join(root, 'owner.pid'), `${process.pid}\n`, { mode: 0o600 });
-  const context = join(root, 'context');
-  const archive = join(root, 'release.tar');
+  const releaseRoot = root ?? mkdtempSync(join(tmpdir(), RELEASE_CONTEXT_PREFIX));
+  if (root) {
+    rmSync(releaseRoot, { recursive: true, force: true });
+    mkdirSync(releaseRoot, { recursive: true, mode: 0o700 });
+  }
+  const context = join(releaseRoot, 'context');
+  const archive = join(releaseRoot, 'release.tar');
   mkdirSync(context);
   try {
     const gitArchive = spawnSync(
@@ -115,9 +149,9 @@ export function createImmutableReleaseContext(commit, cwd = process.cwd()) {
     const extract = spawnSync('tar', ['-xf', archive, '-C', context], { encoding: 'utf8' });
     if (extract.status !== 0) throw new Error('Unable to extract the immutable release context');
     rmSync(archive, { force: true });
-    return { context, root };
+    return { context, root: releaseRoot };
   } catch (error) {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(releaseRoot, { recursive: true, force: true });
     throw error;
   }
 }
@@ -220,38 +254,38 @@ export function buildReleaseComposeEnvironment(
   for (const name of Object.keys(environment)) {
     if (name.startsWith('COMPOSE_')) delete environment[name];
   }
-  if (releaseContext) {
-    environment.MARKETDESK_BUILD_CONTEXT = releaseContext;
-  }
+  if (releaseContext) environment.MARKETDESK_BUILD_CONTEXT = releaseContext;
   if (releaseEnvFile) environment.MARKETDESK_ENV_FILE = releaseEnvFile;
   return environment;
 }
 
-export function runReleaseCompose(args, cwd = process.cwd()) {
-  const release = resolveCheckoutRelease(cwd);
-  const projectName = deriveReleaseProjectName(cwd);
-  assertExistingProjectIdentity(projectName, inspectExistingProjectName(cwd));
-  const immutable = createImmutableReleaseContext(release.commit, cwd);
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    rmSync(immutable.root, { recursive: true, force: true });
-  };
+function waitForChild(child) {
+  return new Promise((resolvePromise, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolvePromise({ code, signal }));
+  });
+}
+
+function signalExitCode(signal) {
+  return { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 }[signal] ?? 1;
+}
+
+export async function runReleaseCompose(args, cwd = process.cwd()) {
+  const lockRoot = acquirePersistentReleaseLock(cwd);
+  let child;
+  let composeStarted = false;
+  let composeSucceeded = false;
+  let receivedSignal;
   const signalHandlers = new Map();
-  const removeSignalHandlers = () => {
-    for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
-  };
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    signalHandlers.set(signal, () => {
-      cleanup();
-      removeSignalHandlers();
-      process.kill(process.pid, signal);
-    });
-  }
-  for (const [signal, handler] of signalHandlers) process.once(signal, handler);
-  process.once('exit', cleanup);
   try {
+    const release = resolveCheckoutRelease(cwd);
+    const projectName = deriveReleaseProjectName(cwd);
+    assertExistingProjectIdentity(projectName, inspectExistingProjectName(cwd));
+    const immutable = createImmutableReleaseContext(
+      release.commit,
+      cwd,
+      join(lockRoot, 'deployment'),
+    );
     const releaseEnvFile = createReleaseEnvironmentSnapshot(immutable.root, cwd);
     const composeArgs = buildReleaseComposeArgs(
       args,
@@ -259,8 +293,11 @@ export function runReleaseCompose(args, cwd = process.cwd()) {
       resolve(immutable.context, 'docker-compose.yml'),
       releaseEnvFile,
     );
-    const result = spawnSync('docker', composeArgs, {
+    assertReleaseAssociation(release, cwd);
+    const detached = process.platform !== 'win32';
+    child = spawn('docker', composeArgs, {
       cwd,
+      detached,
       env: buildReleaseComposeEnvironment(
         release.tag,
         process.env,
@@ -269,19 +306,44 @@ export function runReleaseCompose(args, cwd = process.cwd()) {
       ),
       stdio: 'inherit',
     });
-    if (result.error) throw result.error;
-    return result.status ?? 1;
+    if (!Number.isSafeInteger(child.pid) || child.pid <= 0) {
+      await waitForChild(child);
+      throw new Error('Unable to start Docker Compose');
+    }
+    composeStarted = true;
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+      signalHandlers.set(signal, () => {
+        receivedSignal ??= signal;
+        const target = detached ? -child.pid : child.pid;
+        try {
+          process.kill(target, signal);
+        } catch (error) {
+          if (error?.code !== 'ESRCH') console.error(`Unable to forward ${signal} to Docker Compose`);
+        }
+      });
+    }
+    for (const [signal, handler] of signalHandlers) process.on(signal, handler);
+    const outcome = await waitForChild(child);
+    composeSucceeded = outcome.code === 0 && receivedSignal === undefined;
+    return receivedSignal
+      ? signalExitCode(receivedSignal)
+      : outcome.code ?? signalExitCode(outcome.signal);
   } finally {
-    removeSignalHandlers();
-    process.removeListener('exit', cleanup);
-    cleanup();
+    for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
+    if (!composeStarted || composeSucceeded) {
+      rmSync(lockRoot, { recursive: true, force: true });
+    } else {
+      console.error(
+        `Release lock retained at ${lockRoot}; verify that no release process is active before removing it manually`,
+      );
+    }
   }
 }
 
 const isEntrypoint = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 if (isEntrypoint) {
   try {
-    process.exitCode = runReleaseCompose(process.argv.slice(2));
+    process.exitCode = await runReleaseCompose(process.argv.slice(2), process.cwd());
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

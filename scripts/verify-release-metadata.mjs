@@ -3,7 +3,6 @@
 import assert from 'node:assert/strict';
 import {
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
+  assertReleaseAssociation,
   assertExistingProjectIdentity,
   buildReleaseComposeArgs,
   buildReleaseComposeEnvironment,
@@ -24,7 +24,6 @@ import {
   parseExistingProjectInspection,
   resolveCheckoutRelease,
   resolveCheckoutReleaseTag,
-  scavengeStaleReleaseContexts,
 } from './compose-release.mjs';
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'marketdesk-release-metadata-'));
@@ -118,16 +117,6 @@ try {
     'inherited Compose control variables must not override the canonical release deployment',
   );
 
-  const scavengeBase = join(tempRoot, 'scavenge');
-  const activeContext = join(scavengeBase, 'marketdesk-release-context-active');
-  const staleContext = join(scavengeBase, 'marketdesk-release-context-stale');
-  mkdirSync(activeContext, { recursive: true });
-  mkdirSync(staleContext);
-  writeFileSync(join(activeContext, 'owner.pid'), `${process.pid}\n`);
-  writeFileSync(join(staleContext, 'owner.pid'), '99999999\n');
-  scavengeStaleReleaseContexts(scavengeBase);
-  assert.equal(existsSync(activeContext), true, 'an active concurrent release context must survive');
-  assert.equal(existsSync(staleContext), false, 'an orphaned release context must be removed');
 
   mkdirSync(gitDir);
   mkdirSync(composeDir);
@@ -159,6 +148,19 @@ try {
   assert.match(release.commit, /^[0-9a-f]{40}$/);
   assert.equal(release.tag, 'hermes-marketdesk-v0.10.0');
   assert.equal(resolveCheckoutReleaseTag(gitDir), 'hermes-marketdesk-v0.10.0');
+  run('git', ['tag', 'hermes-marketdesk-v0.10.1'], gitDir);
+  assert.throws(
+    () => resolveCheckoutReleaseTag(gitDir),
+    /requires exactly one valid MarketDesk release tag/,
+  );
+  run('git', ['tag', '--delete', 'hermes-marketdesk-v0.10.1'], gitDir);
+  assert.doesNotThrow(() => assertReleaseAssociation(release, gitDir));
+  run('git', ['tag', '--delete', 'hermes-marketdesk-v0.10.0'], gitDir);
+  assert.throws(
+    () => assertReleaseAssociation(release, gitDir),
+    /tag association changed/,
+  );
+  run('git', ['tag', 'hermes-marketdesk-v0.10.0'], gitDir);
 
   const immutable = createImmutableReleaseContext(release.commit, gitDir);
   assert.equal(readFileSync(join(immutable.context, 'artifact.txt'), 'utf8'), 'release\n');
