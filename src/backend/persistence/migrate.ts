@@ -3,9 +3,11 @@ import fs from 'fs';
 import { Pool, type PoolClient } from 'pg';
 import dotenv from 'dotenv';
 import { migrationPoolConfig } from '../config/databaseConfig.js';
+import { safeErrorDetails } from '../config/safeErrorDetails.js';
 import { concurrentIndexIdentity, quotedIndexIdentity } from './migrationSql.js';
 import { orderedMigrationFiles } from './migrationFiles.js';
 import pino from 'pino';
+import { pathToFileURL } from 'node:url';
 
 dotenv.config();
 const logger = pino();
@@ -15,6 +17,7 @@ const migrationsDir = process.env.MARKETDESK_MIGRATIONS_DIR
 const MIGRATION_LOCK_KEY = 'marketdesk:migrations';
 const CONNECTION_ATTEMPTS = 30;
 const CONNECTION_RETRY_MS = 1_000;
+const sensitiveValues = [process.env.DATABASE_URL, process.env.DB_PASSWORD];
 
 async function connectWithRetry(pool: Pool): Promise<PoolClient> {
   for (let attempt = 1; attempt <= CONNECTION_ATTEMPTS; attempt += 1) {
@@ -32,12 +35,13 @@ async function connectWithRetry(pool: Pool): Promise<PoolClient> {
   throw new Error('Database connection retry loop exhausted');
 }
 
-async function runMigrations() {
-  const pool = new Pool(migrationPoolConfig());
+export async function runMigrations() {
+  let pool: Pool | undefined;
   let client: PoolClient | undefined;
   let locked = false;
 
   try {
+    pool = new Pool(migrationPoolConfig());
     logger.info('Starting database migrations...');
 
     // Get all migration files
@@ -80,26 +84,37 @@ async function runMigrations() {
         }
         logger.info(`Completed migration: ${file}`);
       } catch (error) {
-        logger.error({ error, file }, `Failed to run migration: ${file}`);
+        logger.error(
+          { error: safeErrorDetails(error, sensitiveValues), file },
+          `Failed to run migration: ${file}`,
+        );
         throw error;
       }
     }
 
     logger.info('All migrations completed successfully');
   } catch (error) {
-    logger.error({ error }, 'Migration failed');
+    logger.error({ error: safeErrorDetails(error, sensitiveValues) }, 'Migration failed');
     process.exitCode = 1;
   } finally {
     if (client && locked) {
       try {
         await client.query('SELECT pg_advisory_unlock(hashtext($1))', [MIGRATION_LOCK_KEY]);
       } catch (unlockError) {
-        logger.warn({ error: unlockError }, 'Failed to release migration advisory lock');
+        logger.warn(
+          { error: safeErrorDetails(unlockError, sensitiveValues) },
+          'Failed to release migration advisory lock',
+        );
       }
     }
     client?.release();
-    await pool.end();
+    await pool?.end();
   }
 }
 
-runMigrations();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runMigrations().catch((error) => {
+    logger.error({ error: safeErrorDetails(error, sensitiveValues) }, 'Migration runner failed');
+    process.exitCode = 1;
+  });
+}
