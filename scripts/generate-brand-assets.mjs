@@ -10,7 +10,11 @@ const svg = await readFile(source);
 await mkdir(publicDir, { recursive: true });
 await Promise.all([
   sharp(svg).resize(32, 32).png({ compressionLevel: 9 }).toFile(path.join(publicDir, 'favicon-32x32.png')),
-  sharp(svg).resize(180, 180).png({ compressionLevel: 9 }).toFile(path.join(publicDir, 'apple-touch-icon.png')),
+  sharp(svg)
+    .resize(180, 180)
+    .flatten({ background: '#5B55E7' })
+    .png({ compressionLevel: 9 })
+    .toFile(path.join(publicDir, 'apple-touch-icon.png')),
 ]);
 
 console.log('Generated MarketDesk brand PNG assets from marketdesk-mark.svg.');

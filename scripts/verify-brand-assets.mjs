@@ -5,8 +5,8 @@ import sharp from 'sharp';
 const root = path.resolve(import.meta.dirname, '..');
 const publicDir = path.join(root, 'public');
 const expected = [
-  ['favicon-32x32.png', 32],
-  ['apple-touch-icon.png', 180],
+  { filename: 'favicon-32x32.png', size: 32, opaque: false },
+  { filename: 'apple-touch-icon.png', size: 180, opaque: true },
 ];
 
 const [html, sidebar, svg] = await Promise.all([
@@ -15,28 +15,74 @@ const [html, sidebar, svg] = await Promise.all([
   readFile(path.join(publicDir, 'marketdesk-mark.svg'), 'utf8'),
 ]);
 
-const requiredHtml = [
-  'href="/marketdesk-mark.svg"',
-  'href="/favicon-32x32.png"',
-  'href="/apple-touch-icon.png"',
-  'content="#5B55E7"',
+const activeHtml = html.replace(/<!--[\s\S]*?-->/g, '');
+const htmlTags = (name) =>
+  [...activeHtml.matchAll(new RegExp(`<${name}\\b([^>]*)>`, 'gi'))].map((match) => {
+    const attributes = new Map();
+    for (const attribute of match[1].matchAll(/([\w:-]+)\s*=\s*(["'])(.*?)\2/g)) {
+      attributes.set(attribute[1].toLowerCase(), attribute[3]);
+    }
+    return attributes;
+  });
+const links = htmlTags('link');
+const requiredLinks = [
+  ['icon', '/marketdesk-mark.svg'],
+  ['icon', '/favicon-32x32.png'],
+  ['apple-touch-icon', '/apple-touch-icon.png'],
 ];
-for (const marker of requiredHtml) {
-  if (!html.includes(marker)) throw new Error(`Missing brand metadata: ${marker}`);
+for (const [rel, href] of requiredLinks) {
+  if (!links.some((attributes) => attributes.get('rel') === rel && attributes.get('href') === href)) {
+    throw new Error(`Missing active brand link: rel=${rel} href=${href}`);
+  }
 }
-if (html.includes('/vite.svg')) throw new Error('Vite favicon reference is still present');
-if (!sidebar.includes('src="/marketdesk-mark.svg"')) {
+if (activeHtml.includes('/vite.svg')) throw new Error('Vite favicon reference is still present');
+if (
+  !htmlTags('meta').some(
+    (attributes) =>
+      attributes.get('name') === 'theme-color' && attributes.get('content') === '#5B55E7',
+  )
+) {
+  throw new Error('Missing active MarketDesk theme-color metadata');
+}
+
+const activeSidebar = sidebar
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+const canonicalSidebarMark = [...activeSidebar.matchAll(/<Box\b([\s\S]*?)\/>/g)].some((match) => {
+  const attributes = new Map();
+  for (const attribute of match[1].matchAll(/([\w:-]+)\s*=\s*(["'])(.*?)\2/g)) {
+    attributes.set(attribute[1], attribute[3]);
+  }
+  return (
+    attributes.get('component') === 'img' &&
+    attributes.get('src') === '/marketdesk-mark.svg' &&
+    attributes.get('alt') === '' &&
+    attributes.get('aria-hidden') === 'true'
+  );
+});
+if (!canonicalSidebarMark) {
   throw new Error('Sidebar does not use the canonical MarketDesk mark');
+}
+
+const forbiddenSvg = /<!--|<!|<\s*(?:script|foreignObject|style|image|use|a|animate)\b|\b(?:href|on[a-z]+)\s*=|url\s*\(/i;
+if (forbiddenSvg.test(svg)) throw new Error('Canonical MarketDesk SVG contains unsafe content');
+await sharp(Buffer.from(svg)).metadata();
+const allowedSvgTags = new Set(['svg', 'title', 'circle', 'path']);
+const svgTags = [...svg.matchAll(/<\/?\s*([a-z][\w:-]*)\b/gi)].map((match) => match[1]);
+if (svgTags.length === 0 || svgTags.some((tag) => !allowedSvgTags.has(tag))) {
+  throw new Error('Canonical MarketDesk SVG contains an unexpected element');
 }
 if (!svg.includes('viewBox="0 0 64 64"') || !svg.includes('#5B55E7')) {
   throw new Error('Canonical MarketDesk SVG geometry or palette is invalid');
 }
 
-for (const [filename, size] of expected) {
+for (const { filename, size, opaque } of expected) {
   const file = path.join(publicDir, filename);
+  let renderer = sharp(Buffer.from(svg)).resize(size, size);
+  if (opaque) renderer = renderer.flatten({ background: '#5B55E7' });
   const [actual, rendered, metadata] = await Promise.all([
     readFile(file),
-    sharp(Buffer.from(svg)).resize(size, size).png({ compressionLevel: 9 }).toBuffer(),
+    renderer.png({ compressionLevel: 9 }).toBuffer(),
     sharp(file).metadata(),
   ]);
   if (metadata.format !== 'png' || metadata.width !== size || metadata.height !== size) {
@@ -44,6 +90,9 @@ for (const [filename, size] of expected) {
   }
   if (!actual.equals(rendered)) {
     throw new Error(`${filename} is stale; run npm run generate:brand-assets`);
+  }
+  if (opaque && metadata.hasAlpha) {
+    throw new Error(`${filename} must have a full-bleed opaque background`);
   }
 }
 
