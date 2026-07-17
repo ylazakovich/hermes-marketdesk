@@ -113,7 +113,7 @@ function acquirePersistentReleaseLock(cwd) {
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(projectName)) {
     throw new Error(`Checkout directory is not a valid canonical Compose project name: ${projectName}`);
   }
-  const lockRoot = join(privateReleaseBase(), `${projectName}.lock`);
+  const lockRoot = join(privateReleaseBase(), 'marketdesk.lock');
   try {
     mkdirSync(lockRoot, { mode: 0o700 });
   } catch (error) {
