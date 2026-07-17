@@ -355,6 +355,7 @@ describe('SyncMarketplaceHandler', () => {
       id: 'l-atomic', productId: 'p-atomic', marketplaceId: 'm-1',
       price: money(50), status: 'live', marketplaceListingId: 'ext-atomic',
     }));
+    const expectedUpdatedAt = listing.updatedAt;
     const marketplace = unwrap(Marketplace.create({
       id: 'm-1', workspaceId: 'w-1', key: 'olx', name: 'OLX',
     }));
@@ -381,6 +382,7 @@ describe('SyncMarketplaceHandler', () => {
     expect(persistAndReconcileProductCategories).toHaveBeenCalledWith(expect.objectContaining({
       marketplace,
       listings: [expect.objectContaining({ id: 'l-atomic' })],
+      expectedUpdatedAt: new Map([['l-atomic', expectedUpdatedAt]]),
       job: expect.objectContaining({ trigger: 'manual', actorId: 'user-1' }),
     }));
     expect(listing.marketplaceCategory).toEqual(synced[0].marketplaceCategory);

@@ -15,8 +15,29 @@ function parseSource(value: unknown): ProductCategorySource | null {
   const strings = ['marketplaceId', 'listingId', 'providerCategoryId', 'name', 'taxonomyVerifiedAt', 'syncedAt'];
   if (source.marketplaceKey !== 'olx' || strings.some((key) => typeof source[key] !== 'string' || !(source[key] as string).trim())) return null;
   if (!Array.isArray(source.path) || source.path.length === 0 || source.path.some((part) => typeof part !== 'string' || !part.trim())) return null;
-  if (Number.isNaN(Date.parse(source.taxonomyVerifiedAt as string)) || Number.isNaN(Date.parse(source.syncedAt as string))) return null;
-  return source as unknown as ProductCategorySource;
+  const providerCategoryId = (source.providerCategoryId as string).trim();
+  const name = (source.name as string).trim();
+  const path = source.path.map((part) => (part as string).trim());
+  const taxonomyVerifiedAt = source.taxonomyVerifiedAt as string;
+  const syncedAt = source.syncedAt as string;
+  const verifiedMs = Date.parse(taxonomyVerifiedAt);
+  const syncedMs = Date.parse(syncedAt);
+  if (!/^[1-9]\d*$/.test(providerCategoryId)
+    || path[path.length - 1] !== name
+    || !Number.isFinite(verifiedMs) || !Number.isFinite(syncedMs)
+    || new Date(verifiedMs).toISOString() !== taxonomyVerifiedAt
+    || new Date(syncedMs).toISOString() !== syncedAt
+    || verifiedMs > syncedMs || syncedMs > Date.now()) return null;
+  return {
+    marketplaceKey: 'olx',
+    marketplaceId: (source.marketplaceId as string).trim(),
+    listingId: (source.listingId as string).trim(),
+    providerCategoryId,
+    name,
+    path,
+    taxonomyVerifiedAt,
+    syncedAt,
+  };
 }
 
 function parseSources(value: unknown): ProductCategorySource[] | null {
@@ -37,9 +58,12 @@ function parseCategoryProvenance(value: unknown): ProductCategoryProvenance | nu
     const currentSources = provenance.currentSources === null
       ? null
       : parseSources(provenance.currentSources);
+    const detectedAt = provenance.detectedAt;
+    const detectedMs = typeof detectedAt === 'string' ? Date.parse(detectedAt) : Number.NaN;
     if (!candidates || (provenance.currentSources !== null && !currentSources)
-      || typeof provenance.detectedAt !== 'string' || Number.isNaN(Date.parse(provenance.detectedAt))) return null;
-    return { status: 'conflict', currentSources, candidates, detectedAt: provenance.detectedAt };
+      || !Number.isFinite(detectedMs) || new Date(detectedMs).toISOString() !== detectedAt
+      || detectedMs > Date.now()) return null;
+    return { status: 'conflict', currentSources, candidates, detectedAt };
   }
   return null;
 }

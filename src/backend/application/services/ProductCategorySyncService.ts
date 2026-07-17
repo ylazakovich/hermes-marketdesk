@@ -134,16 +134,6 @@ export class ProductCategorySyncService {
       if (!stateChanged) return { outcome: 'unchanged', categoryChanged: false };
       await repositories.productRepo.save(product);
       await this.recordConflictEvent(repositories.eventRepo, product.id, product.category, candidates.map(({ source }) => source), input.workspaceId, now);
-      await repositories.activityLog?.record(this.activity(input, product.id, 'product.category_conflict_detected', {
-        candidates: candidates.map(({ source }) => ({
-          marketplaceKey: source.marketplaceKey,
-          marketplaceId: source.marketplaceId,
-          listingId: source.listingId,
-          providerCategoryId: source.providerCategoryId,
-          name: source.name,
-          path: source.path,
-        })),
-      }, now));
       return { outcome: 'conflict', categoryChanged: false };
     }
 

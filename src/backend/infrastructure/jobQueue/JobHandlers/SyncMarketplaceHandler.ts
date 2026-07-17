@@ -53,6 +53,7 @@ export interface SyncMarketplaceHandlerDeps {
   persistAndReconcileProductCategories?: (input: {
     marketplace: Marketplace;
     listings: Listing[];
+    expectedUpdatedAt: ReadonlyMap<string, Date>;
     job: SyncMarketplaceJobData;
   }) => Promise<void>;
 }
@@ -146,6 +147,7 @@ export class SyncMarketplaceHandler {
     if (!store || synced.length === 0) return 0;
 
     const listings = await store.findByMarketplace(data.marketplaceId);
+    const expectedUpdatedAt = new Map(listings.map((listing) => [listing.id, listing.updatedAt]));
     const marketplace = await this.deps.marketplaceStore?.findById(data.marketplaceId);
     const byExternalId = new Map<string, Listing>();
     for (const listing of listings) {
@@ -200,7 +202,12 @@ export class SyncMarketplaceHandler {
     }
     if (updated.length > 0) {
       if (marketplace && this.deps.persistAndReconcileProductCategories) {
-        await this.deps.persistAndReconcileProductCategories({ marketplace, listings: updated, job: data });
+        await this.deps.persistAndReconcileProductCategories({
+          marketplace,
+          listings: updated,
+          expectedUpdatedAt,
+          job: data,
+        });
       } else {
         await store.saveAll(updated);
       }

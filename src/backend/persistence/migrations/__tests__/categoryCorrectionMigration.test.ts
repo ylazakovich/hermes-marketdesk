@@ -69,8 +69,10 @@ describe('OLX category correction migrations', () => {
       expect(sql).toContain("category_provenance->>'status' IN ('synced', 'conflict')");
       expect(sql).toContain('COALESCE(');
     }
-    expect(migration).toContain('FROM pg_constraint');
-    expect(migration).toContain("conrelid = 'products'::regclass");
+    const drop = migration.indexOf('DROP CONSTRAINT IF EXISTS products_category_provenance_shape');
+    const add = migration.indexOf('ADD CONSTRAINT products_category_provenance_shape');
+    expect(drop).toBeGreaterThan(-1);
+    expect(add).toBeGreaterThan(drop);
   });
 
   it('preserves correction audit rows across ordinary event, listing, and marketplace retention', () => {

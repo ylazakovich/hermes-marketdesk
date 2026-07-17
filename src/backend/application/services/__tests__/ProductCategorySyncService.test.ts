@@ -183,7 +183,7 @@ describe('ProductCategorySyncService', () => {
     expect(events[0].proposedChange).toMatchObject({
       kind: 'product_category_conflict', currentCategory: 'Electronics', candidates: expect.any(Array),
     });
-    expect(activityLog.entries.filter((entry) => entry.action === 'product.category_conflict_detected')).toHaveLength(1);
+    expect(activityLog.entries).toHaveLength(0);
   });
 
   it('uses stable product identity rather than stale Product.category for semantic validation', async () => {

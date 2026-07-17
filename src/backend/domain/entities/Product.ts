@@ -54,7 +54,8 @@ export class Product {
     private _tags: string[],
     private _images: string[],
     public readonly createdAt: Date,
-    private _updatedAt: Date
+    private _updatedAt: Date,
+    private _categoryStateDirty: boolean,
   ) {}
 
   static create(props: CreateProductProps): Result<Product> {
@@ -106,7 +107,8 @@ export class Product {
         props.tags ? [...props.tags] : [],
         props.images ? [...props.images] : [],
         props.createdAt ?? now,
-        props.updatedAt ?? now
+        props.updatedAt ?? now,
+        true,
       )
     );
   }
@@ -131,7 +133,8 @@ export class Product {
       [...props.tags],
       [...props.images],
       props.createdAt,
-      props.updatedAt
+      props.updatedAt,
+      false,
     );
   }
 
@@ -183,6 +186,13 @@ export class Product {
   }
   get updatedAt(): Date {
     return this._updatedAt;
+  }
+  get hasCategoryStateChanges(): boolean {
+    return this._categoryStateDirty;
+  }
+
+  markCategoryStatePersisted(): void {
+    this._categoryStateDirty = false;
   }
 
   // --- Behavior ---
@@ -305,6 +315,7 @@ export class Product {
     if (normalized === this._category) return Ok(undefined);
     this._category = normalized;
     this._categoryProvenance = null;
+    this._categoryStateDirty = true;
     this.touch();
     return Ok(undefined);
   }
@@ -328,6 +339,7 @@ export class Product {
     }
     this._category = normalized;
     this._categoryProvenance = { status: 'synced', sources: normalizedSources };
+    this._categoryStateDirty = true;
     this.touch();
     return Ok({ categoryChanged, stateChanged: true });
   }
@@ -351,6 +363,7 @@ export class Product {
       candidates: normalized,
       detectedAt: detectedAt.toISOString(),
     };
+    this._categoryStateDirty = true;
     this.touch();
     return { stateChanged: true };
   }

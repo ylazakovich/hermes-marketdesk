@@ -167,7 +167,12 @@ export const ProductsTable: React.FC<ProductsTableProps> = ({
                       {product.categoryProvenance?.status === 'synced' && (
                         <Tooltip
                           title={product.categoryProvenance.sources
-                            .map((source) => `${source.path.join(' › ')} (${source.providerCategoryId})`)
+                            .map((source) => [
+                              `${source.path.join(' › ')} (${source.providerCategoryId})`,
+                              `listing ${source.listingId}`,
+                              `taxonomy verified ${source.taxonomyVerifiedAt}`,
+                              `synced ${source.syncedAt}`,
+                            ].join(' · '))
                             .join('\n')}
                         >
                           <Typography variant="caption" color="success.main" noWrap>

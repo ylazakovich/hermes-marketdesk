@@ -129,8 +129,8 @@ export class ProductRepository implements IProductRepository {
          cost_price = EXCLUDED.cost_price,
          selling_price = EXCLUDED.selling_price,
          condition = EXCLUDED.condition,
-         category = EXCLUDED.category,
-         category_provenance = EXCLUDED.category_provenance,
+         category = CASE WHEN $14 THEN EXCLUDED.category ELSE products.category END,
+         category_provenance = CASE WHEN $14 THEN EXCLUDED.category_provenance ELSE products.category_provenance END,
          status = EXCLUDED.status,
          updated_at = EXCLUDED.updated_at`,
       [
@@ -147,6 +147,7 @@ export class ProductRepository implements IProductRepository {
         product.status,
         product.createdAt,
         product.updatedAt,
+        product.hasCategoryStateChanges,
       ],
       client
     );
@@ -171,6 +172,7 @@ export class ProductRepository implements IProductRepository {
       );
       position += 1;
     }
+    product.markCategoryStatePersisted();
   }
 
   private async runInTransaction(fn: (client: PoolClient) => Promise<void>): Promise<void> {

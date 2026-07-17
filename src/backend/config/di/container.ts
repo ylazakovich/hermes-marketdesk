@@ -146,7 +146,7 @@ export function buildBullAddOptions(name: string, options?: JobEnqueueOptions) {
     // Publish retries resume from the durable checkpoint and never repeat an
     // ambiguous external POST. Backoff gives transient finalization failures time
     // to recover without hot-looping the queue.
-    ...(name === 'publish-listing'
+    ...(name === 'publish-listing' || name === 'sync-marketplace'
       ? { attempts: 3, backoff: { type: 'exponential', delay: 1_000 } }
       : {}),
   };
@@ -359,7 +359,11 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     workspaceRepo,
     idGenerator
   );
-  const updateProductUC = new UpdateProductUseCase(productRepo, eventPublisher);
+  const updateProductUC = new UpdateProductUseCase(
+    productRepo,
+    eventPublisher,
+    (work) => withPoolTransaction(pool, (client) => work(new ProductRepository(pool, client))),
+  );
   const publishListingUC = new PublishListingUseCase(
     listingRepo,
     productRepo,
@@ -474,6 +478,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
         work({
           productRepo: new ProductRepository(pool, client),
           listingRepo: new ListingRepository(pool, client),
+          marketplaceRepo: new MarketplaceRepository(pool, client),
           activityLog: new ActivityLogRepository(pool, client),
           eventRepo: new EventRepository(pool, client),
           correctionOperations: new CategoryCorrectionOperationRepository(pool, client),
@@ -523,7 +528,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
         : undefined,
     eventPublisher,
     recommendCategoryMismatch: (input) => marketplaceImportService.recommendSyncedCategoryMismatch(input),
-    persistAndReconcileProductCategories: async ({ marketplace, listings, job }) => {
+    persistAndReconcileProductCategories: async ({ marketplace, listings, expectedUpdatedAt, job }) => {
       await withPoolTransaction(pool, async (client) => {
         const repositories = {
           productRepo: new ProductRepository(pool, client),
@@ -532,7 +537,15 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           activityLog: new ActivityLogRepository(pool, client),
           eventRepo: new EventRepository(pool, client),
         };
-        await repositories.listingRepo.saveAll(listings);
+        const productIds = [...new Set(listings.map((listing) => listing.productId))].sort();
+        for (const productId of productIds) {
+          const product = await repositories.productRepo.findByIdForWorkspaceForUpdate(
+            productId,
+            marketplace.workspaceId,
+          );
+          if (!product) throw new Error(`Product not found for synchronized listing: ${productId}`);
+        }
+        await repositories.listingRepo.saveAllIfUnchanged(listings, expectedUpdatedAt);
         for (const listing of selectProductCategoryTriggerListings(listings)) {
           await productCategorySyncService.reconcileWithRepositories(
             {

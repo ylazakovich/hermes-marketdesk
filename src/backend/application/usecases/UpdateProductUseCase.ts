@@ -17,6 +17,9 @@ export class UpdateProductUseCase {
   constructor(
     private readonly productRepo: IProductRepository,
     private readonly eventPublisher: IEventPublisher,
+    private readonly runInTransaction?: <T>(
+      work: (productRepo: IProductRepository) => Promise<T>,
+    ) => Promise<T>,
     private readonly validator: ProductValidator = new ProductValidator()
   ) {}
 
@@ -25,9 +28,23 @@ export class UpdateProductUseCase {
     if (validated.isErr()) return validated;
     const dto = validated.value;
 
+    if (this.runInTransaction) {
+      return this.runInTransaction((productRepo) => this.executeValidated(dto, productRepo, true));
+    }
+    return this.executeValidated(dto, this.productRepo, false);
+  }
+
+  private async executeValidated(
+    dto: UpdateProductDTO,
+    productRepo: IProductRepository,
+    lockProduct: boolean,
+  ): Promise<Result<Product>> {
+
     // Tenant-scoped load: a product in another workspace reads as not-found so a
     // cross-tenant id cannot be mutated (S2).
-    const product = await this.productRepo.findByIdForWorkspace(dto.productId, dto.workspaceId);
+    const product = lockProduct
+      ? await productRepo.findByIdForWorkspaceForUpdate(dto.productId, dto.workspaceId)
+      : await productRepo.findByIdForWorkspace(dto.productId, dto.workspaceId);
     if (!product) {
       return Err(new NotFoundError(`Product not found: ${dto.productId}`));
     }
@@ -106,7 +123,7 @@ export class UpdateProductUseCase {
       if (r.isErr()) return r;
     }
 
-    await this.productRepo.save(product);
+    await productRepo.save(product);
 
     try {
       await this.eventPublisher.publish(

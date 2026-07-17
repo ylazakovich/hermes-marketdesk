@@ -66,10 +66,10 @@ type CategoryConflictProvenance = Extract<ProductCategoryProvenance, { status: '
 export function categoryConflictEvidenceLines(provenance: CategoryConflictProvenance): string[] {
   return [
     ...(provenance.currentSources ?? []).map(
-      (source) => `Current · listing ${source.listingId} · ${source.path.join(' › ')}`,
+      (source) => `Current · listing ${source.listingId} · ${source.path.join(' › ')} · Taxonomy verified ${source.taxonomyVerifiedAt} · Synced ${source.syncedAt}`,
     ),
     ...provenance.candidates.map(
-      (source) => `Candidate · listing ${source.listingId} · ${source.path.join(' › ')} · ID ${source.providerCategoryId}`,
+      (source) => `Candidate · listing ${source.listingId} · ${source.path.join(' › ')} · ID ${source.providerCategoryId} · Taxonomy verified ${source.taxonomyVerifiedAt} · Synced ${source.syncedAt}`,
     ),
   ];
 }
@@ -543,7 +543,9 @@ const ListingDetailsPage: React.FC = () => {
               <DetailRow label="Category source">
                 {p.categoryProvenance.sources.map((source) => (
                   <Typography key={`${source.marketplaceId}:${source.listingId}`} variant="body2" component="span" sx={{ display: 'block' }}>
-                    {source.marketplaceKey.toUpperCase()} · {source.path.join(' › ')} · ID {source.providerCategoryId}
+                    {source.marketplaceKey.toUpperCase()} · listing {source.listingId} · {source.path.join(' › ')} · ID {source.providerCategoryId}
+                    {' · '}Taxonomy verified {new Date(source.taxonomyVerifiedAt).toLocaleString()}
+                    {' · '}Synced {new Date(source.syncedAt).toLocaleString()}
                   </Typography>
                 ))}
               </DetailRow>

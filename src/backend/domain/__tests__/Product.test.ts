@@ -175,4 +175,20 @@ describe('Product category provenance', () => {
     expect(product.categoryProvenance).toEqual(provenance);
     expect(product.updatedAt).toBe(updatedAt);
   });
+
+  it('marks category persistence intent only for category or provenance mutations', () => {
+    const product = unwrap(Product.create(baseProps({ category: 'Projectors' })));
+    expect(product.hasCategoryStateChanges).toBe(true);
+    product.markCategoryStatePersisted();
+
+    unwrap(product.rename('Updated projector'));
+    expect(product.hasCategoryStateChanges).toBe(false);
+
+    unwrap(product.updateCategory('Audio'));
+    expect(product.hasCategoryStateChanges).toBe(true);
+    product.markCategoryStatePersisted();
+
+    unwrap(product.synchronizeCategory('Audio', [source()]));
+    expect(product.hasCategoryStateChanges).toBe(true);
+  });
 });

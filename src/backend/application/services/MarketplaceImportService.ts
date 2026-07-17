@@ -91,6 +91,7 @@ interface ImportDiscoveryContext {
 export interface MarketplaceImportRepositories {
   productRepo: IProductRepository;
   listingRepo: IListingRepository;
+  marketplaceRepo?: IMarketplaceRepository;
   activityLog?: IActivityLogRepository;
   eventRepo: IEventRepository;
   correctionOperations: ICategoryCorrectionOperationRepository;
@@ -590,7 +591,7 @@ export class MarketplaceImportService {
       {
         productRepo: repos.productRepo,
         listingRepo: repos.listingRepo,
-        marketplaceRepo: this.marketplaceRepo,
+        marketplaceRepo: repos.marketplaceRepo ?? this.marketplaceRepo,
         activityLog: repos.activityLog,
         eventRepo: repos.eventRepo,
       },
@@ -661,13 +662,18 @@ export class MarketplaceImportService {
     actorId: string | undefined,
     repos: MarketplaceImportRepositories
   ): Promise<void> {
+    const product = await repos.productRepo.findByIdForWorkspaceForUpdate(listing.productId, workspaceId);
+    const currentListing = await repos.listingRepo.findByIdForWorkspace(listing.id, workspaceId);
+    if (!currentListing || currentListing.productId !== listing.productId) {
+      throw new NotFoundError(`Listing not found: ${listing.id}`);
+    }
+    listing = currentListing;
     const proposedCategory = listing.marketplaceCategory;
     if (remote.price !== null && remote.price !== undefined) {
       const price = this.unwrapMoney(remote.price, remote.currency ?? listing.price.currency);
       const priceResult = listing.updatePrice(price);
       if (priceResult.isErr()) throw priceResult.error;
     }
-    const product = await repos.productRepo.findByIdForWorkspaceForUpdate(listing.productId, workspaceId);
     if (remote.status === 'live' && product && !product.canPublish()) {
       const statusRecorded = listing.recordImportedStatus(remote.status, product);
       if (statusRecorded.isErr()) throw statusRecorded.error;

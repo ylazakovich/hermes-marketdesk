@@ -81,10 +81,14 @@ describe('ProductMapper', () => {
           path: ['Electronics', 'Projectors'],
           taxonomyVerifiedAt: '2026-07-15T00:00:00.000Z',
           syncedAt: '2026-07-15T01:00:00.000Z',
+          forged: 'must not survive rehydration',
         }],
       },
     }, [], []);
     expect(valid.categoryProvenance).toMatchObject({ status: 'synced' });
+    expect(valid.categoryProvenance?.status === 'synced'
+      ? valid.categoryProvenance.sources[0]
+      : null).not.toHaveProperty('forged');
 
     const malformed = ProductMapper.toDomain({
       ...baseRow,
@@ -94,6 +98,34 @@ describe('ProductMapper', () => {
       } as never,
     }, [], []);
     expect(malformed.categoryProvenance).toBeNull();
+  });
+
+  it.each([
+    ['non-canonical category ID', { providerCategoryId: 'abc' }],
+    ['name/path mismatch', { name: 'Audio' }],
+    ['non-canonical timestamp', { syncedAt: '0' }],
+    ['reversed timestamps', {
+      taxonomyVerifiedAt: '2026-07-15T02:00:00.000Z',
+      syncedAt: '2026-07-15T01:00:00.000Z',
+    }],
+    ['future evidence', { syncedAt: '2999-07-15T01:00:00.000Z' }],
+  ])('rejects %s in persisted category provenance', (_label, override) => {
+    const product = ProductMapper.toDomain({
+      ...baseRow,
+      category_provenance: {
+        status: 'synced',
+        sources: [{
+          marketplaceKey: 'olx', marketplaceId: 'mkt-1', listingId: 'list-1',
+          providerCategoryId: '100', name: 'Projectors',
+          path: ['Electronics', 'Projectors'],
+          taxonomyVerifiedAt: '2026-07-15T00:00:00.000Z',
+          syncedAt: '2026-07-15T01:00:00.000Z',
+          ...override,
+        }],
+      },
+    }, [], []);
+
+    expect(product.categoryProvenance).toBeNull();
   });
 });
 
