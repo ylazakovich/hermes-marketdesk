@@ -4,11 +4,15 @@ services:
     container_name: marketdesk-postgres
     environment:
       POSTGRES_USER: ${DB_USER:-marketdesk}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-marketdesk}
+      # No known password fallback: internal deployments without DB_PASSWORD fail
+      # closed in the Postgres image. External DATABASE_URL deployments receive a
+      # non-secret unused placeholder so the bundled service can stay unselected by
+      # the app without forcing an unrelated credential.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-${DATABASE_URL:+external-database-unused}}
       POSTGRES_DB: ${DB_NAME:-marketdesk}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./src/backend/persistence/migrations:/docker-entrypoint-initdb.d
@@ -26,7 +30,7 @@ services:
     image: redis:8-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
     container_name: marketdesk-redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     environment:
@@ -62,11 +66,17 @@ services:
       APP_NAME: ${APP_NAME:-hermes-marketdesk}
       APP_PORT: ${APP_PORT:-3000}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
-      DATABASE_URL: postgresql://${DB_USER:-marketdesk}:${DB_PASSWORD:?DB_PASSWORD must be set}@postgres:5432/${DB_NAME:-marketdesk}
+      # Leave DATABASE_URL empty to use the individual internal-Compose fields below,
+      # or set it explicitly for a managed/external PostgreSQL endpoint.
+      DATABASE_URL: ${DATABASE_URL:-}
+      # The Compose PostgreSQL service is plaintext inside the private Docker network.
+      DB_SSL_MODE: ${DB_SSL_MODE:?DB_SSL_MODE must be set (use disable for internal Compose PostgreSQL)}
+      # DATABASE_URL takes precedence for external databases. Without it, always
+      # target the bundled service rather than inheriting native-dev localhost.
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-marketdesk}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      DB_PASSWORD: ${DB_PASSWORD:-${DATABASE_URL:+external-database-unused}}
       DB_NAME: ${DB_NAME:-marketdesk}
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       REDIS_HOST: redis

@@ -37,7 +37,22 @@ Keep that shape for production. Caddy should be the only public HTTP/HTTPS entry
 NODE_ENV=production
 APP_PORT=3000
 CORS_ORIGIN=https://marketdesk.example.com
+# The bundled Compose PostgreSQL service is plaintext on the private Docker network.
+DB_SSL_MODE=disable
 ```
+
+`DB_SSL_MODE` is mandatory in production. Keep `disable` for the internal Compose
+PostgreSQL service shown in this runbook. For an external managed PostgreSQL endpoint,
+set `DB_SSL_MODE=verify-full`; MarketDesk then enables TLS with server-certificate
+verification (`rejectUnauthorized: true`). Modes that enable TLS without certificate
+verification are intentionally unsupported. `DB_SSL_MODE` is authoritative; TLS query
+parameters in `DATABASE_URL` are ignored so they cannot silently weaken this setting.
+For an external endpoint, also set its full `DATABASE_URL`; Compose preserves that value.
+When `DATABASE_URL` is empty, Compose targets the bundled `postgres` service explicitly;
+this intentionally overrides the copied `.env` value `DB_HOST=localhost`, which remains
+the correct default only for running the backend natively outside Docker.
+Database TLS is independent of the public Caddy/Cloudflare HTTPS configuration described
+below.
 
 - Before production changes, create and verify a backup of live state:
   - PostgreSQL dump or volume backup;
