@@ -46,9 +46,15 @@ try {
   const external = renderCompose({
     DATABASE_URL: externalUrl,
     DB_SSL_MODE: 'verify-full',
+    DB_PASSWORD: '',
   });
   assert.equal(external.services.app.environment.DATABASE_URL, externalUrl);
   assert.equal(external.services.app.environment.DB_SSL_MODE, 'verify-full');
+  assert.equal(external.services.app.environment.DB_PASSWORD, 'external-database-unused');
+  assert.equal(
+    external.services.postgres.environment.POSTGRES_PASSWORD,
+    'external-database-unused',
+  );
 
   console.log('Docker Compose database configuration verified (internal + external).');
 } finally {

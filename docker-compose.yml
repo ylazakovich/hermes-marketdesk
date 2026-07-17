@@ -4,7 +4,11 @@ services:
     container_name: marketdesk-postgres
     environment:
       POSTGRES_USER: ${DB_USER:-marketdesk}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      # No known password fallback: internal deployments without DB_PASSWORD fail
+      # closed in the Postgres image. External DATABASE_URL deployments receive a
+      # non-secret unused placeholder so the bundled service can stay unselected by
+      # the app without forcing an unrelated credential.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-${DATABASE_URL:+external-database-unused}}
       POSTGRES_DB: ${DB_NAME:-marketdesk}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
     ports:
@@ -72,7 +76,7 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-marketdesk}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      DB_PASSWORD: ${DB_PASSWORD:-${DATABASE_URL:+external-database-unused}}
       DB_NAME: ${DB_NAME:-marketdesk}
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       REDIS_HOST: redis
