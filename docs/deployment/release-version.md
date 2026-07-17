@@ -21,7 +21,7 @@ The wrapper:
 6. lets Compose pass it as a Docker build argument;
 7. stores it in the immutable `/app/.marketdesk-release-tag` image file.
 
-The command exits before invoking Compose when `HEAD` is not an exact valid release tag, the checkout is dirty, `.env` overrides `COMPOSE_PROJECT_NAME`, or an existing `marketdesk-app` belongs to a different directory-derived project. These preflights prevent a release from silently switching PostgreSQL/Redis volumes. The application reads only the image file; runtime environment values cannot relabel an old image as a newer release. Do not manually persist a release tag in `.env`.
+The command exits before invoking Compose when `HEAD` is not an exact valid release tag, the checkout is dirty, `.env` contains any `COMPOSE_*` control variable, or an existing `marketdesk-app` belongs to a different directory-derived project. These preflights prevent a release from silently changing services or switching PostgreSQL/Redis volumes. The application reads only the image file; runtime environment values cannot relabel an old image as a newer release. Do not manually persist a release tag in `.env`.
 
 Normal local builds leave `MARKETDESK_RELEASE_TAG` empty and honestly report `Development`. Malformed non-empty metadata reports `Version unavailable` rather than guessing.
 

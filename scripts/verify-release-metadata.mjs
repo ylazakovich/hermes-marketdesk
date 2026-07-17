@@ -89,11 +89,20 @@ try {
   mkdirSync(composeDir);
   const redirectedDir = join(tempRoot, 'redirected');
   mkdirSync(redirectedDir);
-  writeFileSync(join(redirectedDir, '.env'), 'COMPOSE_PROJECT_NAME=redirected-project\n');
-  assert.throws(
-    () => deriveReleaseProjectName(redirectedDir),
-    /forbids COMPOSE_PROJECT_NAME in \.env/,
-  );
+  for (const override of [
+    'COMPOSE_PROJECT_NAME=redirected-project',
+    'COMPOSE_PROFILES=unexpected',
+    'export COMPOSE_FILE=/tmp/alternate.yml',
+    '  COMPOSE_FUTURE_CONTROL = enabled',
+  ]) {
+    writeFileSync(join(redirectedDir, '.env'), `${override}\n`);
+    assert.throws(
+      () => deriveReleaseProjectName(redirectedDir),
+      /forbids COMPOSE_\* control variables in \.env/,
+    );
+  }
+  writeFileSync(join(redirectedDir, '.env'), '# COMPOSE_PROFILES=commented\nAPP_SETTING=ok\n');
+  assert.equal(deriveReleaseProjectName(redirectedDir), 'redirected');
   run('git', ['init', '--quiet'], gitDir);
   run('git', ['config', 'user.name', 'MarketDesk CI'], gitDir);
   run('git', ['config', 'user.email', 'ci@example.invalid'], gitDir);

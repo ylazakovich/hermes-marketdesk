@@ -38,10 +38,10 @@ export function deriveReleaseProjectName(cwd = process.cwd()) {
   try {
     const envFile = readFileSync(resolve(projectDirectory, '.env'), 'utf8');
     const hasOverride = envFile.split(/\r?\n/).some((line) =>
-      /^(?:\s*export\s+)?\s*COMPOSE_PROJECT_NAME\s*=/.test(line) && !/^\s*#/.test(line),
+      /^(?:\s*export\s+)?\s*COMPOSE_[A-Z0-9_]+\s*=/.test(line) && !/^\s*#/.test(line),
     );
     if (hasOverride) {
-      throw new Error('Release deployment forbids COMPOSE_PROJECT_NAME in .env; use the existing checkout directory identity');
+      throw new Error('Release deployment forbids COMPOSE_* control variables in .env');
     }
   } catch (error) {
     const code = typeof error === 'object' && error !== null && 'code' in error
