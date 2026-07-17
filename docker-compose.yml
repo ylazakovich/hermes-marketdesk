@@ -5,6 +5,8 @@ x-app-image: &app-image
   build:
     context: .
     dockerfile: Dockerfile
+    args:
+      MARKETDESK_RELEASE_TAG: ${MARKETDESK_RELEASE_TAG:-}
 
 services:
   postgres:
