@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseDotenv } from 'dotenv';
 
 const RELEASE_TAG_PATTERN = /^hermes-marketdesk-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const RELEASE_CONTEXT_PREFIX = 'marketdesk-release-context-';
@@ -210,7 +211,13 @@ export function inspectExistingProjectName(cwd) {
   ));
 }
 
-export function buildReleaseComposeArgs(args, cwd = process.cwd(), composeFile, envFile) {
+export function buildReleaseComposeArgs(
+  args,
+  cwd = process.cwd(),
+  composeFile,
+  envFile,
+  externalDatabase = false,
+) {
   const accepted = args.length === 1 && args[0] === 'up'
     || args.length === 2 && args[0] === 'up' && ['-d', '--detach'].includes(args[1]);
   if (!accepted) {
@@ -224,7 +231,49 @@ export function buildReleaseComposeArgs(args, cwd = process.cwd(), composeFile, 
     ...(envFile ? ['--env-file', resolve(envFile)] : []),
     '-f', resolve(composeFile ?? resolve(projectDirectory, 'docker-compose.yml')),
     'up', '--build', '--detach',
+    ...(externalDatabase ? ['--scale', 'postgres=0'] : []),
   ];
+}
+
+function interpolationBearingKeys(environment) {
+  const keys = [];
+  for (const [key, value] of Object.entries(environment)) {
+    for (let offset = 0; offset < value.length;) {
+      if (value[offset] !== '$') {
+        offset += 1;
+        continue;
+      }
+      let end = offset;
+      while (value[end] === '$') end += 1;
+      const activeDollar = (end - offset) % 2 === 1;
+      const suffix = value.slice(end);
+      if (
+        activeDollar
+        && (/^[A-Za-z_][A-Za-z0-9_]*/.test(suffix)
+          || /^\{[A-Za-z_][A-Za-z0-9_]*/.test(suffix))
+      ) {
+        keys.push(key);
+        break;
+      }
+      offset = end;
+    }
+  }
+  return keys;
+}
+
+function assertLiteralReleaseEnvironment(environment) {
+  const keys = interpolationBearingKeys(environment);
+  if (keys.length > 0) {
+    throw new Error(
+      `Release environment values must not reference ambient variables: ${keys.sort().join(', ')}`,
+    );
+  }
+}
+
+export function releaseUsesExternalDatabase(envFile) {
+  const parsed = parseDotenv(readFileSync(resolve(envFile)));
+  assertLiteralReleaseEnvironment(parsed);
+  return Boolean(parsed.DATABASE_URL?.trim());
 }
 
 export function buildReleaseComposeEnvironment(
@@ -233,10 +282,31 @@ export function buildReleaseComposeEnvironment(
   releaseContext,
   releaseEnvFile,
 ) {
-  const environment = { ...baseEnvironment, MARKETDESK_RELEASE_TAG: releaseTag };
+  const environment = { ...baseEnvironment };
   for (const name of Object.keys(environment)) {
     if (name.startsWith('COMPOSE_')) delete environment[name];
   }
+
+  const interpolationNames = new Set();
+  if (releaseEnvFile) {
+    const parsed = parseDotenv(readFileSync(resolve(releaseEnvFile)));
+    assertLiteralReleaseEnvironment(parsed);
+    for (const name of Object.keys(parsed)) {
+      interpolationNames.add(name);
+    }
+  }
+  if (releaseContext) {
+    const composeSource = readFileSync(resolve(releaseContext, 'docker-compose.yml'), 'utf8');
+    for (const match of composeSource.matchAll(/(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      interpolationNames.add(match[1]);
+    }
+    for (const match of composeSource.matchAll(/(?<!\$)\$([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      interpolationNames.add(match[1]);
+    }
+  }
+  for (const name of interpolationNames) delete environment[name];
+
+  environment.MARKETDESK_RELEASE_TAG = releaseTag;
   if (releaseContext) environment.MARKETDESK_BUILD_CONTEXT = releaseContext;
   if (releaseEnvFile) environment.MARKETDESK_ENV_FILE = releaseEnvFile;
   return environment;
@@ -275,6 +345,7 @@ export async function runReleaseCompose(args, cwd = process.cwd()) {
       cwd,
       resolve(immutable.context, 'docker-compose.yml'),
       releaseEnvFile,
+      releaseUsesExternalDatabase(releaseEnvFile),
     );
     assertReleaseAssociation(release, cwd);
     const detached = process.platform !== 'win32';

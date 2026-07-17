@@ -22,6 +22,7 @@ import {
   createReleaseEnvironmentSnapshot,
   deriveReleaseProjectName,
   parseExistingProjectInspection,
+  releaseUsesExternalDatabase,
   resolveCheckoutRelease,
   resolveCheckoutReleaseTag,
 } from './compose-release.mjs';
@@ -48,6 +49,10 @@ try {
   assert.deepEqual(buildReleaseComposeArgs(['up', '-d']), canonicalArgs);
   assert.deepEqual(buildReleaseComposeArgs(['up', '--detach']), canonicalArgs);
   assert.deepEqual(
+    buildReleaseComposeArgs(['up'], '.', undefined, undefined, true),
+    [...canonicalArgs, '--scale', 'postgres=0'],
+  );
+  assert.deepEqual(
     buildReleaseComposeArgs(
       ['up'],
       '.',
@@ -68,6 +73,51 @@ try {
   ]) {
     assert.throws(() => buildReleaseComposeArgs(rejected), /Usage:/);
   }
+
+  const databaseModeEnv = join(tempRoot, 'database-mode.env');
+  writeFileSync(databaseModeEnv, 'DATABASE_URL=\nDB_SSL_MODE=disable\n', { mode: 0o600 });
+  assert.equal(releaseUsesExternalDatabase(databaseModeEnv), false);
+  writeFileSync(
+    databaseModeEnv,
+    'DATABASE_URL=postgresql://managed.example.invalid/marketdesk\nDB_SSL_MODE=verify-full\n',
+    { mode: 0o600 },
+  );
+  assert.equal(releaseUsesExternalDatabase(databaseModeEnv), true);
+
+  const referencedEnvironment = join(tempRoot, 'referenced.env');
+  writeFileSync(
+    referencedEnvironment,
+    'DATABASE_URL=${RELEASE_DATABASE_URL}\nDB_SSL_MODE=$RELEASE_DB_SSL_MODE\n',
+    { mode: 0o600 },
+  );
+  assert.throws(
+    () => releaseUsesExternalDatabase(referencedEnvironment),
+    /DATABASE_URL, DB_SSL_MODE/,
+  );
+  assert.throws(
+    () => buildReleaseComposeEnvironment(
+      'hermes-marketdesk-v0.10.0',
+      {
+        RELEASE_DATABASE_URL: 'postgresql://ambient.example.invalid/marketdesk',
+        RELEASE_DB_SSL_MODE: 'disable',
+      },
+      undefined,
+      referencedEnvironment,
+    ),
+    /DATABASE_URL, DB_SSL_MODE/,
+  );
+  writeFileSync(
+    referencedEnvironment,
+    'DATABASE_URL=\nLITERAL_DOLLAR=$${NOT_AN_INTERPOLATION}\n',
+    { mode: 0o600 },
+  );
+  assert.equal(releaseUsesExternalDatabase(referencedEnvironment), false);
+  assert.doesNotThrow(() => buildReleaseComposeEnvironment(
+    'hermes-marketdesk-v0.10.0',
+    {},
+    undefined,
+    referencedEnvironment,
+  ));
 
   assert.doesNotThrow(() => assertExistingProjectIdentity('hermes-marketdesk', undefined));
   assert.doesNotThrow(() => assertExistingProjectIdentity('hermes-marketdesk', 'hermes-marketdesk'));
@@ -116,6 +166,36 @@ try {
     false,
     'inherited Compose control variables must not override the canonical release deployment',
   );
+
+  const interpolationDir = join(tempRoot, 'interpolation-contract');
+  const interpolationEnv = join(interpolationDir, 'deployment.env');
+  mkdirSync(interpolationDir);
+  writeFileSync(
+    join(interpolationDir, 'docker-compose.yml'),
+    'x-contract: "${SNAPSHOT_VALUE:-${NESTED_VALUE:-fallback}} $BARE_VALUE $${DOCKER_HOST}"\n',
+  );
+  writeFileSync(interpolationEnv, 'SNAPSHOT_VALUE=snapshot\n', { mode: 0o600 });
+  const isolatedEnvironment = buildReleaseComposeEnvironment(
+    'hermes-marketdesk-v0.10.0',
+    {
+      PATH: process.env.PATH,
+      DOCKER_HOST: 'unix:///preserved-docker.sock',
+      SNAPSHOT_VALUE: 'ambient-snapshot',
+      NESTED_VALUE: 'ambient-nested',
+      BARE_VALUE: 'ambient-bare',
+      UNRELATED_TRANSPORT_VALUE: 'preserved',
+    },
+    interpolationDir,
+    interpolationEnv,
+  );
+  assert.equal(isolatedEnvironment.SNAPSHOT_VALUE, undefined);
+  assert.equal(isolatedEnvironment.NESTED_VALUE, undefined);
+  assert.equal(isolatedEnvironment.BARE_VALUE, undefined);
+  assert.equal(isolatedEnvironment.DOCKER_HOST, 'unix:///preserved-docker.sock');
+  assert.equal(isolatedEnvironment.UNRELATED_TRANSPORT_VALUE, 'preserved');
+  assert.equal(isolatedEnvironment.MARKETDESK_RELEASE_TAG, 'hermes-marketdesk-v0.10.0');
+  assert.equal(isolatedEnvironment.MARKETDESK_BUILD_CONTEXT, interpolationDir);
+  assert.equal(isolatedEnvironment.MARKETDESK_ENV_FILE, interpolationEnv);
 
 
   mkdirSync(gitDir);
@@ -210,6 +290,7 @@ try {
   writeFileSync(
     join(composeDir, '.env'),
     [
+      'DATABASE_URL=',
       'DB_SSL_MODE=disable',
       'DB_PASSWORD=compose-probe-password',
       'JWT_SECRET=compose-probe-jwt-secret',
@@ -230,11 +311,22 @@ try {
     composeDir,
     buildReleaseComposeEnvironment(
       'hermes-marketdesk-v0.10.0',
-      { ...process.env, DB_SSL_MODE: 'disable' },
+      {
+        ...process.env,
+        DATABASE_URL: 'postgresql://wrong.example.invalid/ambient',
+        DB_HOST: 'wrong-db-host.example.invalid',
+        DB_SSL_MODE: 'verify-full',
+      },
       immutableComposeDir,
       join(composeDir, '.env'),
     ),
   ));
+  assert.equal(rendered.services.app.environment.DATABASE_URL, '');
+  assert.equal(rendered.services.migrate.environment.DATABASE_URL, '');
+  assert.equal(rendered.services.app.environment.DB_HOST, 'postgres');
+  assert.equal(rendered.services.migrate.environment.DB_HOST, 'postgres');
+  assert.equal(rendered.services.app.environment.DB_SSL_MODE, 'disable');
+  assert.equal(rendered.services.migrate.environment.DB_SSL_MODE, 'disable');
   for (const serviceName of ['app', 'upload-storage-init']) {
     assert.equal(
       rendered.services[serviceName].build.args.MARKETDESK_RELEASE_TAG,
@@ -248,10 +340,13 @@ try {
     'runtime environment must not be able to relabel the built artifact',
   );
   assert.equal(rendered.services.app.build.context, immutableComposeDir);
-  const migrationMount = rendered.services.postgres.volumes.find(
-    (volume) => volume.target === '/docker-entrypoint-initdb.d',
+  assert.equal(
+    rendered.services.postgres.volumes.some(
+      (volume) => volume.target === '/docker-entrypoint-initdb.d',
+    ),
+    false,
+    'fresh PostgreSQL must not execute migrations from the mutable project checkout',
   );
-  assert.equal(migrationMount.source, join(composeDir, 'src/backend/persistence/migrations'));
   const uploadMount = rendered.services.app.volumes.find((volume) => volume.target === '/app/uploads');
   assert.equal(uploadMount.source, join(composeDir, 'uploads'));
 

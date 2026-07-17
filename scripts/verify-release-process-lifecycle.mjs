@@ -153,6 +153,9 @@ printf '%s\\n%s\\n' "$$" "$pgid" > "$FAKE_DOCKER_PID_FILE"
 if [[ "\${FAKE_DOCKER_MODE:-wait}" == "exit" ]]; then
   exit 0
 fi
+if [[ "\${FAKE_DOCKER_MODE:-wait}" == "fail" ]]; then
+  exit 42
+fi
 trap 'exit 0' TERM INT HUP
 while :; do sleep 1; done
 `,
@@ -175,6 +178,16 @@ while :; do sleep 1; done
   await stopGroup(firstCheckoutGroup);
   assert.equal((await firstCheckoutExit).code, 0);
   assert.equal(existsSync(lockRoot), false, 'successful first checkout must clean the global lock');
+
+  // Compose propagates a failed migration dependency as a non-zero release and
+  // the wrapper retains the immutable context for explicit operator recovery.
+  const failedMigrationPidFile = join(root, 'failed-migration.pid');
+  const failedMigration = spawnWrapper(failedMigrationPidFile, 'fail');
+  const failedMigrationOutcome = await waitForExit(failedMigration);
+  assert.equal(failedMigrationOutcome.code, 42, 'migration failure must fail the release');
+  assert.equal(existsSync(failedMigrationPidFile), true, 'failed release must have reached Compose');
+  assert.equal(existsSync(contextRoot), true, 'failed migration must retain the immutable release context');
+  removeOwnLock();
 
   // A handled signal is not success even when Compose exits zero.
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {

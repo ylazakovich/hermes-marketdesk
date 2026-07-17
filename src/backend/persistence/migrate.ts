@@ -1,33 +1,53 @@
 import path from 'path';
 import fs from 'fs';
-import type { PoolClient } from 'pg';
-import { createPool, closePool } from '../config/database.js';
+import { Pool, type PoolClient } from 'pg';
+import dotenv from 'dotenv';
+import { migrationPoolConfig } from '../config/databaseConfig.js';
+import { safeErrorDetails } from '../config/safeErrorDetails.js';
+import { concurrentIndexIdentity, quotedIndexIdentity } from './migrationSql.js';
+import { orderedMigrationFiles } from './migrationFiles.js';
 import pino from 'pino';
+import { pathToFileURL } from 'node:url';
 
+dotenv.config();
 const logger = pino();
-const migrationsDir = path.join(process.cwd(), 'src/backend/persistence/migrations');
+const migrationsDir = process.env.MARKETDESK_MIGRATIONS_DIR
+  ? path.resolve(process.env.MARKETDESK_MIGRATIONS_DIR)
+  : path.join(process.cwd(), 'src/backend/persistence/migrations');
 const MIGRATION_LOCK_KEY = 'marketdesk:migrations';
+const CONNECTION_ATTEMPTS = 30;
+const CONNECTION_RETRY_MS = 1_000;
+const sensitiveValues = [process.env.DATABASE_URL, process.env.DB_PASSWORD];
 
-async function runMigrations() {
-  const pool = createPool();
+async function connectWithRetry(pool: Pool): Promise<PoolClient> {
+  for (let attempt = 1; attempt <= CONNECTION_ATTEMPTS; attempt += 1) {
+    try {
+      return await pool.connect();
+    } catch (error) {
+      if (attempt === CONNECTION_ATTEMPTS) throw error;
+      logger.warn(
+        { attempt, attempts: CONNECTION_ATTEMPTS },
+        'Database is not ready for migrations; retrying',
+      );
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, CONNECTION_RETRY_MS));
+    }
+  }
+  throw new Error('Database connection retry loop exhausted');
+}
+
+export async function runMigrations() {
+  let pool: Pool | undefined;
   let client: PoolClient | undefined;
   let locked = false;
 
   try {
+    pool = new Pool(migrationPoolConfig());
     logger.info('Starting database migrations...');
 
     // Get all migration files
-    const files = fs
-      .readdirSync(migrationsDir)
-      .filter((f) => f.endsWith('.sql'))
-      .sort();
+    const files = orderedMigrationFiles(migrationsDir);
 
-    if (files.length === 0) {
-      logger.warn('No migration files found');
-      return;
-    }
-
-    client = await pool.connect();
+    client = await connectWithRetry(pool);
     await client.query('SELECT pg_advisory_lock(hashtext($1))', [MIGRATION_LOCK_KEY]);
     locked = true;
 
@@ -39,23 +59,24 @@ async function runMigrations() {
 
       try {
         logger.info(`Running migration: ${file}`);
-        if (/\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/i.test(sql)) {
+        const concurrentIndex = concurrentIndexIdentity(sql);
+        if (concurrentIndex) {
           // Concurrent index DDL must run outside a transaction. Invalid remnants
           // are inspected and removed under the same suite-wide session lock.
-          const indexMatch = sql.match(
-            /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)/i
-          );
-          if (!indexMatch) throw new Error(`Cannot identify concurrent index in ${file}`);
-          const indexName = indexMatch[1];
           const validity = await client.query<{ indisvalid: boolean }>(
             `SELECT index.indisvalid
                FROM pg_class relation
                JOIN pg_index index ON index.indexrelid = relation.oid
-              WHERE relation.relname = $1 AND pg_table_is_visible(relation.oid)`,
-            [indexName]
+               JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+              WHERE relation.relname = $1
+                AND (($2::text IS NULL AND pg_table_is_visible(relation.oid))
+                  OR namespace.nspname = $2)`,
+            [concurrentIndex.name, concurrentIndex.schema ?? null]
           );
           if (validity.rows[0] && !validity.rows[0].indisvalid) {
-            await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${indexName}"`);
+            await client.query(
+              `DROP INDEX CONCURRENTLY IF EXISTS ${quotedIndexIdentity(concurrentIndex)}`,
+            );
           }
           await client.query(sql);
         } else {
@@ -63,26 +84,37 @@ async function runMigrations() {
         }
         logger.info(`Completed migration: ${file}`);
       } catch (error) {
-        logger.error({ error, file }, `Failed to run migration: ${file}`);
+        logger.error(
+          { error: safeErrorDetails(error, sensitiveValues), file },
+          `Failed to run migration: ${file}`,
+        );
         throw error;
       }
     }
 
     logger.info('All migrations completed successfully');
   } catch (error) {
-    logger.error({ error }, 'Migration failed');
+    logger.error({ error: safeErrorDetails(error, sensitiveValues) }, 'Migration failed');
     process.exitCode = 1;
   } finally {
     if (client && locked) {
       try {
         await client.query('SELECT pg_advisory_unlock(hashtext($1))', [MIGRATION_LOCK_KEY]);
       } catch (unlockError) {
-        logger.warn({ error: unlockError }, 'Failed to release migration advisory lock');
+        logger.warn(
+          { error: safeErrorDetails(unlockError, sensitiveValues) },
+          'Failed to release migration advisory lock',
+        );
       }
     }
     client?.release();
-    await closePool();
+    await pool?.end();
   }
 }
 
-runMigrations();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runMigrations().catch((error) => {
+    logger.error({ error: safeErrorDetails(error, sensitiveValues) }, 'Migration runner failed');
+    process.exitCode = 1;
+  });
+}
