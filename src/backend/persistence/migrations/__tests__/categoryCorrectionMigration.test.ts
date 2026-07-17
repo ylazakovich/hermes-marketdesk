@@ -67,6 +67,7 @@ describe('OLX category correction migrations', () => {
       expect(sql).toContain('category_provenance JSONB');
       expect(sql).toContain('products_category_provenance_shape');
       expect(sql).toContain("category_provenance->>'status' IN ('synced', 'conflict')");
+      expect(sql).toContain('COALESCE(');
     }
     expect(migration).toContain('FROM pg_constraint');
     expect(migration).toContain("conrelid = 'products'::regclass");

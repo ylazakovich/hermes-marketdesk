@@ -58,7 +58,10 @@ CREATE TABLE IF NOT EXISTS products (
     category_provenance IS NULL
     OR (
       jsonb_typeof(category_provenance) = 'object'
-      AND category_provenance->>'status' IN ('synced', 'conflict')
+      AND COALESCE(
+        category_provenance->>'status' IN ('synced', 'conflict'),
+        FALSE
+      )
     )
   )
 );
