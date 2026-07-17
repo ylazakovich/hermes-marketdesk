@@ -42,6 +42,8 @@ try {
   assert.equal(internal.services.app.environment.DATABASE_URL, '');
   assert.equal(internal.services.app.environment.DB_HOST, 'postgres');
   assert.equal(internal.services.app.environment.DB_SSL_MODE, 'disable');
+  assert.equal(internal.services.postgres.ports[0].host_ip, '127.0.0.1');
+  assert.equal(internal.services.redis.ports[0].host_ip, '127.0.0.1');
 
   const external = renderCompose({
     DATABASE_URL: externalUrl,
