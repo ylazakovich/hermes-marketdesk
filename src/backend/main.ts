@@ -82,7 +82,7 @@ const startServer = async () => {
         throw wiringError;
       }
       logger.warn(
-        { err: wiringError },
+        { error: safeErrorDetails(wiringError, startupSensitiveValues) },
         'API layer failed to wire; starting health-only server',
       );
       app = express();

@@ -9,8 +9,12 @@ export type SafeErrorDetails = {
 
 function redact(text: string, sensitiveValues: readonly (string | undefined)[]): string {
   let result = text;
-  for (const value of sensitiveValues) {
-    if (value) result = result.split(value).join('[redacted]');
+  const values = sensitiveValues
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .sort((left, right) => right.length - left.length);
+
+  for (const value of values) {
+    result = result.split(value).join('[redacted]');
   }
 
   return result

@@ -59,4 +59,16 @@ describe('safeErrorDetails', () => {
     expect(serialized).not.toContain('postgresql://');
     expect(serialized).toContain('[redacted]');
   });
+
+  it('redacts overlapping sensitive values from longest to shortest', () => {
+    const details = safeErrorDetails(new Error('failed with abcdef and abc'), [
+      'abc',
+      undefined,
+      '',
+      'abcdef',
+    ]);
+
+    expect(details.message).toBe('failed with [redacted] and [redacted]');
+    expect(details.message).not.toContain('[redacted]def');
+  });
 });
