@@ -16,6 +16,19 @@ function preloadErrorSignature(payload: unknown): string {
   return 'unknown-vite-preload-error';
 }
 
+function handledPreloadErrors(rawValue: string | null): Set<string> {
+  if (!rawValue) return new Set();
+  try {
+    const parsed = JSON.parse(rawValue) as unknown;
+    if (Array.isArray(parsed) && parsed.every((value) => typeof value === 'string')) {
+      return new Set(parsed);
+    }
+  } catch {
+    // Previous builds stored one plain signature instead of a JSON array.
+  }
+  return new Set([rawValue]);
+}
+
 /**
  * Refreshes an already-open tab once when a deployment removes one of the
  * previous build's hashed lazy chunks. Vite emits `vite:preloadError` before
@@ -32,10 +45,12 @@ export function installPreloadErrorRecovery(options: PreloadRecoveryOptions = {}
 
     // If the same asset still fails after a refresh, surface the real error
     // instead of creating an infinite reload loop.
-    if (storage.getItem(PRELOAD_ERROR_STORAGE_KEY) === signature) return;
+    const handled = handledPreloadErrors(storage.getItem(PRELOAD_ERROR_STORAGE_KEY));
+    if (handled.has(signature)) return;
 
     event.preventDefault();
-    storage.setItem(PRELOAD_ERROR_STORAGE_KEY, signature);
+    handled.add(signature);
+    storage.setItem(PRELOAD_ERROR_STORAGE_KEY, JSON.stringify([...handled]));
     reload();
   };
 
