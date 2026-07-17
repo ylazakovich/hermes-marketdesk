@@ -21,7 +21,7 @@ describe('concurrent migration SQL parsing', () => {
 
   it('supports explicit unquoted schemas and quotes the recovery identifier', () => {
     const identity = concurrentIndexIdentity(
-      'CREATE INDEX CONCURRENTLY IF NOT EXISTS private.audit_idx ON private.audit(id);',
+      'CREATE INDEX CONCURRENTLY IF NOT EXISTS audit_idx ON private.audit(id);',
     );
 
     expect(identity).toEqual({ schema: 'private', name: 'audit_idx' });
@@ -30,11 +30,17 @@ describe('concurrent migration SQL parsing', () => {
 
   it('supports quoted schema/index identifiers and escaped quotes', () => {
     const identity = concurrentIndexIdentity(
-      'CREATE INDEX CONCURRENTLY IF NOT EXISTS "private--schema"."Mixed/*Case""Index" ON listings(id);',
+      'CREATE INDEX CONCURRENTLY IF NOT EXISTS "Mixed/*Case""Index" ON "private--schema".listings(id);',
     );
 
     expect(identity).toEqual({ schema: 'private--schema', name: 'Mixed/*Case"Index' });
     expect(quotedIndexIdentity(identity!)).toBe('"private--schema"."Mixed/*Case""Index"');
+  });
+
+  it('fails closed for PostgreSQL-invalid schema-qualified index names', () => {
+    expect(() => concurrentIndexIdentity(
+      'CREATE INDEX CONCURRENTLY private.audit_idx ON private.audit(id);',
+    )).toThrow(/cannot be schema-qualified/);
   });
 
   it('ignores DDL-shaped text in strings and dollar-quoted bodies', () => {

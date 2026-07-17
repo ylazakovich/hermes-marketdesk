@@ -143,14 +143,18 @@ export function concurrentIndexIdentity(sql: string): ConcurrentIndexIdentity | 
     if (!first) throw new Error('Cannot identify concurrent index name');
     cursor += 1;
     if (tokens[cursor]?.kind === 'dot') {
-      const name = identifierValue(tokens[cursor + 1]);
-      if (!name || !isWord(tokens[cursor + 2], 'ON')) {
-        throw new Error('Cannot identify schema-qualified concurrent index name');
-      }
-      return { schema: first, name };
+      throw new Error('PostgreSQL concurrent index names cannot be schema-qualified');
     }
     if (!isWord(tokens[cursor], 'ON')) throw new Error('Cannot identify concurrent index name');
-    return { name: first };
+    cursor += 1;
+    if (isWord(tokens[cursor], 'ONLY')) cursor += 1;
+    const tableOrSchema = identifierValue(tokens[cursor]);
+    if (!tableOrSchema) throw new Error('Cannot identify concurrent index table');
+    cursor += 1;
+    if (tokens[cursor]?.kind !== 'dot') return { name: first };
+    const table = identifierValue(tokens[cursor + 1]);
+    if (!table) throw new Error('Cannot identify schema-qualified concurrent index table');
+    return { schema: tableOrSchema, name: first };
   }
   return undefined;
 }
