@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
+  assertExistingProjectIdentity,
   buildReleaseComposeArgs,
   buildReleaseComposeEnvironment,
+  deriveReleaseProjectName,
   resolveCheckoutReleaseTag,
 } from './compose-release.mjs';
 
@@ -27,6 +29,7 @@ try {
   const canonicalArgs = [
     'compose',
     '--project-directory', resolve('.'),
+    '--project-name', deriveReleaseProjectName('.'),
     '-f', resolve('docker-compose.yml'),
     'up', '--build', '--detach',
   ];
@@ -39,6 +42,12 @@ try {
   assert.throws(() => buildReleaseComposeArgs(['up', '--no-build']), /Usage:/);
   assert.throws(() => buildReleaseComposeArgs(['up', '-f', '/tmp/alternate.yml']), /Usage:/);
   assert.throws(() => buildReleaseComposeArgs(['up', 'app']), /Usage:/);
+  assert.doesNotThrow(() => assertExistingProjectIdentity('hermes-marketdesk', undefined));
+  assert.doesNotThrow(() => assertExistingProjectIdentity('hermes-marketdesk', 'hermes-marketdesk'));
+  assert.throws(
+    () => assertExistingProjectIdentity('hermes-marketdesk', 'redirected-project'),
+    /aborting before volume or container mutation/,
+  );
 
   const composeEnvironment = buildReleaseComposeEnvironment('hermes-marketdesk-v0.10.0', {
     PATH: process.env.PATH,
@@ -59,6 +68,13 @@ try {
 
   mkdirSync(gitDir);
   mkdirSync(composeDir);
+  const redirectedDir = join(tempRoot, 'redirected');
+  mkdirSync(redirectedDir);
+  writeFileSync(join(redirectedDir, '.env'), 'COMPOSE_PROJECT_NAME=redirected-project\n');
+  assert.throws(
+    () => deriveReleaseProjectName(redirectedDir),
+    /forbids COMPOSE_PROJECT_NAME in \.env/,
+  );
   run('git', ['init', '--quiet'], gitDir);
   run('git', ['config', 'user.name', 'MarketDesk CI'], gitDir);
   run('git', ['config', 'user.email', 'ci@example.invalid'], gitDir);
