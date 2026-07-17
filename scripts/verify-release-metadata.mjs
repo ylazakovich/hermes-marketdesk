@@ -225,6 +225,7 @@ try {
   writeFileSync(
     join(composeDir, '.env'),
     [
+      'DATABASE_URL=',
       'DB_SSL_MODE=disable',
       'DB_PASSWORD=compose-probe-password',
       'JWT_SECRET=compose-probe-jwt-secret',
@@ -245,11 +246,22 @@ try {
     composeDir,
     buildReleaseComposeEnvironment(
       'hermes-marketdesk-v0.10.0',
-      { ...process.env, DB_SSL_MODE: 'disable' },
+      {
+        ...process.env,
+        DATABASE_URL: 'postgresql://wrong.example.invalid/ambient',
+        DB_HOST: 'wrong-db-host.example.invalid',
+        DB_SSL_MODE: 'verify-full',
+      },
       immutableComposeDir,
       join(composeDir, '.env'),
     ),
   ));
+  assert.equal(rendered.services.app.environment.DATABASE_URL, '');
+  assert.equal(rendered.services.migrate.environment.DATABASE_URL, '');
+  assert.equal(rendered.services.app.environment.DB_HOST, 'postgres');
+  assert.equal(rendered.services.migrate.environment.DB_HOST, 'postgres');
+  assert.equal(rendered.services.app.environment.DB_SSL_MODE, 'disable');
+  assert.equal(rendered.services.migrate.environment.DB_SSL_MODE, 'disable');
   for (const serviceName of ['app', 'upload-storage-init']) {
     assert.equal(
       rendered.services[serviceName].build.args.MARKETDESK_RELEASE_TAG,

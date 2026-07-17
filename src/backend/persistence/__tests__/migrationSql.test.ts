@@ -49,6 +49,17 @@ describe('concurrent migration SQL parsing', () => {
     `)).toBeUndefined();
   });
 
+  it('ignores DDL-shaped text after a backslash-escaped quote in an E string', () => {
+    expect(concurrentIndexIdentity(
+      "SELECT E'escaped \\' CREATE INDEX CONCURRENTLY fake_idx ON listings(id)';",
+    )).toBeUndefined();
+  });
+
+  it('fails closed for unterminated strings', () => {
+    expect(() => concurrentIndexIdentity("SELECT E'unterminated\\"))
+      .toThrow(/Unterminated SQL escape string/);
+  });
+
   it('fails closed for malformed executable concurrent DDL', () => {
     expect(() => concurrentIndexIdentity(
       'CREATE INDEX CONCURRENTLY IF NOT EXISTS ON listings(id);',

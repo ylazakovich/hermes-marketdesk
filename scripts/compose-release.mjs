@@ -246,10 +246,29 @@ export function buildReleaseComposeEnvironment(
   releaseContext,
   releaseEnvFile,
 ) {
-  const environment = { ...baseEnvironment, MARKETDESK_RELEASE_TAG: releaseTag };
+  const environment = { ...baseEnvironment };
   for (const name of Object.keys(environment)) {
     if (name.startsWith('COMPOSE_')) delete environment[name];
   }
+
+  const interpolationNames = new Set();
+  if (releaseEnvFile) {
+    for (const name of Object.keys(parseDotenv(readFileSync(resolve(releaseEnvFile))))) {
+      interpolationNames.add(name);
+    }
+  }
+  if (releaseContext) {
+    const composeSource = readFileSync(resolve(releaseContext, 'docker-compose.yml'), 'utf8');
+    for (const match of composeSource.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      interpolationNames.add(match[1]);
+    }
+    for (const match of composeSource.matchAll(/(?:^|[^$])\$([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      interpolationNames.add(match[1]);
+    }
+  }
+  for (const name of interpolationNames) delete environment[name];
+
+  environment.MARKETDESK_RELEASE_TAG = releaseTag;
   if (releaseContext) environment.MARKETDESK_BUILD_CONTEXT = releaseContext;
   if (releaseEnvFile) environment.MARKETDESK_ENV_FILE = releaseEnvFile;
   return environment;

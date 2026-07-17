@@ -32,18 +32,44 @@ function sqlTokens(sql: string): SqlToken[] {
       if (depth > 0) throw new Error('Unterminated SQL block comment');
       continue;
     }
-    if (sql[offset] === "'") {
-      offset += 1;
+    if (
+      (sql[offset] === 'E' || sql[offset] === 'e')
+      && sql[offset + 1] === "'"
+      && (offset === 0 || !/[A-Za-z0-9_$]/.test(sql[offset - 1]))
+    ) {
+      offset += 2;
+      let closed = false;
       while (offset < sql.length) {
-        if (sql[offset] === "'" && sql[offset + 1] === "'") {
+        if (sql[offset] === '\\') {
+          offset += Math.min(2, sql.length - offset);
+        } else if (sql[offset] === "'" && sql[offset + 1] === "'") {
           offset += 2;
         } else if (sql[offset] === "'") {
           offset += 1;
+          closed = true;
           break;
         } else {
           offset += 1;
         }
       }
+      if (!closed) throw new Error('Unterminated SQL escape string');
+      continue;
+    }
+    if (sql[offset] === "'") {
+      offset += 1;
+      let closed = false;
+      while (offset < sql.length) {
+        if (sql[offset] === "'" && sql[offset + 1] === "'") {
+          offset += 2;
+        } else if (sql[offset] === "'") {
+          offset += 1;
+          closed = true;
+          break;
+        } else {
+          offset += 1;
+        }
+      }
+      if (!closed) throw new Error('Unterminated SQL string');
       continue;
     }
     if (sql[offset] === '$') {
