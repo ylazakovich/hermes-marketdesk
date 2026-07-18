@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/ylazakovich/marketdesk/compare/hermes-marketdesk-v0.13.0...hermes-marketdesk-v0.14.0) (2026-07-18)
+
+
+### ✨ Features
+
+* **products:** redesign catalogue ([#223](https://github.com/ylazakovich/marketdesk/issues/223)) ([596102a](https://github.com/ylazakovich/marketdesk/commit/596102a11750e64a777911eb4d967b5a2e55d115))
+
 ## [0.13.0](https://github.com/ylazakovich/marketdesk/compare/hermes-marketdesk-v0.12.1...hermes-marketdesk-v0.13.0) (2026-07-17)
 
 
