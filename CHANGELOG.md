@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.14.0...marketdesk-v0.14.1) (2026-07-18)
+
+
+### 🐛 Bug Fixes
+
+* **dashboard:** realign operations command center ([#230](https://github.com/ylazakovich/marketdesk/issues/230)) ([f652496](https://github.com/ylazakovich/marketdesk/commit/f6524969b7d69fbf79f65006c2c6ee4efae835b3))
+
 ## [0.14.0](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.13.0...marketdesk-v0.14.0) (2026-07-18)
 
 
