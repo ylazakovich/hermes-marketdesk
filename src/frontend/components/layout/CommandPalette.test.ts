@@ -3,6 +3,7 @@ import {
   filterHermesEventsForCommandPalette,
   filterListingsForCommandPalette,
   filterProductsForCommandPalette,
+  getNextCommandPaletteIndex,
   isCommandPaletteShortcut,
 } from './CommandPalette.js';
 
@@ -59,6 +60,14 @@ describe('global command palette', () => {
     expect(isCommandPaletteShortcut({ key: 'k', metaKey: true, ctrlKey: false })).toBe(true);
     expect(isCommandPaletteShortcut({ key: 'K', metaKey: false, ctrlKey: true })).toBe(true);
     expect(isCommandPaletteShortcut({ key: 'k', metaKey: false, ctrlKey: false })).toBe(false);
+  });
+
+  it('moves keyboard selection in both directions and wraps at the result boundaries', () => {
+    expect(getNextCommandPaletteIndex(0, 'ArrowDown', 3)).toBe(1);
+    expect(getNextCommandPaletteIndex(2, 'ArrowDown', 3)).toBe(0);
+    expect(getNextCommandPaletteIndex(0, 'ArrowUp', 3)).toBe(2);
+    expect(getNextCommandPaletteIndex(1, 'ArrowUp', 3)).toBe(0);
+    expect(getNextCommandPaletteIndex(0, 'ArrowDown', 0)).toBe(0);
   });
 
   it('searches listing identity and product metadata case-insensitively', () => {

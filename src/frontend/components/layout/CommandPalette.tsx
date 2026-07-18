@@ -32,9 +32,11 @@ import {
 
 const SEARCH_DEBOUNCE_MS = 200;
 const RECENT_LIMIT = 5;
+const RECENT_SOURCE_LIMIT = 25;
+const optionId = (index: number) => `command-palette-option-${index}`;
 
 type SearchScope = 'all' | 'products' | 'listings' | 'events';
-type ResultGroup = 'Quick actions' | 'Products' | 'Listings' | 'Hermes events';
+type ResultGroup = 'Quick actions' | 'Products' | 'Recent listings' | 'Recent Hermes events';
 
 export interface CommandPaletteResult {
   key: string;
@@ -91,10 +93,21 @@ export function isCommandPaletteShortcut(
   return event.key.toLocaleLowerCase() === 'k' && (event.metaKey || event.ctrlKey);
 }
 
+export function getNextCommandPaletteIndex(
+  currentIndex: number,
+  key: 'ArrowDown' | 'ArrowUp',
+  resultCount: number
+): number {
+  if (resultCount <= 0) return 0;
+  return key === 'ArrowDown'
+    ? (currentIndex + 1) % resultCount
+    : (currentIndex - 1 + resultCount) % resultCount;
+}
+
 function ResultIcon({ group }: { group: ResultGroup }) {
   if (group === 'Products') return <Inventory2RoundedIcon fontSize="small" />;
-  if (group === 'Listings') return <StorefrontRoundedIcon fontSize="small" />;
-  if (group === 'Hermes events') return <AutoAwesomeRoundedIcon fontSize="small" />;
+  if (group === 'Recent listings') return <StorefrontRoundedIcon fontSize="small" />;
+  if (group === 'Recent Hermes events') return <AutoAwesomeRoundedIcon fontSize="small" />;
   return <AddRoundedIcon fontSize="small" />;
 }
 
@@ -138,12 +151,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
   );
   const listingQuery = useGetListingsQuery(
     open && (scope === 'all' || scope === 'listings')
-      ? { sort: '-updatedAt', limit: 25, offset: 0 }
+      ? { sort: '-updatedAt', limit: RECENT_SOURCE_LIMIT, offset: 0 }
       : skipToken
   );
   const eventQuery = useGetHermesEventsQuery(
     open && (scope === 'all' || scope === 'events')
-      ? { sort: '-createdAt', limit: 25, offset: 0 }
+      ? { sort: '-createdAt', limit: RECENT_SOURCE_LIMIT, offset: 0 }
       : skipToken
   );
 
@@ -168,7 +181,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
             title: 'Open pending Hermes reviews',
             subtitle: 'Review AI recommendations',
             path: '/hermes?status=pending_review',
-            icon: <ResultIcon group="Hermes events" />,
+            icon: <ResultIcon group="Recent Hermes events" />,
           },
         ],
       });
@@ -198,14 +211,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
         debouncedQuery
       );
       groups.push({
-        label: 'Listings',
+        label: 'Recent listings',
         items: listings.slice(0, RECENT_LIMIT).map((listing) => ({
           key: `listing:${listing.id}`,
-          group: 'Listings',
+          group: 'Recent listings',
           title: listing.productName || listing.marketplaceListingId || 'Marketplace listing',
           subtitle: `${listing.productSku || listing.id} · ${listing.status}`,
           path: `/products/${listing.productId}`,
-          icon: <ResultIcon group="Listings" />,
+          icon: <ResultIcon group="Recent listings" />,
         })),
       });
     }
@@ -216,14 +229,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
         debouncedQuery
       );
       groups.push({
-        label: 'Hermes events',
+        label: 'Recent Hermes events',
         items: events.slice(0, RECENT_LIMIT).map((event) => ({
           key: `event:${event.id}`,
-          group: 'Hermes events',
+          group: 'Recent Hermes events',
           title: event.title,
           subtitle: `${event.type} · ${event.status}`,
           path: event.productId ? `/products/${event.productId}` : '/hermes',
-          icon: <ResultIcon group="Hermes events" />,
+          icon: <ResultIcon group="Recent Hermes events" />,
         })),
       });
     }
@@ -238,10 +251,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
   ]);
 
   const results = useMemo(() => groupedResults.flatMap((group) => group.items), [groupedResults]);
+  const activeOptionId = results[activeIndex] ? optionId(activeIndex) : undefined;
 
   useEffect(() => {
     setActiveIndex(0);
   }, [debouncedQuery, scope]);
+
+  useEffect(() => {
+    if (!results.length) return;
+    if (activeIndex >= results.length) {
+      setActiveIndex(0);
+      return;
+    }
+    document.getElementById(optionId(activeIndex))?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, results.length]);
 
   const openResult = (result: CommandPaletteResult | undefined) => {
     if (!result) return;
@@ -252,12 +275,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveIndex((index) => (results.length ? (index + 1) % results.length : 0));
+      setActiveIndex((index) => getNextCommandPaletteIndex(index, 'ArrowDown', results.length));
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      setActiveIndex((index) =>
-        results.length ? (index - 1 + results.length) % results.length : 0
-      );
+      setActiveIndex((index) => getNextCommandPaletteIndex(index, 'ArrowUp', results.length));
     } else if (event.key === 'Enter') {
       event.preventDefault();
       openResult(results[activeIndex]);
@@ -291,7 +312,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
           </Typography>
         </Box>
       </DialogTitle>
-      <DialogContent onKeyDown={handleKeyDown} sx={{ px: { xs: 2, sm: 3 }, pb: 3 }}>
+      <DialogContent sx={{ px: { xs: 2, sm: 3 }, pb: 3 }}>
         <TextField
           fullWidth
           inputRef={inputRef}
@@ -299,7 +320,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search products, listings, Hermes events…"
           slotProps={{
-            htmlInput: { 'aria-label': 'Search products, listings, and Hermes events' },
+            htmlInput: {
+              'aria-label': 'Search products, listings, and Hermes events',
+              'aria-controls': 'command-palette-results',
+              'aria-activedescendant': activeOptionId,
+              onKeyDown: handleKeyDown,
+            },
             input: {
               startAdornment: (
                 <InputAdornment position="start">
@@ -321,10 +347,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
         >
           <Tab value="all" label="All" sx={{ minHeight: 42 }} />
           <Tab value="products" label="Products" sx={{ minHeight: 42 }} />
-          <Tab value="listings" label="Listings" sx={{ minHeight: 42 }} />
-          <Tab value="events" label="Hermes events" sx={{ minHeight: 42 }} />
+          <Tab value="listings" label="Recent listings" sx={{ minHeight: 42 }} />
+          <Tab value="events" label="Recent Hermes events" sx={{ minHeight: 42 }} />
         </Tabs>
         <Divider />
+
+        {debouncedQuery && scope !== 'products' && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+            Listing and Hermes matches cover the {RECENT_SOURCE_LIMIT} most recent records.
+          </Typography>
+        )}
 
         {hasError && (
           <Alert severity="warning" sx={{ mt: 2 }}>
@@ -332,11 +364,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
           </Alert>
         )}
 
-        <List disablePadding sx={{ mt: 1, maxHeight: 'min(52vh, 480px)', overflowY: 'auto' }}>
+        <List
+          id="command-palette-results"
+          role="listbox"
+          aria-label="Search results"
+          disablePadding
+          sx={{ mt: 1, maxHeight: 'min(52vh, 480px)', overflowY: 'auto' }}
+        >
           {groupedResults.map((group) => {
             if (!group.items.length) return null;
             return (
-              <Box key={group.label} component="li" sx={{ listStyle: 'none' }}>
+              <Box key={group.label} component="li" role="presentation" sx={{ listStyle: 'none' }}>
                 <Typography
                   variant="overline"
                   color="text.secondary"
@@ -349,6 +387,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
                   return (
                     <ListItemButton
                       key={result.key}
+                      id={optionId(index)}
+                      role="option"
+                      aria-selected={index === activeIndex}
                       selected={index === activeIndex}
                       onMouseEnter={() => setActiveIndex(index)}
                       onClick={() => openResult(result)}
