@@ -8,7 +8,7 @@ Authenticated settings are principal-scoped under `/api/settings`; clients never
 - `GET|PATCH /hermes` — autonomy level and validated Hermes guardrails.
 - `GET /integrations` — read-only `available`/`configured` status.
 
-PATCH bodies are strict, reject unknown fields, and must contain at least one supported change. User and notification records are filtered by both authenticated `workspaceId` and `userId`, with revisions incremented on writes.
+PATCH bodies are strict, reject unknown fields, and must contain at least one supported change. User and notification records are filtered by both authenticated `workspaceId` and `userId`. User preference revisions are exposed and incremented on writes; notification revisions remain internal.
 
 Secret management is deliberately outside this settings foundation. These routes do not create, rotate, accept, or return API keys, Telegram bot tokens, OAuth tokens, client secrets, password hashes, or credential payloads. Integration reads are redacted and do not claim a live provider connection. They report marketplace availability/configuration, an honest unavailable/unconfigured Telegram status, and tenant-scoped API-key counts only. Existing marketplace credential endpoints retain their separate contracts. Write management remains in #145/#147 because settings does not yet have the required RBAC boundary.
 

@@ -7,6 +7,7 @@ import type {
   WorkspaceProfilePatch,
 } from '../../../domain/repositories/interfaces/IWorkspaceRepository';
 import type { Workspace } from '../../../domain/entities/Workspace';
+import { normalizeWorkspacePatch } from '../../../domain/services/workspaceSettingsValidation';
 import { WorkspaceMapper } from '../mappers/WorkspaceMapper';
 import type { WorkspaceRow } from '../mappers/rows';
 
@@ -73,6 +74,7 @@ export class WorkspaceRepository implements IWorkspaceRepository {
   }
 
   async updateProfile(id: string, patch: WorkspaceProfilePatch): Promise<Workspace | null> {
+    const normalized = normalizeWorkspacePatch(patch);
     const { rows } = await query<WorkspaceRow>(
       `UPDATE workspaces SET
          name = COALESCE($2, name),
@@ -85,10 +87,10 @@ export class WorkspaceRepository implements IWorkspaceRepository {
                  created_at, updated_at`,
       [
         id,
-        patch.name ?? null,
-        patch.currency ?? null,
-        patch.timezone ?? null,
-        patch.language ?? null,
+        normalized.name ?? null,
+        normalized.currency ?? null,
+        normalized.timezone ?? null,
+        normalized.language ?? null,
       ],
       this.queryClient
     );
@@ -96,6 +98,7 @@ export class WorkspaceRepository implements IWorkspaceRepository {
   }
 
   async updateHermes(id: string, patch: WorkspaceHermesPatch): Promise<Workspace | null> {
+    const normalized = normalizeWorkspacePatch(patch);
     const { rows } = await query<WorkspaceRow>(
       `UPDATE workspaces SET
          autonomy_level = COALESCE($2, autonomy_level),
@@ -104,13 +107,18 @@ export class WorkspaceRepository implements IWorkspaceRepository {
        WHERE id = $1
        RETURNING id, name, currency, timezone, language, autonomy_level, guardrails,
                  created_at, updated_at`,
-      [id, patch.autonomyLevel ?? null, patch.guardrails ? JSON.stringify(patch.guardrails) : null],
+      [
+        id,
+        normalized.autonomyLevel ?? null,
+        normalized.guardrails ? JSON.stringify(normalized.guardrails) : null,
+      ],
       this.queryClient
     );
     return rows[0] ? WorkspaceMapper.toDomain(rows[0]) : null;
   }
 
   async updatePartial(id: string, patch: WorkspacePartialPatch): Promise<Workspace | null> {
+    const normalized = normalizeWorkspacePatch(patch);
     const { rows } = await query<WorkspaceRow>(
       `UPDATE workspaces SET
          name = COALESCE($2, name),
@@ -125,12 +133,12 @@ export class WorkspaceRepository implements IWorkspaceRepository {
                  created_at, updated_at`,
       [
         id,
-        patch.name ?? null,
-        patch.currency ?? null,
-        patch.timezone ?? null,
-        patch.language ?? null,
-        patch.autonomyLevel ?? null,
-        patch.guardrails ? JSON.stringify(patch.guardrails) : null,
+        normalized.name ?? null,
+        normalized.currency ?? null,
+        normalized.timezone ?? null,
+        normalized.language ?? null,
+        normalized.autonomyLevel ?? null,
+        normalized.guardrails ? JSON.stringify(normalized.guardrails) : null,
       ],
       this.queryClient
     );

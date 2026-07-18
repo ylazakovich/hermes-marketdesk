@@ -3,6 +3,19 @@
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS language VARCHAR(10);
 UPDATE workspaces SET language = 'en' WHERE language IS NULL OR btrim(language) = '';
 ALTER TABLE workspaces ALTER COLUMN language SET DEFAULT 'en';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'workspaces_language_not_null'
+      AND conrelid = 'workspaces'::regclass
+  ) THEN
+    ALTER TABLE workspaces
+      ADD CONSTRAINT workspaces_language_not_null CHECK (language IS NOT NULL) NOT VALID;
+  END IF;
+END $$;
+ALTER TABLE workspaces VALIDATE CONSTRAINT workspaces_language_not_null;
 ALTER TABLE workspaces ALTER COLUMN language SET NOT NULL;
 
 DO $$
@@ -13,11 +26,10 @@ BEGIN
       AND conrelid = 'workspaces'::regclass
   ) THEN
     ALTER TABLE workspaces
-      ADD CONSTRAINT workspaces_language_valid CHECK (language IN ('en', 'pl'));
+      ADD CONSTRAINT workspaces_language_valid CHECK (language IN ('en', 'pl')) NOT VALID;
   END IF;
 END $$;
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_users_workspace_id ON users(workspace_id, id);
+ALTER TABLE workspaces VALIDATE CONSTRAINT workspaces_language_valid;
 
 CREATE TABLE IF NOT EXISTS user_preferences (
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

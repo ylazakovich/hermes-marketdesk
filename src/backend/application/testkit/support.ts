@@ -10,6 +10,7 @@ import type {
   WorkspaceProfilePatch,
 } from '../../domain/repositories/interfaces/IWorkspaceRepository';
 import { Workspace as WorkspaceEntity } from '../../domain/entities/Workspace';
+import { normalizeWorkspacePatch } from '../../domain/services/workspaceSettingsValidation';
 import type {
   IActivityLogRepository,
   ActivityLogEntry,
@@ -31,14 +32,15 @@ export class InMemoryWorkspaceRepository implements IWorkspaceRepository {
     this.items.set(workspace.id, workspace);
   }
   async updateProfile(id: string, patch: WorkspaceProfilePatch): Promise<Workspace | null> {
+    const normalized = normalizeWorkspacePatch(patch);
     const current = this.items.get(id);
     if (!current) return null;
     const result = WorkspaceEntity.create({
       id,
-      name: patch.name ?? current.name,
-      currency: patch.currency ?? current.currency,
-      timezone: patch.timezone ?? current.timezone,
-      language: patch.language ?? current.language,
+      name: normalized.name ?? current.name,
+      currency: normalized.currency ?? current.currency,
+      timezone: normalized.timezone ?? current.timezone,
+      language: normalized.language ?? current.language,
       autonomyLevel: current.autonomyLevel,
       guardrails: current.guardrails,
       createdAt: current.createdAt,
@@ -48,6 +50,7 @@ export class InMemoryWorkspaceRepository implements IWorkspaceRepository {
     return result.value;
   }
   async updateHermes(id: string, patch: WorkspaceHermesPatch): Promise<Workspace | null> {
+    const normalized = normalizeWorkspacePatch(patch);
     const current = this.items.get(id);
     if (!current) return null;
     const result = WorkspaceEntity.create({
@@ -56,8 +59,8 @@ export class InMemoryWorkspaceRepository implements IWorkspaceRepository {
       currency: current.currency,
       timezone: current.timezone,
       language: current.language,
-      autonomyLevel: patch.autonomyLevel ?? current.autonomyLevel,
-      guardrails: { ...current.guardrails, ...patch.guardrails },
+      autonomyLevel: normalized.autonomyLevel ?? current.autonomyLevel,
+      guardrails: { ...current.guardrails, ...normalized.guardrails },
       createdAt: current.createdAt,
     });
     if (result.isErr()) throw result.error;
@@ -67,16 +70,17 @@ export class InMemoryWorkspaceRepository implements IWorkspaceRepository {
     return result.value;
   }
   async updatePartial(id: string, patch: WorkspacePartialPatch): Promise<Workspace | null> {
+    const normalized = normalizeWorkspacePatch(patch);
     const current = this.items.get(id);
     if (!current) return null;
     const result = WorkspaceEntity.create({
       id,
-      name: patch.name ?? current.name,
-      currency: patch.currency ?? current.currency,
-      timezone: patch.timezone ?? current.timezone,
-      language: patch.language ?? current.language,
-      autonomyLevel: patch.autonomyLevel ?? current.autonomyLevel,
-      guardrails: { ...current.guardrails, ...patch.guardrails },
+      name: normalized.name ?? current.name,
+      currency: normalized.currency ?? current.currency,
+      timezone: normalized.timezone ?? current.timezone,
+      language: normalized.language ?? current.language,
+      autonomyLevel: normalized.autonomyLevel ?? current.autonomyLevel,
+      guardrails: { ...current.guardrails, ...normalized.guardrails },
       createdAt: current.createdAt,
     });
     if (result.isErr()) throw result.error;

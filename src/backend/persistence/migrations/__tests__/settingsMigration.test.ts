@@ -5,7 +5,14 @@ describe('persistent settings migration', () => {
   const migration = fs.readFileSync(
     path.join(
       process.cwd(),
-      'src/backend/persistence/migrations/029_persistent_settings_contracts.sql'
+      'src/backend/persistence/migrations/030_persistent_settings_contracts.sql'
+    ),
+    'utf8'
+  );
+  const indexMigration = fs.readFileSync(
+    path.join(
+      process.cwd(),
+      'src/backend/persistence/migrations/029_users_workspace_unique_index.sql'
     ),
     'utf8'
   );
@@ -17,9 +24,16 @@ describe('persistent settings migration', () => {
   it('backfills and constrains workspace language idempotently', () => {
     expect(migration).toContain('ADD COLUMN IF NOT EXISTS language');
     expect(migration).toContain("UPDATE workspaces SET language = 'en'");
+    expect(migration).toContain('workspaces_language_not_null');
+    expect(migration).toContain('NOT VALID');
+    expect(migration).toContain('VALIDATE CONSTRAINT workspaces_language_not_null');
     expect(migration).toContain('ALTER COLUMN language SET NOT NULL');
     expect(migration).toContain('workspaces_language_valid');
     expect(migration).toContain("conrelid = 'workspaces'::regclass");
+    expect(migration).not.toContain('uq_users_workspace_id');
+    expect(indexMigration).toContain(
+      'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_users_workspace_id'
+    );
     expect(schema).toContain("language VARCHAR(10) NOT NULL DEFAULT 'en'");
   });
 

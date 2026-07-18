@@ -79,16 +79,16 @@ export function createApiRouter(c: ApiControllers, options: ApiRouterOptions): R
   // Protected + workspace-scoped
   const guard: RequestHandler[] = [authMiddleware];
   if (authLimiter) guard.push(authLimiter);
-  guard.push(requireWorkspace);
   const currentPrincipalGuard = requireCurrentWorkspacePrincipal(options.currentUserStore);
+  guard.push(requireWorkspace, currentPrincipalGuard);
 
   api.use('/products', ...guard, createProductRoutes(c.products));
   api.use('/listings', ...guard, createListingRoutes(c.listings, sensitiveLimiter));
   api.use('/marketplaces', ...guard, createMarketplaceRoutes(c.marketplaces));
   api.use('/hermes', ...guard, createHermesRoutes(c.hermes));
   api.use('/analytics', ...guard, createAnalyticsRoutes(c.analytics));
-  api.use('/workspaces', ...guard, currentPrincipalGuard, createWorkspaceRoutes(c.workspaces));
-  api.use('/settings', ...guard, currentPrincipalGuard, createSettingsRoutes(c.settings));
+  api.use('/workspaces', ...guard, createWorkspaceRoutes(c.workspaces));
+  api.use('/settings', ...guard, createSettingsRoutes(c.settings));
   api.use(
     '/uploads',
     ...guard,

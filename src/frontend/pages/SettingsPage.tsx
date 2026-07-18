@@ -311,8 +311,8 @@ const SettingsPage: React.FC = () => {
   const dirty = baselineSnapshot !== null && workspaceDraftSnapshot(draft) !== baselineSnapshot;
 
   useEffect(() => {
-    if (!workspaceSettings.data || !principalCacheKey) return;
-    const incoming: WorkspaceDraft = workspaceSettings.data;
+    if (!workspaceSettings.currentData || !principalCacheKey) return;
+    const incoming: WorkspaceDraft = workspaceSettings.currentData;
     const incomingSnapshot = workspaceDraftSnapshot(incoming);
     if (
       !shouldHydrateWorkspaceDraft({
@@ -332,11 +332,11 @@ const SettingsPage: React.FC = () => {
     setBaseline(incoming);
     setInitializedPrincipal(principalCacheKey);
     setFieldErrors({});
-  }, [workspaceSettings.data, principalCacheKey, initializedPrincipal, baselineSnapshot, dirty]);
+  }, [workspaceSettings.currentData, principalCacheKey, initializedPrincipal, baselineSnapshot, dirty]);
 
   useEffect(() => {
-    if (preferences.data?.themeMode) dispatch(setThemeMode(preferences.data.themeMode));
-  }, [preferences.data?.themeMode, principalCacheKey, dispatch]);
+    if (preferences.currentData?.themeMode) dispatch(setThemeMode(preferences.currentData.themeMode));
+  }, [preferences.currentData?.themeMode, principalCacheKey, dispatch]);
 
   const clearFieldError = (field: GeneralField) =>
     setFieldErrors((current) => ({ ...current, [field]: undefined }));
@@ -434,12 +434,12 @@ const SettingsPage: React.FC = () => {
   };
 
   const renderIntegrationStatuses = (category?: 'marketplace' | 'telegram' | 'api_keys') => {
-    const items = (integrations.data?.items ?? []).filter(
+    const items = (integrations.currentData?.items ?? []).filter(
       (item) => !category || item.category === category
     );
     return (
       <SettingsQueryState
-        isLoading={integrations.isLoading}
+        isLoading={integrations.isFetching && !integrations.currentData}
         isError={integrations.isError}
         retry={integrations.refetch}
       >
@@ -491,7 +491,7 @@ const SettingsPage: React.FC = () => {
       case 'general':
         return (
           <SettingsQueryState
-            isLoading={workspaceSettings.isLoading}
+            isLoading={workspaceSettings.isFetching && !workspaceSettings.currentData}
             isError={workspaceSettings.isError}
             retry={workspaceSettings.refetch}
           >
@@ -499,7 +499,7 @@ const SettingsPage: React.FC = () => {
               <TextField
                 label="Workspace name"
                 value={name}
-                disabled={!workspaceSettings.data || saving}
+                disabled={!workspaceSettings.currentData || saving}
                 error={Boolean(fieldErrors.name)}
                 helperText={fieldErrors.name}
                 onChange={(e) => {
@@ -511,7 +511,7 @@ const SettingsPage: React.FC = () => {
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                 <Select
                   value={currency}
-                  disabled={!workspaceSettings.data || saving}
+                  disabled={!workspaceSettings.currentData || saving}
                   error={Boolean(fieldErrors.currency)}
                   onChange={(e) => {
                     setCurrency(e.target.value);
@@ -529,7 +529,7 @@ const SettingsPage: React.FC = () => {
                 <TextField
                   label="Timezone"
                   value={timezone}
-                  disabled={!workspaceSettings.data || saving}
+                  disabled={!workspaceSettings.currentData || saving}
                   error={Boolean(fieldErrors.timezone)}
                   helperText={fieldErrors.timezone}
                   onChange={(e) => {
@@ -544,7 +544,7 @@ const SettingsPage: React.FC = () => {
               )}
               <Select
                 value={language}
-                disabled={!workspaceSettings.data || saving}
+                disabled={!workspaceSettings.currentData || saving}
                 error={Boolean(fieldErrors.language)}
                 onChange={(e) => {
                   setLanguage(e.target.value as WorkspaceLanguage);
@@ -562,10 +562,10 @@ const SettingsPage: React.FC = () => {
               <Stack direction="row" spacing={1.5} justifyContent="flex-end">
                 <Button
                   variant="outlined"
-                  disabled={!workspaceSettings.data || saving}
+                  disabled={!workspaceSettings.currentData || saving}
                   onClick={() => {
-                    if (!workspaceSettings.data) return;
-                    const reset: WorkspaceDraft = workspaceSettings.data;
+                    if (!workspaceSettings.currentData) return;
+                    const reset: WorkspaceDraft = workspaceSettings.currentData;
                     setName(reset.name);
                     setCurrency(reset.currency);
                     setTimezone(reset.timezone);
@@ -579,7 +579,7 @@ const SettingsPage: React.FC = () => {
                 <Button
                   variant="contained"
                   onClick={handleSaveProfile}
-                  disabled={!dirty || saving || !workspaceSettings.data}
+                  disabled={!dirty || saving || !workspaceSettings.currentData}
                 >
                   Save changes
                 </Button>
@@ -590,18 +590,18 @@ const SettingsPage: React.FC = () => {
       case 'hermes':
         return (
           <SettingsQueryState
-            isLoading={hermesSettings.isLoading}
+            isLoading={hermesSettings.isFetching && !hermesSettings.currentData}
             isError={hermesSettings.isError}
             retry={hermesSettings.refetch}
           >
             <Stack spacing={1.5}>
               {AUTONOMY_LEVEL_LIST.map((level) => {
-                const selected = hermesSettings.data?.autonomyLevel === level;
+                const selected = hermesSettings.currentData?.autonomyLevel === level;
                 return (
                   <ButtonBase
                     key={level}
                     onClick={() => handleAutonomy(level)}
-                    disabled={savingHermes || !hermesSettings.data}
+                    disabled={savingHermes || !hermesSettings.currentData}
                     aria-pressed={selected}
                     sx={{
                       p: 2,
@@ -646,8 +646,8 @@ const SettingsPage: React.FC = () => {
                   key={field}
                   control={
                     <Switch
-                      disabled={savingHermes || !hermesSettings.data}
-                      checked={hermesSettings.data?.guardrails[field] ?? false}
+                      disabled={savingHermes || !hermesSettings.currentData}
+                      checked={hermesSettings.currentData?.guardrails[field] ?? false}
                       onChange={(event) => handleAutomation(field, event.target.checked)}
                     />
                   }
@@ -660,7 +660,7 @@ const SettingsPage: React.FC = () => {
       case 'notifications':
         return (
           <SettingsQueryState
-            isLoading={notifications.isLoading}
+            isLoading={notifications.isFetching && !notifications.currentData}
             isError={notifications.isError}
             retry={notifications.refetch}
           >
@@ -690,8 +690,8 @@ const SettingsPage: React.FC = () => {
                       <Switch
                         key={channel}
                         size="small"
-                        disabled={!notifications.data || savingNotifications}
-                        checked={notifications.data?.events[event][channel] ?? false}
+                        disabled={!notifications.currentData || savingNotifications}
+                        checked={notifications.currentData?.events[event][channel] ?? false}
                         onChange={(e) => handleNotification(event, channel, e.target.checked)}
                         slotProps={{ input: { 'aria-label': `${label} ${channel}` } }}
                       />
@@ -705,14 +705,14 @@ const SettingsPage: React.FC = () => {
       case 'appearance':
         return (
           <SettingsQueryState
-            isLoading={preferences.isLoading}
+            isLoading={preferences.isFetching && !preferences.currentData}
             isError={preferences.isError}
             retry={preferences.refetch}
           >
             <Stack spacing={2}>
               <Select
-                value={preferences.data?.themeMode ?? themeMode}
-                disabled={!preferences.data || savingPreferences}
+                value={preferences.currentData?.themeMode ?? themeMode}
+                disabled={!preferences.currentData || savingPreferences}
                 onChange={(event) => handleTheme(event.target.value as ThemeMode)}
                 aria-label="Theme preference"
               >
@@ -721,8 +721,8 @@ const SettingsPage: React.FC = () => {
                 <MenuItem value="dark">Dark</MenuItem>
               </Select>
               <Select
-                value={preferences.data?.density ?? 'comfortable'}
-                disabled={!preferences.data || savingPreferences}
+                value={preferences.currentData?.density ?? 'comfortable'}
+                disabled={!preferences.currentData || savingPreferences}
                 onChange={(event) => handleDensity(event.target.value as 'comfortable' | 'compact')}
                 aria-label="Interface density"
               >

@@ -123,19 +123,20 @@ describeDatabase('SettingsRepository on already-migrated PostgreSQL (integration
     expect(cascade.rows[0]).toEqual({ user_count: 0, notification_count: 0 });
   });
 
-  it('safely reruns migration 029 and verifies real catalog constraints without a fresh reset', async () => {
+  it('safely reruns migration 030 and verifies real catalog constraints without a fresh reset', async () => {
     if (!ready) return;
     const migration = await readFile(
       path.resolve(
         process.cwd(),
-        'src/backend/persistence/migrations/029_persistent_settings_contracts.sql'
+        'src/backend/persistence/migrations/030_persistent_settings_contracts.sql'
       ),
       'utf8'
     );
-    await pool.query('BEGIN');
+    const client = await pool.connect();
     try {
-      await pool.query(migration);
-      const catalog = await pool.query(
+      await client.query('BEGIN');
+      await client.query(migration);
+      const catalog = await client.query(
         `SELECT conname
            FROM pg_constraint
           WHERE conrelid IN (
@@ -155,7 +156,8 @@ describeDatabase('SettingsRepository on already-migrated PostgreSQL (integration
         'workspaces_language_valid',
       ]);
     } finally {
-      await pool.query('ROLLBACK');
+      await client.query('ROLLBACK');
+      client.release();
     }
   });
 });
