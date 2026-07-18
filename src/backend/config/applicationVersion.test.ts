@@ -17,6 +17,7 @@ describe('resolveApplicationVersion', () => {
 
   it.each([
     'v0.10.0',
+    'hermes-marketdesk-v0.10.0',
     'marketdesk-v0.10',
     'marketdesk-v0.10.0-rc.1',
     'marketdesk-v0.10.0 dirty',
