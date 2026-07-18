@@ -63,4 +63,17 @@ describeDb('standalone delist migration replay (PostgreSQL integration)', () => 
     `);
     expect(result.rows[0]).toEqual({ count: '1', valid: true });
   });
+
+  it('fails closed when validation runs without the expected constraint', async () => {
+    if (!ready) return;
+    const validateConstraint = readMigration('032_validate_standalone_listing_delist_operations.sql');
+    await client.query(`
+      ALTER TABLE category_correction_operations
+        DROP CONSTRAINT category_correction_operation_recommendation_check
+    `);
+
+    await expect(client.query(validateConstraint)).rejects.toThrow(
+      'Missing constraint category_correction_operation_recommendation_check',
+    );
+  });
 });

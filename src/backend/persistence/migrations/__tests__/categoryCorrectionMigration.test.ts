@@ -25,7 +25,8 @@ describe('category correction operation migration', () => {
     expect(validation).toContain(
       'VALIDATE CONSTRAINT category_correction_operation_recommendation_check',
     );
-    expect(validation).toContain('AND NOT convalidated');
+    expect(validation).toContain('IF NOT FOUND THEN');
+    expect(validation).toContain('ELSIF NOT constraint_validated THEN');
     expect(schema).toContain("CONSTRAINT category_correction_operation_recommendation_check");
     expect(schema).toContain("CHECK (kind = 'delist' OR recommendation_event_id IS NOT NULL)");
     expect(schema).toContain("UNIQUE (recommendation_event_id, kind)");

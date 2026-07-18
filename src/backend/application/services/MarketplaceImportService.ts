@@ -181,7 +181,7 @@ export class MarketplaceImportService {
       );
       const account = await this.accountRepo.findByMarketplaceId(input.listing.marketplaceId);
       if (!account || account.status !== 'connected') {
-        throw new InvalidStateError('OLX account is not connected');
+        return;
       }
       await this.createCategoryMismatchRecommendation(
         input.listing,
