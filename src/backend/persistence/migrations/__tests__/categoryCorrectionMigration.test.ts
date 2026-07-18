@@ -20,9 +20,12 @@ describe('category correction operation migration', () => {
     expect(migration).toContain("CHECK (kind = 'delist' OR recommendation_event_id IS NOT NULL)");
     expect(migration).toContain('NOT VALID');
     expect(migration).not.toContain('VALIDATE CONSTRAINT');
+    expect(migration).toContain("conname = 'category_correction_operation_recommendation_check'");
+    expect(migration).toContain('IF NOT EXISTS');
     expect(validation).toContain(
       'VALIDATE CONSTRAINT category_correction_operation_recommendation_check',
     );
+    expect(validation).toContain('AND NOT convalidated');
     expect(schema).toContain("CONSTRAINT category_correction_operation_recommendation_check");
     expect(schema).toContain("CHECK (kind = 'delist' OR recommendation_event_id IS NOT NULL)");
     expect(schema).toContain("UNIQUE (recommendation_event_id, kind)");

@@ -19,6 +19,7 @@ import {
 } from '../../domain/shared/DomainError';
 import type { IdGenerator } from '../ports/IdGenerator';
 import type { OlxPublicationQuotaService } from './OlxPublicationQuotaService';
+import type { MarketplaceAccountRepository } from './MarketplaceOAuthService';
 import type { Marketplace } from '../../domain/entities/Marketplace';
 import type { HermesEventView } from '../dto/presenters';
 import type {
@@ -28,7 +29,7 @@ import type {
 } from '../../../shared/types';
 
 export interface CategoryCorrectionAdapterResolver {
-  resolve(marketplace: Marketplace): Promise<IMarketplaceAdapter>;
+  resolve(marketplace: Marketplace, expectedAccountId?: string): Promise<IMarketplaceAdapter>;
 }
 
 export interface CategoryCorrectionPublishAttemptStore {
@@ -64,6 +65,7 @@ export class CategoryCorrectionOperationService {
     private readonly listings: IListingRepository,
     private readonly products: IProductRepository,
     private readonly marketplaces: IMarketplaceRepository,
+    private readonly marketplaceAccounts: MarketplaceAccountRepository,
     private readonly quota: OlxPublicationQuotaService,
     private readonly adapters: CategoryCorrectionAdapterResolver,
     private readonly activity: IActivityLogRepository,
@@ -99,6 +101,16 @@ export class CategoryCorrectionOperationService {
       ) {
         throw new ValidationError('Operation ID is already bound to another action');
       }
+      const existingAccountId = typeof existing.result?.marketplaceAccountId === 'string'
+        ? existing.result.marketplaceAccountId
+        : null;
+      const currentAccount = await this.marketplaceAccounts.findByMarketplaceId(listing.marketplaceId);
+      if (!existingAccountId
+        || !currentAccount
+        || currentAccount.status !== 'connected'
+        || currentAccount.id !== existingAccountId) {
+        throw new ValidationError('Operation ID is bound to a different OLX account');
+      }
       if (!existing.requestedBy) throw new InvalidStateError('Standalone delist has no requesting actor');
       await this.audit(
         existing,
@@ -126,6 +138,10 @@ export class CategoryCorrectionOperationService {
     if (marketplace.key !== 'olx') {
       throw new InvalidStateError('Category correction operations are only supported for OLX');
     }
+    const marketplaceAccount = await this.marketplaceAccounts.findByMarketplaceId(marketplace.id);
+    if (!marketplaceAccount || marketplaceAccount.status !== 'connected') {
+      throw new InvalidStateError('OLX account is not connected');
+    }
 
     const at = this.now();
     const operation: CategoryCorrectionOperation = {
@@ -144,6 +160,7 @@ export class CategoryCorrectionOperationService {
         externalListingId: listing.marketplaceListingId,
         externalUrl: listing.externalUrl,
         requestedListingUpdatedAt: listing.updatedAt.toISOString(),
+        marketplaceAccountId: marketplaceAccount.id,
       },
       requestedAt: at,
       approvedAt: null,
@@ -159,6 +176,7 @@ export class CategoryCorrectionOperationService {
       || created.marketplaceId !== marketplace.id
       || created.recommendationEventId !== null
       || created.requestedBy !== input.actorId
+      || created.result?.marketplaceAccountId !== marketplaceAccount.id
     ) {
       throw new ValidationError('Operation ID is already bound to another action');
     }
@@ -347,11 +365,23 @@ export class CategoryCorrectionOperationService {
           throw new InvalidStateError('Listing identity changed before delist; delist requires a new review');
         }
         const externalListingId = capturedExternalListingId;
+        const capturedMarketplaceAccountId = typeof operation.result?.marketplaceAccountId === 'string'
+          ? operation.result.marketplaceAccountId
+          : null;
+        if (!capturedMarketplaceAccountId) {
+          throw new InvalidStateError('Delist has no captured OLX account identity');
+        }
+        const currentMarketplaceAccount = await this.marketplaceAccounts.findByMarketplaceId(marketplace.id);
+        if (!currentMarketplaceAccount
+          || currentMarketplaceAccount.status !== 'connected'
+          || currentMarketplaceAccount.id !== capturedMarketplaceAccountId) {
+          throw new InvalidStateError('OLX account changed after delist review; create a new operation');
+        }
         const expectedListingUpdatedAt = listing.updatedAt;
         const externalUrl = listing.externalUrl;
         const publishedAt = listing.publishedAt;
         const remoteStatus = listing.remoteStatus;
-        const adapter = await this.adapters.resolve(marketplace);
+        const adapter = await this.adapters.resolve(marketplace, capturedMarketplaceAccountId);
         providerCheckpoint = {
           providerEffect: 'delist_started',
           externalListingId,

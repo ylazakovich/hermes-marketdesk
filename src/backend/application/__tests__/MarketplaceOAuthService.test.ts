@@ -305,6 +305,23 @@ describe('MarketplaceOAuthService', () => {
     expect(savedTokens.refreshToken).toBe('rotated-refresh-token');
   });
 
+  it('rejects access-token resolution when the reviewed account identity changed', async () => {
+    const { service, marketplace, accountRepo, refreshAccessToken } = setup();
+    await accountRepo.upsert({
+      id: 'account-2',
+      marketplaceId: marketplace.id,
+      handle: 'Different OLX account',
+      credentials: { payload: initialTokens },
+      status: 'connected',
+      scopes: ['basic'],
+    });
+
+    await expect(service.getValidAccessToken(marketplace.id, 'account-1')).rejects.toThrow(
+      'OLX account changed after the operation was reviewed'
+    );
+    expect(refreshAccessToken).not.toHaveBeenCalled();
+  });
+
   it('rejects a genuinely stale account revision after a concurrent write', async () => {
     const { marketplace, accountRepo } = setup();
     const original = await accountRepo.upsert({

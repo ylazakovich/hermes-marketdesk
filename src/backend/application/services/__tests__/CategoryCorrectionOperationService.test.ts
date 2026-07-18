@@ -7,6 +7,7 @@ import type {
 import type { MarketplaceCategoryMetadata } from '../../../../shared/types';
 import type { IMarketplaceAdapter } from '../../../domain/services/MarketplaceAdapter';
 import type { OlxPublicationQuotaService } from '../OlxPublicationQuotaService';
+import type { MarketplaceAccountRecord, MarketplaceAccountRepository } from '../MarketplaceOAuthService';
 import {
   InMemoryEventRepository,
   InMemoryListingRepository,
@@ -124,6 +125,15 @@ function setup(decision: 'allow' | 'block' | 'override' = 'allow', options: Setu
     name: 'AOPEN QH11 projector', description: 'LED HD projector in very good working condition.',
     costPrice: money(100), sellingPrice: money(299), condition: 'good', category: 'electronics', images: ['image.jpg'] }));
   const marketplace = unwrap(Marketplace.create({ id: 'marketplace-1', workspaceId: 'ws-1', key: 'olx', name: 'OLX', connected: true }));
+  const marketplaceAccount: MarketplaceAccountRecord = {
+    id: 'account-1', marketplaceId: marketplace.id, handle: 'seller-1', credentials: {},
+    status: 'connected', scopes: ['read', 'write'], revision: 1, createdAt: now, updatedAt: now,
+  };
+  const marketplaceAccounts = {
+    findByMarketplaceId: jest.fn(async () => marketplaceAccount),
+    upsert: jest.fn(),
+    updateConnectedIfUnchanged: jest.fn(),
+  } as unknown as MarketplaceAccountRepository;
   const listing = unwrap(Listing.create({ id: 'listing-1', productId: product.id, marketplaceId: marketplace.id,
     price: money(299), status: 'live', marketplaceListingId: 'old-advert-1', marketplaceCategory: category }));
   productRepo.items.set(product.id, product); marketplaceRepo.items.set(marketplace.id, marketplace); listingRepo.items.set(listing.id, listing);
@@ -162,9 +172,10 @@ function setup(decision: 'allow' | 'block' | 'override' = 'allow', options: Setu
   } : fallbackActivity;
 
   const service = new CategoryCorrectionOperationService(operations, new InMemoryEventRepository(), listingRepo,
-    productRepo, marketplaceRepo, quota, { resolve: resolveAdapter }, activity, idFactory('audit'), publishAttempts, () => now);
+    productRepo, marketplaceRepo, marketplaceAccounts, quota, { resolve: resolveAdapter }, activity, idFactory('audit'), publishAttempts, () => now);
   return { service, operations, authorize, consumeReservation, publish, preparePublish, delist, resolveAdapter,
-    activity: activityLog, listing, listingRepo, marketplaceRepo, product, marketplace, publishAttempts };
+    activity: activityLog, listing, listingRepo, marketplaceRepo, marketplaceAccount, marketplaceAccounts,
+    product, marketplace, publishAttempts };
 }
 
 async function addAndApprove(setupResult: ReturnType<typeof setup>, kind: 'delist' | 'recreate', paidOverrideReason?: string) {
@@ -181,6 +192,7 @@ async function addAndApprove(setupResult: ReturnType<typeof setup>, kind: 'delis
       externalListingId: setupResult.listing.marketplaceListingId,
       externalUrl: setupResult.listing.externalUrl,
       requestedListingUpdatedAt: setupResult.listing.updatedAt.toISOString(),
+      marketplaceAccountId: setupResult.marketplaceAccount.id,
     };
   }
   setupResult.operations.items.set(value.id, value);
@@ -214,6 +226,29 @@ describe('CategoryCorrectionOperationService', () => {
     expect(context.publish).not.toHaveBeenCalled();
   });
 
+  it('fences the reviewed OLX account identity before calling the provider', async () => {
+    const context = setup();
+    const requested = await context.service.requestStandaloneDelist({
+      operationId: 'standalone-account-rotated', listingId: 'listing-1', workspaceId: 'ws-1', actorId: 'user-1',
+    });
+    await context.service.approve({ operationId: requested.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    context.marketplaceAccount.id = 'account-2';
+
+    const failed = await context.service.execute({
+      operationId: requested.id, workspaceId: 'ws-1', actorId: 'user-1',
+    });
+
+    expect(context.delist).not.toHaveBeenCalled();
+    expect(context.resolveAdapter).not.toHaveBeenCalled();
+    expect(failed).toMatchObject({
+      state: 'failed',
+      result: {
+        failureKind: 'validation',
+        manualReconciliationRequired: false,
+      },
+    });
+  });
+
   it('adds standalone delist request evidence even when operation was already created', async () => {
     const context = setup();
     const existing = operation('delist');
@@ -224,6 +259,7 @@ describe('CategoryCorrectionOperationService', () => {
       externalListingId: 'old-advert-1',
       externalUrl: context.listing.externalUrl,
       requestedListingUpdatedAt: context.listing.updatedAt.toISOString(),
+      marketplaceAccountId: context.marketplaceAccount.id,
     };
     context.operations.items.set(existing.id, existing);
 
@@ -256,6 +292,7 @@ describe('CategoryCorrectionOperationService', () => {
       externalListingId: 'old-advert-1',
       externalUrl: context.listing.externalUrl,
       requestedListingUpdatedAt: context.listing.updatedAt.toISOString(),
+      marketplaceAccountId: context.marketplaceAccount.id,
     };
     context.operations.items.set(existing.id, existing);
 
