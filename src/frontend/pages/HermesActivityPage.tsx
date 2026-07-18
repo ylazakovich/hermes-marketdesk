@@ -158,7 +158,7 @@ const HermesActivityPage: React.FC = () => {
     setRunState({ status: 'running' });
     try {
       const events = await runHermes({ trigger: 'manual' }).unwrap();
-      const message = `Hermes run complete — ${events.length} new suggestion(s) recorded.`;
+      const message = `Hermes run complete — ${events.length} new activity item(s) recorded.`;
       setRunState({ status: 'success', message });
       dispatch(
         enqueueToast({

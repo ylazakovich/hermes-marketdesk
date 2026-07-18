@@ -68,7 +68,7 @@ describe('HermesActivityPage dashboard', () => {
       <HermesHero
         runState={{
           status: 'success',
-          message: 'Hermes run complete — 2 new suggestion(s) recorded.',
+          message: 'Hermes run complete — 2 new activity item(s) recorded.',
         }}
         onConfigure={jest.fn()}
         onRun={jest.fn()}
@@ -84,7 +84,7 @@ describe('HermesActivityPage dashboard', () => {
 
     expect(running).toContain('Hermes analysis is running');
     expect(running).toContain('Running…');
-    expect(success).toContain('2 new suggestion(s) recorded');
+    expect(success).toContain('2 new activity item(s) recorded');
     expect(failure).toContain('Analysis request failed.');
   });
 
