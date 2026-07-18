@@ -48,6 +48,13 @@ export function isHermesRunActive(events: readonly HermesEvent[]): boolean {
   return events.some((event) => ACTIVE_HERMES_STATUSES.has(event.status));
 }
 
+export function shouldShowHermesRunning(
+  events: readonly HermesEvent[],
+  state: { isLoading: boolean; isError: boolean }
+): boolean {
+  return !state.isLoading && !state.isError && isHermesRunActive(events);
+}
+
 export function splitDashboardEvents(events: readonly HermesEvent[]): {
   latest: HermesEvent[];
   timeline: HermesEvent[];

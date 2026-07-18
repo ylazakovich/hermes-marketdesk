@@ -7,6 +7,7 @@ import {
   isHermesRunActive,
   marketplaceOperationalSummary,
   marketplacePresentation,
+  shouldShowHermesRunning,
   splitDashboardEvents,
 } from './dashboardPresentation';
 
@@ -87,6 +88,15 @@ describe('dashboard presentation contracts', () => {
     expect(isHermesRunActive([event(1, 'pending_review'), event(2, 'applied')])).toBe(false);
     expect(isHermesRunActive([event(1, 'applying')])).toBe(true);
     expect(isHermesRunActive([event(1, 'reverting')])).toBe(true);
+  });
+
+  it('suppresses the Hermes running indicator until the active-event query succeeds', () => {
+    const activeEvents = [event(1, 'applying')];
+
+    expect(shouldShowHermesRunning(activeEvents, { isLoading: true, isError: false })).toBe(false);
+    expect(shouldShowHermesRunning(activeEvents, { isLoading: false, isError: true })).toBe(false);
+    expect(shouldShowHermesRunning([], { isLoading: false, isError: false })).toBe(false);
+    expect(shouldShowHermesRunning(activeEvents, { isLoading: false, isError: false })).toBe(true);
   });
 
   it('bounds the dashboard card and timeline without reordering server results', () => {

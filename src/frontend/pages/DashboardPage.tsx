@@ -36,9 +36,9 @@ import {
   DASHBOARD_EVENT_LIMIT,
   DASHBOARD_QUICK_ACTIONS,
   dashboardRevenueRange,
-  isHermesRunActive,
   marketplaceOperationalSummary,
   marketplacePresentation,
+  shouldShowHermesRunning,
   splitDashboardEvents,
 } from './dashboardPresentation.js';
 
@@ -226,6 +226,7 @@ const DashboardPage: React.FC = () => {
   const overview = useAnalyticsOverview();
   const pending = useHermesEvents({ status: ['pending_review'], limit: 1 });
   const recent = useHermesEvents({ limit: DASHBOARD_EVENT_LIMIT, sort: '-createdAt' });
+  const activeHermes = useHermesEvents({ status: ['applying', 'reverting'], limit: 1 });
   const attention = useProducts({ status: ['attention'], limit: 5 });
   const marketplaces = useMarketplaces();
   const revenueRange = React.useMemo(() => dashboardRevenueRange(), []);
@@ -234,7 +235,10 @@ const DashboardPage: React.FC = () => {
   const marketplaceRows = marketplaces.data ?? [];
   const recentEvents = recent.data?.items ?? [];
   const eventSections = splitDashboardEvents(recentEvents);
-  const hermesActive = isHermesRunActive(recentEvents);
+  const hermesActive = shouldShowHermesRunning(activeHermes.data?.items ?? [], {
+    isLoading: activeHermes.isLoading,
+    isError: activeHermes.isError,
+  });
   const pct = (current?: number, previous?: number) =>
     typeof current === 'number' && typeof previous === 'number' && previous !== 0
       ? ((current - previous) / previous) * 100
@@ -395,11 +399,7 @@ const DashboardPage: React.FC = () => {
                 <AutoAwesomeIcon sx={{ fontSize: 17 }} />
               </Box>
               <span>Hermes AI activity</span>
-              <Chip
-                size="small"
-                color={hermesActive ? 'success' : 'default'}
-                label={hermesActive ? 'Running' : 'Recent'}
-              />
+              {hermesActive && <Chip size="small" color="success" label="Running" />}
             </Stack>
           }
           subtitle="Latest autonomous work and reviewable suggestions"
