@@ -97,7 +97,9 @@ jobs:
         run: npx tsc --noEmit -p tsconfig.json
 
       - name: Apply database migrations
-        run: npm run db:migrate
+        run: |
+          npm run build:migrate
+          node dist/backend/migrate.js
 
       - name: Backend tests (jest, allure)
         run: npm run test:ci
