@@ -37,6 +37,16 @@ export function hermesAutomationPatch(
   return { guardrails: { [field]: enabled } };
 }
 
+export function hermesCreativityPatch(
+  creativityPreset: HermesSettingsPatch['creativityPreset']
+): HermesSettingsPatch {
+  return { creativityPreset };
+}
+
+export function hermesListingSeoEnabledPatch(enabled: boolean): HermesSettingsPatch {
+  return { agents: { listingSeo: { enabled } } };
+}
+
 export const settingsRequest = {
   workspace: () => '/settings/workspace',
   preferences: () => '/settings/preferences',

@@ -5,6 +5,11 @@
 import type { Product } from '../entities/Product';
 import type { Listing } from '../entities/Listing';
 import type { Marketplace } from '../entities/Marketplace';
+import type {
+  CreativityPreset,
+  ListingSeoInput,
+  ListingSeoOutput,
+} from '../agents/MarketDeskAgentCatalog';
 
 export interface PriceSuggestionContext {
   listing: Listing;
@@ -30,8 +35,15 @@ export interface IAIProvider {
 
   // Generate an SEO-optimized title for a marketplace (marketplace may be null
   // until per-marketplace titles are implemented).
-  generateTitle(product: Product, marketplace: Marketplace | null): Promise<string>;
+  generateTitle(
+    product: Product,
+    marketplace: Marketplace | null,
+    creativityPreset?: 'precise' | 'balanced' | 'creative'
+  ): Promise<string>;
 
   // Analyze product listing quality and suggest improvements.
   analyzeListing(product: Product): Promise<ListingAnalysis>;
+
+  // Run a MarketDesk-owned, tool-free listing SEO profile over sanitized input only.
+  analyzeListingSeo(input: ListingSeoInput, preset: CreativityPreset): Promise<ListingSeoOutput>;
 }

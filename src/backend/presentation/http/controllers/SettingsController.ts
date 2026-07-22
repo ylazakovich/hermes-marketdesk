@@ -103,6 +103,8 @@ export class SettingsController {
     ok(res, {
       autonomyLevel: workspace.autonomyLevel,
       guardrails: workspace.guardrails,
+      creativityPreset: workspace.creativityPreset,
+      agents: { listingSeo: { enabled: workspace.listingSeoEnabled } },
       updatedAt: workspace.updatedAt.toISOString(),
     });
   };
@@ -120,6 +122,8 @@ export class SettingsController {
         ...current.guardrails,
         ...(req.body.guardrails as Partial<HermesGuardrails> | undefined),
       },
+      creativityPreset: req.body.creativityPreset ?? current.creativityPreset,
+      listingSeoEnabled: req.body.agents?.listingSeo?.enabled ?? current.listingSeoEnabled,
       createdAt: current.createdAt,
     });
     if (rebuilt.isErr()) return next(rebuilt.error);
@@ -128,11 +132,15 @@ export class SettingsController {
     const updated = await this.workspaces.updateHermes(current.id, {
       autonomyLevel: req.body.autonomyLevel,
       guardrails: req.body.guardrails,
+      creativityPreset: req.body.creativityPreset,
+      listingSeoEnabled: req.body.agents?.listingSeo?.enabled,
     });
     if (!updated) throw new NotFoundError(`Workspace not found: ${current.id}`);
     ok(res, {
       autonomyLevel: updated.autonomyLevel,
       guardrails: updated.guardrails,
+      creativityPreset: updated.creativityPreset,
+      agents: { listingSeo: { enabled: updated.listingSeoEnabled } },
       updatedAt: updated.updatedAt.toISOString(),
     });
   };

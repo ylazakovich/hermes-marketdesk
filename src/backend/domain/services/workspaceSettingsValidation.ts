@@ -37,6 +37,12 @@ export function normalizeWorkspacePatch<T extends WorkspacePartialPatch>(patch: 
   if (patch.autonomyLevel !== undefined && !AUTONOMY_LEVEL_LIST.includes(patch.autonomyLevel)) {
     throw new ValidationError(`Invalid autonomy level: ${patch.autonomyLevel}`);
   }
+  if (patch.creativityPreset !== undefined && !['precise', 'balanced', 'creative'].includes(patch.creativityPreset)) {
+    throw new ValidationError(`Invalid Hermes creativity preset: ${patch.creativityPreset}`);
+  }
+  if (patch.listingSeoEnabled !== undefined && typeof patch.listingSeoEnabled !== 'boolean') {
+    throw new ValidationError('listingSeoEnabled must be a boolean');
+  }
 
   if (patch.guardrails !== undefined) {
     const unknown = Object.keys(patch.guardrails).filter(

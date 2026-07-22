@@ -11,7 +11,7 @@
 // drops (> 20%), so those never auto-apply regardless of tier.
 
 import { Result, Ok, Err } from '../shared/Result';
-import { ValidationError, InvalidStateError } from '../shared/DomainError';
+import { ValidationError, InvalidStateError, NotFoundError } from '../shared/DomainError';
 import { HermesEvent } from '../entities/HermesEvent';
 import { Product } from '../entities/Product';
 import { Money } from '../valueObjects/Money';
@@ -29,6 +29,11 @@ import type { IListingRepository } from '../repositories/interfaces/IListingRepo
 import type { IEventRepository } from '../repositories/interfaces/IEventRepository';
 import type { IEventPublisher, DomainEvent } from '../ports/IEventPublisher';
 import type { IAIProvider } from '../ports/IAIProvider';
+import {
+  listingSeoInputSchema,
+  recommendationFingerprint,
+  seoSourceFingerprint,
+} from '../agents/MarketDeskAgentCatalog';
 
 interface Suggestion {
   type: HermesEventType;
@@ -120,6 +125,100 @@ export class HermesDecisionEngine {
     await this.eventRepo.saveAll(events);
     await this.eventPublisher.publish(this.runCompletedEvent(workspace.id, events.length));
 
+    return events;
+  }
+
+  /** Product-scoped safe slice: title SEO only, always review-only and never auto-applied. */
+  async runProductSeo(workspace: Workspace, productId: string): Promise<HermesEvent[]> {
+    const product = await this.productRepo.findByIdForWorkspace(productId, workspace.id);
+    if (!product) throw new NotFoundError(`Product not found: ${productId}`);
+    if (!workspace.listingSeoEnabled) return [];
+
+    const listings = await this.listingRepo.findByProduct(product.id);
+    const primary = listings[0];
+    const input = listingSeoInputSchema.parse({
+      product: {
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        category: product.category,
+        condition: product.condition,
+        tags: [...product.tags],
+        imageCount: product.imageCount,
+      },
+      listing: primary
+        ? {
+            id: primary.id,
+            title: product.name,
+            description: product.description,
+            marketplace: primary.marketplaceId,
+          }
+        : null,
+    });
+    const source = seoSourceFingerprint(input);
+    const output = await this.aiProvider.analyzeListingSeo(input, workspace.creativityPreset);
+    const events: HermesEvent[] = [];
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const windowStart = Math.floor(Date.now() / (30 * 24 * 60 * 60 * 1000));
+    const recentEvents = await this.eventRepo.findByWorkspace(workspace.id);
+
+    for (const recommendation of output.recommendations) {
+      const fingerprint = recommendationFingerprint(
+        'listing-seo',
+        '1.0.0',
+        source,
+        recommendation.proposedValue
+      );
+      const duplicate = recentEvents.some(
+        (event) =>
+          event.productId === product.id &&
+          event.createdAt.getTime() >= cutoff &&
+          event.detail?.includes(`recommendation:${fingerprint}`)
+      );
+      if (duplicate) continue;
+      const proposedChange =
+        recommendation.field === 'description'
+          ? {
+              kind: 'description' as const,
+              field: 'description' as const,
+              from: product.description,
+              to: recommendation.proposedValue,
+            }
+          : recommendation.field === 'title'
+            ? {
+                kind: 'title' as const,
+                field: 'title' as const,
+                from: product.name,
+                to: recommendation.proposedValue,
+              }
+            : null;
+      const type: HermesEventType =
+        recommendation.field === 'description'
+          ? 'update_description'
+          : recommendation.field === 'title'
+            ? 'suggested_better_title'
+            : 'suggested_more_photos';
+      const created = HermesEvent.create({
+        id: this.idFactory(),
+        workspaceId: workspace.id,
+        productId: product.id,
+        type,
+        severity: 'info',
+        title: `Listing SEO suggestion: ${recommendation.field}`,
+        detail: `${recommendation.rationale} Review-only suggestion from listing-seo@1.0.0 (${workspace.creativityPreset}); recommendation:${fingerprint}; source:${source}; provenance workspace=${workspace.id} product=${product.id}. This may improve discoverability but does not guarantee a sale.`,
+        proposedChange,
+        status: 'pending_review',
+        autonomyDecision: 'pending_review',
+      });
+      if (created.isErr()) continue;
+      const inserted = await this.eventRepo.saveRecommendationIfAbsent(
+        created.value,
+        `listing-seo:1.0.0:${product.id}:${source}:${fingerprint}:w${windowStart}`
+      );
+      if (inserted) events.push(created.value);
+    }
+
+    await this.eventPublisher.publish(this.runCompletedEvent(workspace.id, events.length));
     return events;
   }
 

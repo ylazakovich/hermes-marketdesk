@@ -14,8 +14,18 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import type { HermesEvent, Listing, Marketplace, ProductCategoryProvenance, ProductRecheckResult } from '@shared/types';
-import type { PublishListingInput, PublishListingPreview } from '../state/api/dto.js';
+import type {
+  HermesEvent,
+  Listing,
+  Marketplace,
+  ProductCategoryProvenance,
+  ProductRecheckResult,
+} from '@shared/types';
+import type {
+  HermesRunInput,
+  PublishListingInput,
+  PublishListingPreview,
+} from '../state/api/dto.js';
 import {
   useProduct,
   useRecheckProduct,
@@ -29,6 +39,7 @@ import {
   useCreateProductListing,
   usePriceHistory,
   useHermesEvents,
+  useRunHermes,
 } from '../services/hooks/index.js';
 import { useMarketplaceLookup } from '../hooks/useMarketplaceLookup.js';
 import { useAppDispatch, useAppSelector } from '../state/hooks.js';
@@ -64,6 +75,10 @@ export const MAX_QUOTA_OVERRIDE_REASON_LENGTH = 500;
 export const PUBLICATION_READINESS_RECHECK_LABEL = 'Check again';
 export const PUBLICATION_READINESS_CHECKING_LABEL = 'Checking…';
 
+export function productScopedHermesRunInput(productId: string): HermesRunInput {
+  return { trigger: 'manual', productId };
+}
+
 export const PublicationReadinessAction: React.FC<{
   rechecking: boolean;
   disabled: boolean;
@@ -79,10 +94,12 @@ type CategoryConflictProvenance = Extract<ProductCategoryProvenance, { status: '
 export function categoryConflictEvidenceLines(provenance: CategoryConflictProvenance): string[] {
   return [
     ...(provenance.currentSources ?? []).map(
-      (source) => `Current · listing ${source.listingId} · ${source.path.join(' › ')} · ID ${source.providerCategoryId} · Taxonomy verified ${formatDateTime(source.taxonomyVerifiedAt)} · Synced ${formatDateTime(source.syncedAt)}`,
+      (source) =>
+        `Current · listing ${source.listingId} · ${source.path.join(' › ')} · ID ${source.providerCategoryId} · Taxonomy verified ${formatDateTime(source.taxonomyVerifiedAt)} · Synced ${formatDateTime(source.syncedAt)}`
     ),
     ...provenance.candidates.map(
-      (source) => `Candidate · listing ${source.listingId} · ${source.path.join(' › ')} · ID ${source.providerCategoryId} · Taxonomy verified ${formatDateTime(source.taxonomyVerifiedAt)} · Synced ${formatDateTime(source.syncedAt)}`,
+      (source) =>
+        `Candidate · listing ${source.listingId} · ${source.path.join(' › ')} · ID ${source.providerCategoryId} · Taxonomy verified ${formatDateTime(source.taxonomyVerifiedAt)} · Synced ${formatDateTime(source.syncedAt)}`
     ),
   ];
 }
@@ -91,7 +108,7 @@ export function buildPublishListingInput(
   listingId: string,
   preview: PublishListingPreview,
   quotaOverrideAccepted: boolean,
-  quotaOverrideReason: string,
+  quotaOverrideReason: string
 ): PublishListingInput | null {
   if (preview.canPublish) return { id: listingId };
   const reason = quotaOverrideReason.trim();
@@ -107,7 +124,7 @@ export function buildPublishListingInput(
 }
 
 export function remoteMarketplaceChipColor(
-  listing: Listing | undefined,
+  listing: Listing | undefined
 ): 'default' | 'success' | 'warning' | 'error' {
   if (!listing) return 'default';
   const status = listing.remoteStatus?.toLowerCase();
@@ -124,15 +141,18 @@ export function remoteMarketplaceChipColor(
 
 export function selectPrimaryListing(
   listings: Listing[],
-  marketplaces: Marketplace[] | undefined,
+  marketplaces: Marketplace[] | undefined
 ): Listing | undefined {
   const olxMarketplaceIds = new Set(
-    marketplaces?.filter((marketplace) => marketplace.key === 'olx').map(({ id }) => id) ?? [],
+    marketplaces?.filter((marketplace) => marketplace.key === 'olx').map(({ id }) => id) ?? []
   );
   return listings.find((listing) => olxMarketplaceIds.has(listing.marketplaceId)) ?? listings[0];
 }
 
-export function remoteMarketplacePresentation(listing: Listing | undefined, marketplaceName: string) {
+export function remoteMarketplacePresentation(
+  listing: Listing | undefined,
+  marketplaceName: string
+) {
   const label = listing?.remoteStatusLabel;
   const isPending = listing?.isRemotePending === true;
   return {
@@ -151,23 +171,33 @@ export function remoteMarketplacePresentation(listing: Listing | undefined, mark
   };
 }
 
-export function selectProductRecommendations(events: HermesEvent[], productId: string): HermesEvent[] {
-  return events.filter((event) => event.productId === productId && event.status === 'pending_review');
+export function selectProductRecommendations(
+  events: HermesEvent[],
+  productId: string
+): HermesEvent[] {
+  return events.filter(
+    (event) => event.productId === productId && event.status === 'pending_review'
+  );
 }
 
 export function isProductRecheckStale(
-  result: Pick<ProductRecheckResult, 'productId' | 'listingId' | 'productUpdatedAt' | 'listingUpdatedAt'>,
+  result: Pick<
+    ProductRecheckResult,
+    'productId' | 'listingId' | 'productUpdatedAt' | 'listingUpdatedAt'
+  >,
   currentProductId: string,
   currentProductUpdatedAt: string,
   currentListingId?: string,
-  currentListingUpdatedAt?: string,
+  currentListingUpdatedAt?: string
 ): boolean {
-  return result.productId !== currentProductId
-    || result.productUpdatedAt !== currentProductUpdatedAt
-    || currentListingId === undefined
-    || result.listingId !== currentListingId
-    || currentListingUpdatedAt === undefined
-    || result.listingUpdatedAt !== currentListingUpdatedAt;
+  return (
+    result.productId !== currentProductId ||
+    result.productUpdatedAt !== currentProductUpdatedAt ||
+    currentListingId === undefined ||
+    result.listingId !== currentListingId ||
+    currentListingUpdatedAt === undefined ||
+    result.listingUpdatedAt !== currentListingUpdatedAt
+  );
 }
 
 export const ProductRecheckReview: React.FC<{
@@ -178,13 +208,35 @@ export const ProductRecheckReview: React.FC<{
   currentListingUpdatedAt?: string;
   onEdit?: () => void;
   onMarketplaceEdit?: () => void;
-}> = ({ result, currentProductId, currentProductUpdatedAt, currentListingId, currentListingUpdatedAt, onEdit, onMarketplaceEdit }) => {
-  if (isProductRecheckStale(result, currentProductId, currentProductUpdatedAt, currentListingId, currentListingUpdatedAt)) {
-    return <Alert severity="warning">This result is stale because the product or listing changed. Check again.</Alert>;
+}> = ({
+  result,
+  currentProductId,
+  currentProductUpdatedAt,
+  currentListingId,
+  currentListingUpdatedAt,
+  onEdit,
+  onMarketplaceEdit,
+}) => {
+  if (
+    isProductRecheckStale(
+      result,
+      currentProductId,
+      currentProductUpdatedAt,
+      currentListingId,
+      currentListingUpdatedAt
+    )
+  ) {
+    return (
+      <Alert severity="warning">
+        This result is stale because the product or listing changed. Check again.
+      </Alert>
+    );
   }
   return (
     <Stack spacing={1}>
-      <Alert severity={result.canPublish ? 'success' : result.status === 'review' ? 'warning' : 'error'}>
+      <Alert
+        severity={result.canPublish ? 'success' : result.status === 'review' ? 'warning' : 'error'}
+      >
         {result.canPublish
           ? 'Ready to publish. No publication was started.'
           : result.status === 'review'
@@ -192,39 +244,65 @@ export const ProductRecheckReview: React.FC<{
             : 'Fix the blocking items before publication.'}
       </Alert>
       <Typography variant="caption" color="text.secondary">
-        Checked {formatDateTime(result.checkedAt)} · product version {formatDateTime(result.productUpdatedAt)}
+        Checked {formatDateTime(result.checkedAt)} · product version{' '}
+        {formatDateTime(result.productUpdatedAt)}
       </Typography>
       {result.items.map((check) => (
         <Box key={check.key}>
           <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            {check.status === 'ready' ? 'Ready' : check.status === 'fix' ? 'Fix required' : 'User review'} · {check.key}
+            {check.status === 'ready'
+              ? 'Ready'
+              : check.status === 'fix'
+                ? 'Fix required'
+                : 'User review'}{' '}
+            · {check.key}
           </Typography>
-          <Typography variant="body2" color="text.secondary">{check.message}</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {check.message}
+          </Typography>
         </Box>
       ))}
       <Typography variant="body2">
-        Provider category ID: <strong>{result.category.providerCategoryId ?? 'Not selected'}</strong>
+        Provider category ID:{' '}
+        <strong>{result.category.providerCategoryId ?? 'Not selected'}</strong>
       </Typography>
       <Typography variant="body2">
-        Full category path: <strong>{result.category.path.length ? result.category.path.join(' → ') : 'Unavailable'}</strong>
+        Full category path:{' '}
+        <strong>
+          {result.category.path.length ? result.category.path.join(' → ') : 'Unavailable'}
+        </strong>
       </Typography>
       {result.category.confidence !== null && (
         <Typography variant="caption" color="text.secondary">
           Confidence: {result.category.confidence} · Leaf: {result.category.isLeaf ? 'yes' : 'no'}
-          {result.category.taxonomyVerifiedAt ? ` · Taxonomy verified: ${formatDateTime(result.category.taxonomyVerifiedAt)}` : ''}
-          {result.category.taxonomyStaleAt ? ` · Stale after: ${formatDateTime(result.category.taxonomyStaleAt)}` : ''}
+          {result.category.taxonomyVerifiedAt
+            ? ` · Taxonomy verified: ${formatDateTime(result.category.taxonomyVerifiedAt)}`
+            : ''}
+          {result.category.taxonomyStaleAt
+            ? ` · Stale after: ${formatDateTime(result.category.taxonomyStaleAt)}`
+            : ''}
         </Typography>
       )}
       {result.category.suggestion && (
         <Alert severity="info">
-          Suggested category: {result.category.suggestion.providerCategoryId} · {result.category.suggestion.path.join(' → ')}.
-          This suggestion is not applied automatically and requires explicit confirmation.
+          Suggested category: {result.category.suggestion.providerCategoryId} ·{' '}
+          {result.category.suggestion.path.join(' → ')}. This suggestion is not applied
+          automatically and requires explicit confirmation.
         </Alert>
       )}
-      {!result.canPublish && result.items.some((check) => check.editField === 'marketplace') && onMarketplaceEdit ? (
-        <Button size="small" variant="outlined" onClick={onMarketplaceEdit}>Manage marketplace connection</Button>
-      ) : !result.canPublish && onEdit && (
-        <Button size="small" variant="outlined" onClick={onEdit}>Edit product</Button>
+      {!result.canPublish &&
+      result.items.some((check) => check.editField === 'marketplace') &&
+      onMarketplaceEdit ? (
+        <Button size="small" variant="outlined" onClick={onMarketplaceEdit}>
+          Manage marketplace connection
+        </Button>
+      ) : (
+        !result.canPublish &&
+        onEdit && (
+          <Button size="small" variant="outlined" onClick={onEdit}>
+            Edit product
+          </Button>
+        )
       )}
     </Stack>
   );
@@ -237,7 +315,6 @@ function errorMessage(err: unknown): string {
   }
   return 'Request failed';
 }
-
 
 export const PublishPreviewReview: React.FC<{ preview: PublishListingPreview }> = ({ preview }) => {
   const category = preview.marketplaceCategory ?? preview.payload?.marketplaceCategory;
@@ -265,14 +342,20 @@ export const PublishPreviewReview: React.FC<{ preview: PublishListingPreview }> 
             Full category path: <strong>{category.path.join(' → ')}</strong>
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            Confidence: {category.confidence} · Taxonomy verified: {formatDateTime(category.taxonomyVerifiedAt)} · Stale after: {formatDateTime(category.taxonomyStaleAt)}
+            Confidence: {category.confidence} · Taxonomy verified:{' '}
+            {formatDateTime(category.taxonomyVerifiedAt)} · Stale after:{' '}
+            {formatDateTime(category.taxonomyStaleAt)}
           </Typography>
         </Stack>
       ) : (
         <Alert severity="error">No exact provider category ID/path was returned.</Alert>
       )}
       {preview.warnings.length > 0 && (
-        <Alert severity={preview.canPublish || preview.quotaOverrideEligibility.eligible ? 'warning' : 'error'}>
+        <Alert
+          severity={
+            preview.canPublish || preview.quotaOverrideEligibility.eligible ? 'warning' : 'error'
+          }
+        >
           <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>
             {preview.canPublish
               ? 'Warnings to confirm'
@@ -282,7 +365,9 @@ export const PublishPreviewReview: React.FC<{ preview: PublishListingPreview }> 
           </Typography>
           <Box component="ul" sx={{ my: 0, pl: 2.5 }}>
             {preview.warnings.map((warning) => (
-              <li key={warning}><Typography variant="body2">{warning}</Typography></li>
+              <li key={warning}>
+                <Typography variant="body2">{warning}</Typography>
+              </li>
             ))}
           </Box>
         </Alert>
@@ -302,7 +387,7 @@ const ListingDetailsPage: React.FC = () => {
   const listings = useProductListings(productId, { skip: !productId });
   const hermesEvents = useHermesEvents(
     { productId, status: ['pending_review'], sort: '-createdAt', limit: 20 },
-    { skip: !productId },
+    { skip: !productId }
   );
   const { marketplaces, resolveMarketplaceName, resolveMarketplaceKey } = useMarketplaceLookup();
 
@@ -314,6 +399,7 @@ const ListingDetailsPage: React.FC = () => {
   const [publishListingPreview] = usePublishListingPreview();
   const [publishListing, { isLoading: publishing }] = usePublishListing();
   const [createListing, { isLoading: creatingListing }] = useCreateProductListing();
+  const [runHermes, { isLoading: analyzing }] = useRunHermes();
 
   const [editOpen, setEditOpen] = useState(false);
   const [recheckResult, setRecheckResult] = useState<ProductRecheckResult | null>(null);
@@ -343,14 +429,17 @@ const ListingDetailsPage: React.FC = () => {
         )
       : undefined;
   const primaryListing = selectPrimaryListing(listingItems, marketplaces);
-  const recheckListing = listingItems.find((listing) => resolveMarketplaceKey(listing.marketplaceId) === 'olx');
+  const recheckListing = listingItems.find(
+    (listing) => resolveMarketplaceKey(listing.marketplaceId) === 'olx'
+  );
   const priceHistory = usePriceHistory(primaryListing?.id ?? '', { skip: !primaryListing });
   const primaryMarketplaceName = primaryListing
     ? resolveMarketplaceName(primaryListing.marketplaceId)
     : 'Marketplace';
   const remoteMarketplace = remoteMarketplacePresentation(primaryListing, primaryMarketplaceName);
   const recommendations = selectProductRecommendations(hermesEvents.data?.items ?? [], productId);
-  const publicationBusy = previewingPublication || submittingPublication || publishing || relisting || delisting;
+  const publicationBusy =
+    previewingPublication || submittingPublication || publishing || relisting || delisting;
   const publicationActionsLocked = publicationBusy || Boolean(publishCandidate);
 
   const closePublicationReview = () => {
@@ -415,17 +504,46 @@ const ListingDetailsPage: React.FC = () => {
     try {
       if (!recheckListing) throw new Error('Create or select an OLX listing before recheck');
       const result = await recheckProduct({ productId, listingId: recheckListing.id }).unwrap();
-      const [refreshedProduct, refreshedListings] = await Promise.all([product.refetch(), listings.refetch()]);
-      const refreshedListing = refreshedListings.data?.find((listing) => listing.id === recheckListing.id);
-      if (!refreshedProduct.data || !refreshedListing) throw new Error('Unable to refresh the product or listing after recheck');
-      if (requestIdentity !== recheckRequestIdentity.current
-        || isProductRecheckStale(
-          result, refreshedProduct.data.id, refreshedProduct.data.updatedAt,
-          refreshedListing.id, refreshedListing.updatedAt,
-        )) return;
+      const [refreshedProduct, refreshedListings] = await Promise.all([
+        product.refetch(),
+        listings.refetch(),
+      ]);
+      const refreshedListing = refreshedListings.data?.find(
+        (listing) => listing.id === recheckListing.id
+      );
+      if (!refreshedProduct.data || !refreshedListing)
+        throw new Error('Unable to refresh the product or listing after recheck');
+      if (
+        requestIdentity !== recheckRequestIdentity.current ||
+        isProductRecheckStale(
+          result,
+          refreshedProduct.data.id,
+          refreshedProduct.data.updatedAt,
+          refreshedListing.id,
+          refreshedListing.updatedAt
+        )
+      )
+        return;
       setRecheckResult(result);
     } catch (err) {
       if (requestIdentity !== recheckRequestIdentity.current) return;
+      dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
+    }
+  };
+
+  const handleAnalyzeWithHermes = async () => {
+    try {
+      const events = await runHermes(productScopedHermesRunInput(productId)).unwrap();
+      await hermesEvents.refetch();
+      dispatch(
+        enqueueToast({
+          message: events.length
+            ? 'Hermes SEO suggestion is ready for review.'
+            : 'Hermes found no new SEO suggestion.',
+          severity: 'success',
+        })
+      );
+    } catch (err) {
       dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
     }
   };
@@ -435,30 +553,27 @@ const ListingDetailsPage: React.FC = () => {
     setRecheckResult(null);
   }, [productId]);
 
-  const beginPublicationReview = useCallback(async (
-    listing: Listing,
-    mode: 'publish' | 'relist',
-  ) => {
-    if (
-      previewInFlight.current ||
-      publicationReviewOpen.current ||
-      submissionInFlight.current
-    ) return;
-    previewInFlight.current = true;
-    setPreviewingPublication(true);
-    try {
-      const preview = await publishListingPreview(listing.id).unwrap();
-      setQuotaOverrideAccepted(false);
-      setQuotaOverrideReason('');
-      publicationReviewOpen.current = true;
-      setPublishCandidate({ listing, preview, mode });
-    } catch (err) {
-      dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
-    } finally {
-      previewInFlight.current = false;
-      setPreviewingPublication(false);
-    }
-  }, [dispatch, publishListingPreview]);
+  const beginPublicationReview = useCallback(
+    async (listing: Listing, mode: 'publish' | 'relist') => {
+      if (previewInFlight.current || publicationReviewOpen.current || submissionInFlight.current)
+        return;
+      previewInFlight.current = true;
+      setPreviewingPublication(true);
+      try {
+        const preview = await publishListingPreview(listing.id).unwrap();
+        setQuotaOverrideAccepted(false);
+        setQuotaOverrideReason('');
+        publicationReviewOpen.current = true;
+        setPublishCandidate({ listing, preview, mode });
+      } catch (err) {
+        dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
+      } finally {
+        previewInFlight.current = false;
+        setPreviewingPublication(false);
+      }
+    },
+    [dispatch, publishListingPreview]
+  );
 
   const handleRelist = (listing: Listing) => void beginPublicationReview(listing, 'relist');
   const handlePublish = (listing: Listing) => void beginPublicationReview(listing, 'publish');
@@ -469,7 +584,7 @@ const ListingDetailsPage: React.FC = () => {
       publishCandidate.listing.id,
       publishCandidate.preview,
       quotaOverrideAccepted,
-      quotaOverrideReason,
+      quotaOverrideReason
     );
     if (!input) return;
     submissionInFlight.current = true;
@@ -480,12 +595,15 @@ const ListingDetailsPage: React.FC = () => {
       } else {
         await publishListing(input).unwrap();
       }
-      dispatch(enqueueToast({
-        message: publishCandidate.mode === 'relist'
-          ? 'Republication was accepted and queued.'
-          : 'Publication was accepted and queued.',
-        severity: 'success',
-      }));
+      dispatch(
+        enqueueToast({
+          message:
+            publishCandidate.mode === 'relist'
+              ? 'Republication was accepted and queued.'
+              : 'Publication was accepted and queued.',
+          severity: 'success',
+        })
+      );
       publicationReviewOpen.current = false;
       setPublishCandidate(null);
       setQuotaOverrideAccepted(false);
@@ -499,9 +617,11 @@ const ListingDetailsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    const review = (location.state as {
-      publicationReview?: { listingId: string; mode: 'relist' };
-    } | null)?.publicationReview;
+    const review = (
+      location.state as {
+        publicationReview?: { listingId: string; mode: 'relist' };
+      } | null
+    )?.publicationReview;
     if (!review) {
       consumedNavigationReview.current = null;
       return;
@@ -513,15 +633,18 @@ const ListingDetailsPage: React.FC = () => {
       listings.isLoading ||
       listings.isFetching ||
       listings.isError
-    ) return;
+    )
+      return;
     consumedNavigationReview.current = reviewKey;
     navigate(location.pathname, { replace: true, state: null });
     const listing = listingItems.find((item) => item.id === review.listingId);
     if (!listing) {
-      dispatch(enqueueToast({
-        message: 'Listing is no longer available for review.',
-        severity: 'error',
-      }));
+      dispatch(
+        enqueueToast({
+          message: 'Listing is no longer available for review.',
+          severity: 'error',
+        })
+      );
       return;
     }
     void beginPublicationReview(listing, 'relist');
@@ -561,18 +684,26 @@ const ListingDetailsPage: React.FC = () => {
         Back to products
       </Button>
       <ProductIdentityHero product={p} onEdit={() => setEditOpen(true)} />
+      <Button
+        variant="outlined"
+        disabled={analyzing}
+        onClick={handleAnalyzeWithHermes}
+        sx={{ mt: 2 }}
+      >
+        {analyzing ? 'Analyzing with Hermes…' : 'Analyze with Hermes'}
+      </Button>
 
       <Card
         title="Publication readiness check"
         subtitle="Checks the current saved product without publishing or applying suggestions"
         sx={{ my: 2 }}
-        action={(
+        action={
           <PublicationReadinessAction
             rechecking={rechecking}
             disabled={!recheckListing}
             onClick={() => void handleRecheck()}
           />
-        )}
+        }
       >
         {!recheckResult ? (
           <Typography variant="body2" color="text.secondary">
@@ -593,21 +724,36 @@ const ListingDetailsPage: React.FC = () => {
 
       <Box sx={productDetailGridSx} data-testid="product-detail-layout">
         <Stack spacing={{ xs: 2, lg: 3 }} sx={{ minWidth: 0 }}>
-          <ProductGalleryCard name={p.name} images={images} activeIndex={activeImage} onSelect={setActiveImage} />
+          <ProductGalleryCard
+            name={p.name}
+            images={images}
+            activeIndex={activeImage}
+            onSelect={setActiveImage}
+          />
           <ProductDescriptionCard product={p} onEdit={() => setEditOpen(true)} />
           <ProductCategoryEvidence
             product={p}
-            conflictLines={p.categoryProvenance?.status === 'conflict'
-              ? categoryConflictEvidenceLines(p.categoryProvenance)
-              : []}
+            conflictLines={
+              p.categoryProvenance?.status === 'conflict'
+                ? categoryConflictEvidenceLines(p.categoryProvenance)
+                : []
+            }
           />
           <Card
             title="Marketplace listings"
-            action={availableMarketplace ? (
-              <Button size="small" variant="outlined" startIcon={<AddIcon />} disabled={creatingListing} onClick={handleCreateListing}>
-                Create {availableMarketplace.name} listing
-              </Button>
-            ) : undefined}
+            action={
+              availableMarketplace ? (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<AddIcon />}
+                  disabled={creatingListing}
+                  onClick={handleCreateListing}
+                >
+                  Create {availableMarketplace.name} listing
+                </Button>
+              ) : undefined
+            }
             disablePadding
           >
             <ListingsTable
@@ -628,10 +774,13 @@ const ListingDetailsPage: React.FC = () => {
                   confirmed: true,
                 }).unwrap();
                 if (operation.state === 'executed') {
-                  dispatch(enqueueToast({
-                    message: 'Remote advert removed; listing returned to draft. Nothing was republished.',
-                    severity: 'success',
-                  }));
+                  dispatch(
+                    enqueueToast({
+                      message:
+                        'Remote advert removed; listing returned to draft. Nothing was republished.',
+                      severity: 'success',
+                    })
+                  );
                 }
                 return operation;
               }}
@@ -642,7 +791,13 @@ const ListingDetailsPage: React.FC = () => {
             listing={primaryListing}
             history={priceHistory.data}
             loading={priceHistory.isLoading || listings.isLoading}
-            error={listings.isError ? listings.error : priceHistory.isError ? priceHistory.error : undefined}
+            error={
+              listings.isError
+                ? listings.error
+                : priceHistory.isError
+                  ? priceHistory.error
+                  : undefined
+            }
             onRetry={() => {
               if (listings.isError) void listings.refetch();
               if (priceHistory.isError) void priceHistory.refetch();
@@ -652,21 +807,31 @@ const ListingDetailsPage: React.FC = () => {
           <ProductTimelineCard product={p} listing={primaryListing} />
         </Stack>
 
-        <Stack spacing={{ xs: 2, lg: 3 }} sx={productDetailRailSx} data-testid="product-detail-rail">
+        <Stack
+          spacing={{ xs: 2, lg: 3 }}
+          sx={productDetailRailSx}
+          data-testid="product-detail-rail"
+        >
           <PricingSummaryCard product={p} currency={currency} onEdit={() => setEditOpen(true)} />
           <OlxInsightsCard
             listing={primaryListing}
             loading={listings.isLoading || listings.isFetching}
             error={listings.isError ? listings.error : undefined}
-            onRetry={() => { void listings.refetch(); }}
-            isOlx={Boolean(primaryListing && marketplaces?.find(
-              (marketplace) => marketplace.id === primaryListing.marketplaceId,
-            )?.key === 'olx')}
+            onRetry={() => {
+              void listings.refetch();
+            }}
+            isOlx={Boolean(
+              primaryListing &&
+              marketplaces?.find((marketplace) => marketplace.id === primaryListing.marketplaceId)
+                ?.key === 'olx'
+            )}
             statusTitle={remoteMarketplace.title}
             statusLabel={remoteMarketplace.status}
-            statusExplanation={primaryListing
-              ? remoteMarketplace.explanation
-              : 'Create or publish an OLX listing to start tracking provider status.'}
+            statusExplanation={
+              primaryListing
+                ? remoteMarketplace.explanation
+                : 'Create or publish an OLX listing to start tracking provider status.'
+            }
             statusColor={remoteMarketplaceChipColor(primaryListing)}
           />
           <Card
@@ -687,12 +852,16 @@ const ListingDetailsPage: React.FC = () => {
                     key={event.id}
                     event={event}
                     onResolved={refreshAfterRecommendation}
-                    approveLabel={event.proposedChange?.kind === 'category_recreation' ? undefined : 'Apply'}
-                    successMessage={event.proposedChange?.kind === 'category_recreation'
-                      ? undefined
-                      : primaryListing?.status === 'live' && primaryListing.marketplaceListingId
-                        ? 'Suggestion applied locally. Connected live listing updates were queued.'
-                        : 'Suggestion applied to the product.'}
+                    approveLabel={
+                      event.proposedChange?.kind === 'category_recreation' ? undefined : 'Apply'
+                    }
+                    successMessage={
+                      event.proposedChange?.kind === 'category_recreation'
+                        ? undefined
+                        : primaryListing?.status === 'live' && primaryListing.marketplaceListingId
+                          ? 'Suggestion applied locally. Connected live listing updates were queued.'
+                          : 'Suggestion applied to the product.'
+                    }
                   />
                 ))}
                 <Typography variant="caption" color="text.secondary">
@@ -740,7 +909,7 @@ const ListingDetailsPage: React.FC = () => {
                   publishCandidate.listing.id,
                   publishCandidate.preview,
                   quotaOverrideAccepted,
-                  quotaOverrideReason,
+                  quotaOverrideReason
                 ) === null
               }
               onClick={handleConfirmPublish}
@@ -762,7 +931,8 @@ const ListingDetailsPage: React.FC = () => {
             {publishCandidate.preview.quotaOverrideEligibility.eligible && (
               <Stack spacing={1}>
                 <Alert severity="warning">
-                  OLX may charge for this publication. This confirmation applies only to this single request.
+                  OLX may charge for this publication. This confirmation applies only to this single
+                  request.
                 </Alert>
                 <FormControlLabel
                   control={

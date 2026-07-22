@@ -67,7 +67,7 @@ describe('HermesAI (IAIProvider)', () => {
         suggestedPrice: 99.5,
         reasoning: 'High views but low conversion — a small drop should convert.',
         confidence: 'high',
-      }),
+      })
     );
     const ai = new HermesAI(client);
     const context: PriceSuggestionContext = {
@@ -99,7 +99,7 @@ describe('HermesAI (IAIProvider)', () => {
 
   it('suggestPrice tolerates JSON wrapped in a fenced code block', async () => {
     const { client } = fakeClient(
-      '```json\n{"suggestedPrice": 110, "reasoning": "ok", "confidence": "medium"}\n```',
+      '```json\n{"suggestedPrice": 110, "reasoning": "ok", "confidence": "medium"}\n```'
     );
     const ai = new HermesAI(client);
     const result = await ai.suggestPrice({
@@ -130,7 +130,7 @@ describe('HermesAI (IAIProvider)', () => {
 
   it('analyzeListing clamps the score and returns string suggestions', async () => {
     const { client } = fakeClient(
-      JSON.stringify({ score: 250, suggestions: ['Add more photos', 42, 'Improve title'] }),
+      JSON.stringify({ score: 250, suggestions: ['Add more photos', 42, 'Improve title'] })
     );
     const ai = new HermesAI(client);
 
@@ -138,5 +138,41 @@ describe('HermesAI (IAIProvider)', () => {
 
     expect(analysis.score).toBe(100); // clamped from 250
     expect(analysis.suggestions).toEqual(['Add more photos', 'Improve title']);
+  });
+
+  it('sends listing-seo only strict sanitized JSON and varies the safe preset instruction', async () => {
+    const reply = JSON.stringify({
+      recommendations: [
+        {
+          field: 'title',
+          proposedValue: 'Retro Sneakers Classic',
+          rationale: 'Clearer search terms.',
+        },
+      ],
+      disclaimer: 'Review only; results are not guaranteed.',
+    });
+    const { client, calls } = fakeClient(reply);
+    const ai = new HermesAI(client);
+    const input = {
+      product: {
+        id: 'p1',
+        name: 'Retro Sneakers',
+        description: 'Classic lightly worn sneakers.',
+        category: 'clothing',
+        condition: 'good' as const,
+        tags: ['retro'],
+        imageCount: 1,
+      },
+      listing: null,
+    };
+
+    await ai.analyzeListingSeo(input, 'precise');
+    await ai.analyzeListingSeo(input, 'creative');
+
+    expect(calls[0].prompt).toBe(JSON.stringify(input));
+    expect(calls[0].system).not.toBe(calls[1].system);
+    expect(calls[0]).not.toHaveProperty('temperature');
+    expect(calls[0].prompt).not.toMatch(/token|credential|\/srv\//i);
+    expect(calls[0].jsonSchema).toMatchObject({ type: 'object', additionalProperties: false });
   });
 });

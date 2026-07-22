@@ -13,10 +13,7 @@ import type {
 
 export const hermesApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
-    getHermesEvents: builder.query<
-      PaginatedResponse<HermesEvent>,
-      HermesEventListParams | void
-    >({
+    getHermesEvents: builder.query<PaginatedResponse<HermesEvent>, HermesEventListParams | void>({
       query: (params) => `/hermes/events${buildQueryString({ ...(params ?? {}) })}`,
       transformResponse: (res: PaginatedApiResponse<HermesEvent>) => unwrapPaginated(res),
       providesTags: (result) =>
@@ -62,9 +59,7 @@ export const hermesApi = baseApi.injectEndpoints({
       query: ({ action, paidOverrideReason }) => ({
         url: action.href,
         method: action.method,
-        body: action.kind === 'approve' && paidOverrideReason
-          ? { paidOverrideReason }
-          : {},
+        body: action.kind === 'approve' && paidOverrideReason ? { paidOverrideReason } : {},
       }),
       transformResponse: (res: ApiResponse<CategoryRecreationOperationResolution>) => unwrap(res),
       invalidatesTags: (result) => [
@@ -77,7 +72,11 @@ export const hermesApi = baseApi.injectEndpoints({
     // POST /hermes/run — trigger an analysis run; responds 202 with the array of
     // generated events (HermesEventView[]).
     runHermes: builder.mutation<HermesEvent[], HermesRunInput | void>({
-      query: (body) => ({ url: '/hermes/run', method: 'POST', body: body ?? {} }),
+      query: (body) => ({
+        url: body?.productId ? `/hermes/products/${body.productId}/run` : '/hermes/run',
+        method: 'POST',
+        body: body?.productId ? { trigger: body.trigger } : (body ?? {}),
+      }),
       transformResponse: (res: ApiResponse<HermesEvent[]>) => unwrap(res),
       invalidatesTags: [{ type: 'HermesEvent', id: 'LIST' }],
     }),

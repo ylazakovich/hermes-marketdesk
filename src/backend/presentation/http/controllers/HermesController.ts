@@ -20,7 +20,6 @@ function csv<T extends string>(value: unknown): T[] | undefined {
   return parts.length > 0 ? (parts as T[]) : undefined;
 }
 
-
 function routeParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
 }
@@ -28,28 +27,50 @@ function routeParam(value: string | string[] | undefined): string {
 export class HermesController {
   constructor(
     private readonly hermes: HermesApplicationService,
-    private readonly categoryCorrections?: CategoryCorrectionOperationService,
+    private readonly categoryCorrections?: CategoryCorrectionOperationService
   ) {}
 
-  listCategoryCorrectionOperations = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    if (!this.categoryCorrections) return next(new NotFoundError('Category correction workflow is unavailable'));
-    const operations = await this.categoryCorrections.list(routeParam(req.params.id), req.user!.workspaceId!);
+  listCategoryCorrectionOperations = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    if (!this.categoryCorrections)
+      return next(new NotFoundError('Category correction workflow is unavailable'));
+    const operations = await this.categoryCorrections.list(
+      routeParam(req.params.id),
+      req.user!.workspaceId!
+    );
     ok(res, operations);
   };
 
-  approveCategoryCorrectionOperation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    if (!this.categoryCorrections) return next(new NotFoundError('Category correction workflow is unavailable'));
+  approveCategoryCorrectionOperation = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    if (!this.categoryCorrections)
+      return next(new NotFoundError('Category correction workflow is unavailable'));
     const operation = await this.categoryCorrections.approve({
-      operationId: routeParam(req.params.operationId), workspaceId: req.user!.workspaceId!,
-      actorId: req.user!.userId!, paidOverrideReason: req.body?.paidOverrideReason,
+      operationId: routeParam(req.params.operationId),
+      workspaceId: req.user!.workspaceId!,
+      actorId: req.user!.userId!,
+      paidOverrideReason: req.body?.paidOverrideReason,
     });
     ok(res, operation);
   };
 
-  executeCategoryCorrectionOperation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    if (!this.categoryCorrections) return next(new NotFoundError('Category correction workflow is unavailable'));
+  executeCategoryCorrectionOperation = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    if (!this.categoryCorrections)
+      return next(new NotFoundError('Category correction workflow is unavailable'));
     const operation = await this.categoryCorrections.execute({
-      operationId: routeParam(req.params.operationId), workspaceId: req.user!.workspaceId!, actorId: req.user!.userId!,
+      operationId: routeParam(req.params.operationId),
+      workspaceId: req.user!.workspaceId!,
+      actorId: req.user!.userId!,
     });
     ok(res, operation);
   };
@@ -67,7 +88,11 @@ export class HermesController {
     };
     const page = await this.hermes.listEvents(query);
     const items = this.categoryCorrections?.hydrateEvent
-      ? await Promise.all(page.items.map((event) => this.categoryCorrections!.hydrateEvent(event, req.user!.workspaceId!)))
+      ? await Promise.all(
+          page.items.map((event) =>
+            this.categoryCorrections!.hydrateEvent(event, req.user!.workspaceId!)
+          )
+        )
       : page.items;
     paginated(res, items, {
       page: page.page,
@@ -115,6 +140,17 @@ export class HermesController {
   run = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const result = await this.hermes.runHermes({
       workspaceId: req.user!.workspaceId!,
+      trigger: req.body?.trigger ?? 'manual',
+      productId: req.body?.productId,
+    });
+    if (result.isErr()) return next(result.error);
+    ok(res, result.value, 202);
+  };
+
+  runForProduct = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const result = await this.hermes.runHermes({
+      workspaceId: req.user!.workspaceId!,
+      productId: routeParam(req.params.productId),
       trigger: req.body?.trigger ?? 'manual',
     });
     if (result.isErr()) return next(result.error);

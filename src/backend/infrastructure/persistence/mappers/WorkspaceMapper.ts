@@ -1,5 +1,9 @@
 import { Workspace } from '../../../domain/entities/Workspace';
-import type { AutonomyLevel, WorkspaceLanguage } from '../../../../shared/types';
+import type {
+  AutonomyLevel,
+  HermesCreativityPreset,
+  WorkspaceLanguage,
+} from '../../../../shared/types';
 import type { WorkspaceRow } from './rows';
 import { toDate, unwrapPersisted } from './support';
 
@@ -17,6 +21,8 @@ export const WorkspaceMapper = {
         language: row.language as WorkspaceLanguage,
         autonomyLevel: row.autonomy_level as AutonomyLevel,
         guardrails: row.guardrails ?? undefined,
+        creativityPreset: (row.hermes_creativity_preset ?? 'balanced') as HermesCreativityPreset,
+        listingSeoEnabled: row.listing_seo_enabled ?? true,
         createdAt: toDate(row.created_at),
         updatedAt: toDate(row.updated_at),
       })

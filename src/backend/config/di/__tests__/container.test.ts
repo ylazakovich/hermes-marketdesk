@@ -33,6 +33,7 @@ const fakeAi: IAIProvider = {
   suggestPrice: async () => ({ suggestedPrice: 1, reasoning: 'x', confidence: 'low' }),
   generateTitle: async (product) => product.name,
   analyzeListing: async () => ({ score: 0, suggestions: [] }),
+  analyzeListingSeo: async () => ({ recommendations: [], disclaimer: 'Review only.' }),
 };
 const validCredentialsKey = Buffer.alloc(32, 7).toString('base64');
 

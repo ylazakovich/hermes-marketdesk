@@ -3,6 +3,7 @@ import type { AutonomyLevel, HermesGuardrails, MarketplaceKey } from './index';
 export type WorkspaceLanguage = 'en' | 'pl';
 export type SettingsThemeMode = 'system' | 'light' | 'dark';
 export type SettingsDensity = 'comfortable' | 'compact';
+export type HermesCreativityPreset = 'precise' | 'balanced' | 'creative';
 
 export const NOTIFICATION_EVENT_KEYS = [
   'new_sale',
@@ -47,6 +48,8 @@ export interface NotificationPreferences {
 export interface HermesSettings {
   autonomyLevel: AutonomyLevel;
   guardrails: HermesGuardrails;
+  creativityPreset: HermesCreativityPreset;
+  agents: { listingSeo: { enabled: boolean } };
   updatedAt: string;
 }
 
@@ -92,4 +95,6 @@ export interface NotificationPreferencesPatch {
 export interface HermesSettingsPatch {
   autonomyLevel?: AutonomyLevel;
   guardrails?: Partial<HermesGuardrails>;
+  creativityPreset?: HermesCreativityPreset;
+  agents?: { listingSeo?: { enabled?: boolean } };
 }

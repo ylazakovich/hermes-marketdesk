@@ -33,7 +33,7 @@ function setup() {
   const workspaceRepo = new InMemoryWorkspaceRepository();
 
   const workspace = unwrap(
-    Workspace.create({ id: 'ws-1', name: 'Test', autonomyLevel: 'suggest_only' }),
+    Workspace.create({ id: 'ws-1', name: 'Test', autonomyLevel: 'suggest_only' })
   );
   workspaceRepo.items.set(workspace.id, workspace);
 
@@ -49,7 +49,7 @@ function setup() {
       sellingPrice: money(100),
       condition: 'good',
       category: 'home',
-    }),
+    })
   );
   productRepo.items.set(product.id, product);
 
@@ -59,7 +59,7 @@ function setup() {
     eventRepo,
     publisher,
     new StubAIProvider(),
-    sequentialIdFactory('evt'),
+    sequentialIdFactory('evt')
   );
 
   const runHermes = new RunHermesUseCase(engine, workspaceRepo);
@@ -72,17 +72,17 @@ function setup() {
     new RecordingPriceHistoryRecorder(),
     new RecordingJobQueue(),
     publisher,
-    idFactory('rec'),
+    idFactory('rec')
   );
   const dismiss = new DismissHermesEventUseCase(
     eventRepo,
     new InMemoryActivityLogRepository(),
     publisher,
-    idFactory('rec2'),
+    idFactory('rec2')
   );
   const service = new HermesApplicationService(eventRepo, runHermes, approve, dismiss);
 
-  return { runHermes, service, eventRepo, publisher, workspaceRepo };
+  return { runHermes, service, eventRepo, publisher, workspaceRepo, productRepo };
 }
 
 describe('RunHermesUseCase', () => {
@@ -104,6 +104,44 @@ describe('RunHermesUseCase', () => {
     const result = await runHermes.execute({ workspaceId: 'missing' });
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.code).toBe('NOT_FOUND');
+  });
+
+  it('runs listing-seo for exactly one product and keeps it review-only', async () => {
+    const { runHermes, eventRepo } = setup();
+    const result = await runHermes.execute({ workspaceId: 'ws-1', productId: 'prod-1' });
+    const events = unwrap(result);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      productId: 'prod-1',
+      status: 'pending_review',
+      autonomyDecision: 'pending_review',
+    });
+    expect(events[0].detail).toContain('listing-seo@1.0.0');
+    expect(
+      unwrap(await runHermes.execute({ workspaceId: 'ws-1', productId: 'prod-1' }))
+    ).toHaveLength(0);
+    expect(eventRepo.items.size).toBe(1);
+  });
+
+  it('rejects a product outside the authenticated workspace', async () => {
+    const { runHermes, productRepo } = setup();
+    const foreign = unwrap(
+      Product.create({
+        id: 'foreign',
+        workspaceId: 'ws-2',
+        sku: 'FOREIGN',
+        name: 'Foreign lamp',
+        description: 'A foreign workspace product that must never be analyzed.',
+        costPrice: money(10),
+        sellingPrice: money(20),
+        condition: 'good',
+        category: 'home',
+      })
+    );
+    productRepo.items.set(foreign.id, foreign);
+    const result = await runHermes.execute({ workspaceId: 'ws-1', productId: foreign.id });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error).toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('exposes generated events as presented views via the application service', async () => {

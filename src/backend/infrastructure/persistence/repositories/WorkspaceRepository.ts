@@ -13,6 +13,7 @@ import type { WorkspaceRow } from '../mappers/rows';
 
 const WORKSPACE_SELECT = `
   SELECT id, name, currency, timezone, language, autonomy_level, guardrails,
+         hermes_creativity_preset, listing_seo_enabled,
          created_at, updated_at
   FROM workspaces
 `;
@@ -48,8 +49,8 @@ export class WorkspaceRepository implements IWorkspaceRepository {
     await query(
       `INSERT INTO workspaces
          (id, name, currency, timezone, language, autonomy_level, guardrails,
-          created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          hermes_creativity_preset, listing_seo_enabled, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name,
          currency = EXCLUDED.currency,
@@ -57,6 +58,8 @@ export class WorkspaceRepository implements IWorkspaceRepository {
          language = EXCLUDED.language,
          autonomy_level = EXCLUDED.autonomy_level,
          guardrails = EXCLUDED.guardrails,
+         hermes_creativity_preset = EXCLUDED.hermes_creativity_preset,
+         listing_seo_enabled = EXCLUDED.listing_seo_enabled,
          updated_at = EXCLUDED.updated_at`,
       [
         workspace.id,
@@ -66,6 +69,8 @@ export class WorkspaceRepository implements IWorkspaceRepository {
         workspace.language,
         workspace.autonomyLevel,
         JSON.stringify(workspace.guardrails),
+        workspace.creativityPreset,
+        workspace.listingSeoEnabled,
         workspace.createdAt,
         workspace.updatedAt,
       ],
@@ -103,14 +108,19 @@ export class WorkspaceRepository implements IWorkspaceRepository {
       `UPDATE workspaces SET
          autonomy_level = COALESCE($2, autonomy_level),
          guardrails = COALESCE(guardrails, '{}'::jsonb) || COALESCE($3::jsonb, '{}'::jsonb),
+         hermes_creativity_preset = COALESCE($4, hermes_creativity_preset),
+         listing_seo_enabled = COALESCE($5, listing_seo_enabled),
          updated_at = NOW()
        WHERE id = $1
        RETURNING id, name, currency, timezone, language, autonomy_level, guardrails,
+                 hermes_creativity_preset, listing_seo_enabled,
                  created_at, updated_at`,
       [
         id,
         normalized.autonomyLevel ?? null,
         normalized.guardrails ? JSON.stringify(normalized.guardrails) : null,
+        normalized.creativityPreset ?? null,
+        normalized.listingSeoEnabled ?? null,
       ],
       this.queryClient
     );

@@ -19,6 +19,7 @@ import type {
   PriceSuggestion,
   ListingAnalysis,
 } from '../ports/IAIProvider';
+import type { ListingSeoOutput } from '../agents/MarketDeskAgentCatalog';
 
 export function unwrap<T>(r: Result<T>): T {
   if (r.isErr()) {
@@ -218,6 +219,14 @@ export class StubAIProvider implements IAIProvider {
   }
   async analyzeListing(): Promise<ListingAnalysis> {
     return this.analysis;
+  }
+  async analyzeListingSeo(): Promise<ListingSeoOutput> {
+    return {
+      recommendations: [
+        { field: 'title', proposedValue: 'SEO title', rationale: 'More searchable wording for review.' },
+      ],
+      disclaimer: 'Review only; no marketplace changes were applied.',
+    };
   }
 }
 

@@ -11,6 +11,7 @@ import {
   PublicationReadinessAction,
   ProductRecheckReview,
   PublishPreviewReview,
+  productScopedHermesRunInput,
   remoteMarketplaceChipColor,
   remoteMarketplacePresentation,
   selectPrimaryListing,
@@ -58,6 +59,13 @@ function event(
 }
 
 describe('ListingDetailsPage presentation', () => {
+  it('builds a product-scoped Hermes run input for the selected product only', () => {
+    expect(productScopedHermesRunInput('product-1')).toEqual({
+      trigger: 'manual',
+      productId: 'product-1',
+    });
+  });
+
   it('marks a recheck stale immediately when the saved product version changes', () => {
     const result = {
       productId: 'product-1', listingId: 'listing-1',
