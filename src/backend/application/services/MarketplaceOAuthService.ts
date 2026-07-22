@@ -131,6 +131,11 @@ export interface MarketplaceOAuthStatus {
   refreshable: boolean;
 }
 
+export interface MarketplaceResolvedAccessToken {
+  accessToken: string;
+  account: Pick<MarketplaceAccountRecord, 'id' | 'revision'>;
+}
+
 export interface MarketplaceOAuthStartResult {
   authorizationUrl: string;
   state: string;
@@ -418,6 +423,14 @@ export class MarketplaceOAuthService {
     marketplaceId: string,
     expectedAccount?: { id: string; revision: number },
   ): Promise<string> {
+    const resolved = await this.getValidAccessTokenContext(marketplaceId, expectedAccount);
+    return resolved.accessToken;
+  }
+
+  async getValidAccessTokenContext(
+    marketplaceId: string,
+    expectedAccount?: { id: string; revision: number },
+  ): Promise<MarketplaceResolvedAccessToken> {
     const account = await this.deps.accountRepo.findByMarketplaceId(marketplaceId);
     if (!account || account.status !== 'connected') {
       throw new InvalidStateError('OLX account is not connected');
@@ -429,7 +442,10 @@ export class MarketplaceOAuthService {
 
     const tokens = this.decryptTokens(account);
     if (tokens.expiresAt.getTime() > this.now().getTime() + REFRESH_SKEW_MS) {
-      return tokens.accessToken;
+      return {
+        accessToken: tokens.accessToken,
+        account: { id: account.id, revision: account.revision },
+      };
     }
 
     const refresh = (lease?: MarketplaceOAuthRefreshLease) =>
@@ -443,7 +459,7 @@ export class MarketplaceOAuthService {
     marketplaceId: string,
     lease?: MarketplaceOAuthRefreshLease,
     expectedAccount?: { id: string; revision: number }
-  ): Promise<string> {
+  ): Promise<MarketplaceResolvedAccessToken> {
     const account = await this.deps.accountRepo.findByMarketplaceId(marketplaceId);
     if (!account || account.status !== 'connected') {
       throw new InvalidStateError('OLX account is not connected');
@@ -456,7 +472,10 @@ export class MarketplaceOAuthService {
     // Another worker may have refreshed while this worker waited for the lock.
     const tokens = this.decryptTokens(account);
     if (tokens.expiresAt.getTime() > this.now().getTime() + REFRESH_SKEW_MS) {
-      return tokens.accessToken;
+      return {
+        accessToken: tokens.accessToken,
+        account: { id: account.id, revision: account.revision },
+      };
     }
     if (!tokens.refreshToken) {
       throw new InvalidStateError('OLX access token expired and no refresh token is available');
@@ -490,7 +509,10 @@ export class MarketplaceOAuthService {
     if (!saved) {
       throw new InvalidStateError('OLX account changed while its access token was refreshing');
     }
-    return refreshed.accessToken;
+    return {
+      accessToken: refreshed.accessToken,
+      account: { id: saved.id, revision: saved.revision },
+    };
   }
 
   private decryptTokens(account: MarketplaceAccountRecord): OlxOAuthTokens {

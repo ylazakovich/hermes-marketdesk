@@ -93,6 +93,7 @@ import {
 // --- Domain: services + ports ---
 import { ProductService } from '../../domain/services/ProductService';
 import { ListingService } from '../../domain/services/ListingService';
+import { InvalidStateError } from '../../domain/shared/DomainError';
 import { HermesDecisionEngine } from '../../domain/services/HermesDecisionEngine';
 import type { IAIProvider } from '../../domain/ports/IAIProvider';
 
@@ -540,6 +541,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
       listings,
       expectedUpdatedAt,
       mismatchCandidates,
+      marketplaceAccount,
       job,
     }) => {
       await withPoolTransaction(pool, async (client) => {
@@ -560,9 +562,18 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           if (!product) throw new Error(`Product not found for synchronized listing: ${productId}`);
         }
         await repositories.listingRepo.saveAllIfUnchanged(listings, expectedUpdatedAt);
+        if (mismatchCandidates.length > 0 && !marketplaceAccount) {
+          throw new InvalidStateError(
+            'Marketplace account binding is required before category reconciliation'
+          );
+        }
         for (const candidate of mismatchCandidates) {
           await marketplaceImportService.recommendSyncedCategoryMismatch(
-            { ...candidate, workspaceId: marketplace.workspaceId },
+            {
+              ...candidate,
+              workspaceId: marketplace.workspaceId,
+              marketplaceAccount: marketplaceAccount!,
+            },
             repositories
           );
         }

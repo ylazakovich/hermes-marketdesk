@@ -27,6 +27,7 @@ import type { MarketplaceHttpClient } from '../../infrastructure/adapters/Market
 import type {
   MarketplaceAccountRecord,
   MarketplaceAccountRepository,
+  MarketplaceResolvedAccessToken,
 } from './MarketplaceOAuthService';
 import type { IdGenerator } from '../ports/IdGenerator';
 import type { ProductCategorySyncService } from './ProductCategorySyncService';
@@ -43,7 +44,7 @@ export interface ImportMarketplaceAdapterResolver {
 }
 
 export interface MarketplaceImportAccessTokenProvider {
-  getValidAccessToken(marketplaceId: string): Promise<string>;
+  getValidAccessTokenContext(marketplaceId: string): Promise<MarketplaceResolvedAccessToken>;
 }
 
 export interface ImportPreviewInput extends ImportDiscoveryOptions {
@@ -171,6 +172,7 @@ export class MarketplaceImportService {
       workspaceId: string;
       currentCategory: ImportedMarketplaceListing['marketplaceCategory'];
       proposedCategory: ImportedMarketplaceListing['marketplaceCategory'];
+      marketplaceAccount: Pick<MarketplaceAccountRecord, 'id' | 'revision'>;
     },
     repositories?: MarketplaceImportRepositories,
   ): Promise<void> {
@@ -179,10 +181,10 @@ export class MarketplaceImportService {
         input.listing.productId,
         input.workspaceId,
       );
-      const account = await this.accountRepo.findByMarketplaceId(input.listing.marketplaceId);
-      if (!account || account.status !== 'connected') {
-        return;
-      }
+      const account = await this.requireExactAccountBinding(
+        input.listing.marketplaceId,
+        input.marketplaceAccount,
+      );
       await this.createCategoryMismatchRecommendation(
         input.listing,
         product,
@@ -245,6 +247,10 @@ export class MarketplaceImportService {
           item.externalListingId
         );
         const saved = await this.unitOfWork(async (repos) => {
+          await this.requireExactAccountBinding(context.value.marketplace.id, {
+            id: context.value.account.id,
+            revision: context.value.account.revision,
+          });
           if (existing) {
             await this.updateExistingListing(
               existing,
@@ -338,14 +344,15 @@ export class MarketplaceImportService {
       return Err(new GuardrailViolationError('Import currently supports OLX only'));
     }
 
-    const account = await this.accountRepo.findByMarketplaceId(marketplace.id);
-    if (!account || account.status !== 'connected') {
+    const initialAccount = await this.accountRepo.findByMarketplaceId(marketplace.id);
+    if (!initialAccount || initialAccount.status !== 'connected') {
       return Err(new GuardrailViolationError('Connected OLX OAuth account is required for import'));
     }
 
-    let accessToken: string;
+    let resolvedToken: MarketplaceResolvedAccessToken;
     try {
-      accessToken = await this.accessTokens.getValidAccessToken(marketplace.id);
+      resolvedToken = await this.accessTokens.getValidAccessTokenContext(marketplace.id);
+      await this.requireExactAccountBinding(marketplace.id, resolvedToken.account);
     } catch (error) {
       return Err(
         new ValidationError(
@@ -355,7 +362,7 @@ export class MarketplaceImportService {
     }
     const adapter = this.adapters.create(
       marketplace.key,
-      this.authenticatedHttpClient(accessToken)
+      this.authenticatedHttpClient(resolvedToken.accessToken)
     );
     let discoveredListings: ImportedMarketplaceListing[];
     try {
@@ -363,6 +370,10 @@ export class MarketplaceImportService {
         pageSize: input.pageSize,
         statuses: input.statuses,
       });
+      // Bind the remote snapshot to the exact account revision whose token read it.
+      // A reconnect, account switch, or second refresh after token resolution makes
+      // the snapshot unsafe for persistence or destructive recommendations.
+      await this.requireExactAccountBinding(marketplace.id, resolvedToken.account);
     } catch (error) {
       return Err(
         new ValidationError(
@@ -370,6 +381,7 @@ export class MarketplaceImportService {
         )
       );
     }
+    const account = await this.requireExactAccountBinding(marketplace.id, resolvedToken.account);
     const { remoteListings, failedItems } = this.normalizeDiscoveredListings(discoveredListings);
     const existingListings = await this.listingRepo.findByMarketplace(marketplace.id);
     const productsByListingId = await this.loadProductsByListingId(
@@ -861,6 +873,20 @@ export class MarketplaceImportService {
         recreateRequiresQuotaGuard: true,
       },
     ));
+  }
+
+  private async requireExactAccountBinding(
+    marketplaceId: string,
+    expected: Pick<MarketplaceAccountRecord, 'id' | 'revision'>,
+  ): Promise<MarketplaceAccountRecord> {
+    const account = await this.accountRepo.findByMarketplaceId(marketplaceId);
+    if (!account || account.status !== 'connected'
+      || account.id !== expected.id || account.revision !== expected.revision) {
+      throw new InvalidStateError(
+        'OLX account changed after token resolution; reconciliation is required'
+      );
+    }
+    return account;
   }
 
   private importedCondition(_remote: ImportedMarketplaceListing): ProductCondition {
