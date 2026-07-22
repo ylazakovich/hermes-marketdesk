@@ -249,7 +249,7 @@ export class SyncMarketplaceHandler {
       const statusEvent = this.reconcileStatus(listing, s);
       if (statusEvent) statusEvents.push(statusEvent);
       if (s.messageMetricStatus === 'error') {
-        const messageMetricNote = 'Message metric is stale: provider statistics request failed';
+        const messageMetricNote = 'Message metric is stale: thread metadata request failed';
         listing.recordSyncStatusNote(
           listing.syncError ? `${listing.syncError}; ${messageMetricNote}` : messageMetricNote,
         );

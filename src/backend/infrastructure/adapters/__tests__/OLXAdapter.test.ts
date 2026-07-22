@@ -274,6 +274,42 @@ describe('OLXAdapter', () => {
     expect(threadOffsets).toEqual([0, 100, 0]);
   });
 
+  it('marks messages stale when the thread metadata collection is malformed', async () => {
+    const http = mockClient((config) => config.url.endsWith('/threads')
+      ? { status: 200, data: { data: {} } }
+      : { status: 200, data: { data: { id: 42, status: 'active' } } });
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    await expect(adapter.fetchListing('42')).resolves.toMatchObject({
+      messages: undefined,
+      messageMetricStatus: 'error',
+    });
+  });
+
+  it('fails closed after the bounded thread metadata pagination limit', async () => {
+    let threadRequests = 0;
+    const http = mockClient((config) => {
+      if (config.url.endsWith('/threads')) {
+        threadRequests += 1;
+        return {
+          status: 200,
+          data: {
+            data: [{ advert_id: 42, total_count: 1 }],
+            links: { next: 'next' },
+          },
+        };
+      }
+      return { status: 200, data: { data: { id: 42, status: 'active' } } };
+    });
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    await expect(adapter.fetchListing('42')).resolves.toMatchObject({
+      messages: undefined,
+      messageMetricStatus: 'error',
+    });
+    expect(threadRequests).toBe(1_000);
+  });
+
   it('marks messages stale when the thread metadata request fails', async () => {
     const http = mockClient((config) => {
       if (config.url.endsWith('/threads')) throw new HttpError(503, 'threads unavailable');
