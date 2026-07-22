@@ -23,6 +23,7 @@ import {
   NotFoundError,
   ServiceUnavailableError,
   InvalidStateError,
+  ReconciliationRequiredError,
 } from '../../../domain/shared/DomainError';
 import type { MarketplaceHttpClient } from '../../adapters/MarketplaceHttpClient';
 import { unwrap, money } from '../../../domain/testkit/support';
@@ -504,7 +505,7 @@ describe('SyncMarketplaceHandler', () => {
       getValidAccessTokenContext: jest
         .fn()
         .mockResolvedValueOnce({ accessToken: 'fresh-token', account: { id: 'acc-stale', revision: 1 } })
-        .mockRejectedValueOnce(new InvalidStateError('OLX account changed after the operation was reviewed')),
+        .mockRejectedValueOnce(new ReconciliationRequiredError('OLX account changed after the operation was reviewed')),
     };
     const recommend = jest.fn(async () => undefined);
     const listingStore = {
@@ -529,7 +530,7 @@ describe('SyncMarketplaceHandler', () => {
       marketplaceKey: 'olx',
       marketplaceId: 'm-stale',
       externalListingIds: ['ext-stale'],
-    })).rejects.toThrow('OLX account changed after the operation was reviewed');
+    })).rejects.toThrow(ReconciliationRequiredError);
 
     expect(tokenProvider.getValidAccessTokenContext).toHaveBeenCalledTimes(2);
     expect(tokenProvider.getValidAccessTokenContext).toHaveBeenCalledWith('m-stale', { id: 'acc-stale', revision: 1 });
