@@ -25,6 +25,7 @@ import type {
 } from '../../domain/services/MarketplaceAdapter';
 import type { MarketplaceHttpClient } from '../../infrastructure/adapters/MarketplaceHttpClient';
 import type {
+  MarketplaceAccountRecord,
   MarketplaceAccountRepository,
   MarketplaceResolvedAccessToken,
 } from './MarketplaceOAuthService';
