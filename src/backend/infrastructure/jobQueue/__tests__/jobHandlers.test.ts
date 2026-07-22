@@ -933,7 +933,7 @@ describe('SyncMarketplaceHandler', () => {
     expect(listing.views).toBe(11);
     expect(listing.messages).toBe(1);
     expect(listing.syncError).toBe(
-      'Remote status observed: pending; Message metric is stale: thread metadata request failed',
+      'Remote status observed: pending; Message metric is stale: thread metadata could not be processed',
     );
     expect(listing.lastSyncAt).not.toBeNull();
   });
