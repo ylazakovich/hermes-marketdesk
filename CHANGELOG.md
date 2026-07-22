@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.17.0](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.16.0...marketdesk-v0.17.0) (2026-07-22)
+
+
+### ✨ Features
+
+* **analytics:** restore historical reporting ([#247](https://github.com/ylazakovich/marketdesk/issues/247)) ([36915a5](https://github.com/ylazakovich/marketdesk/commit/36915a5e4a4a15098052f0786d6af8caa339de28))
+* **listings:** add safe delist-to-draft workflow ([#238](https://github.com/ylazakovich/marketdesk/issues/238)) ([57569be](https://github.com/ylazakovich/marketdesk/commit/57569beb72ee33178a592d3c68d1082f1dc7356d))
+* **products:** add on-demand publication recheck ([#246](https://github.com/ylazakovich/marketdesk/issues/246)) ([446337b](https://github.com/ylazakovich/marketdesk/commit/446337bfb65abce9c452fe2c9834aa650937b748))
+
+
+### 🐛 Bug Fixes
+
+* **marketplace:** fence imports to token account revision ([#243](https://github.com/ylazakovich/marketdesk/issues/243)) ([eb5a3b5](https://github.com/ylazakovich/marketdesk/commit/eb5a3b578ad9d3a3736314e78097eb07f89c989b))
+
+
+### 🧹 Chores
+
+* **deps:** update @swc/core to v1.15.46 ([#245](https://github.com/ylazakovich/marketdesk/issues/245)) ([6f0f962](https://github.com/ylazakovich/marketdesk/commit/6f0f9624eee26bb3ccfd3f4e910c8d1d9eac86ee))
+* **deps:** update express-rate-limit to v8.6.0 ([#242](https://github.com/ylazakovich/marketdesk/issues/242)) ([15790a0](https://github.com/ylazakovich/marketdesk/commit/15790a0f25b14ce27bf2b5c563b89b301fbc263c))
+* **deps:** update minor and patch updates ([#244](https://github.com/ylazakovich/marketdesk/issues/244)) ([5ebb1c1](https://github.com/ylazakovich/marketdesk/commit/5ebb1c172c02b6fbbf3d717ace0c55897434ea07))
+* **deps:** update vite to v8.1.5 ([#241](https://github.com/ylazakovich/marketdesk/issues/241)) ([27daf02](https://github.com/ylazakovich/marketdesk/commit/27daf027e9368120163131bae6149417592e4977))
+
 ## [0.16.0](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.15.0...marketdesk-v0.16.0) (2026-07-18)
 
 
