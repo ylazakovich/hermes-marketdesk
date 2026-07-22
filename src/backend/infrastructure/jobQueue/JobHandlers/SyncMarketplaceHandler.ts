@@ -44,6 +44,14 @@ export interface MarketplaceSyncStore {
   save(marketplace: Marketplace): Promise<void>;
 }
 
+export interface PendingAnalyticsEvent {
+  listing: Listing;
+  eventType: 'view' | 'message' | 'sale';
+  quantity: number;
+  idempotencyKey: string;
+  occurredAt: Date;
+}
+
 export interface SyncMarketplaceHandlerDeps {
   listingStore?: SyncListingStore;
   marketplaceStore?: MarketplaceSyncStore;
@@ -77,6 +85,7 @@ export interface SyncMarketplaceHandlerDeps {
       proposedCategory: MarketplaceCategoryMetadata | null;
     }>;
     marketplaceAccount: { id: string; revision: number } | null;
+    analyticsEvents: PendingAnalyticsEvent[];
     job: SyncMarketplaceJobData;
   }) => Promise<void>;
 }
@@ -196,10 +205,7 @@ export class SyncMarketplaceHandler {
       proposedCategory: MarketplaceCategoryMetadata | null;
     }> = [];
     const statusEvents: DomainEvent[] = [];
-    const analyticsEvents: Array<{
-      listing: Listing; eventType: 'view' | 'message' | 'sale'; quantity: number;
-      idempotencyKey: string; occurredAt: Date;
-    }> = [];
+    const analyticsEvents: PendingAnalyticsEvent[] = [];
     const occurredAt = new Date();
     for (const s of synced) {
       const listing = byExternalId.get(s.externalListingId);
@@ -261,9 +267,6 @@ export class SyncMarketplaceHandler {
     }
 
     if (updated.length > 0) {
-      if (marketplace && analyticsEvents.length > 0) {
-        await this.deps.recordAnalyticsEvents?.({ workspaceId: marketplace.workspaceId, events: analyticsEvents });
-      }
       if (marketplace && this.deps.persistAndReconcileProductCategories) {
         await this.deps.persistAndReconcileProductCategories({
           marketplace,
@@ -271,10 +274,20 @@ export class SyncMarketplaceHandler {
           expectedUpdatedAt,
           mismatchCandidates,
           marketplaceAccount: reconciliationAccount,
+          analyticsEvents,
           job: data,
         });
       } else {
         await store.saveAll(updated);
+        // Custom/non-PostgreSQL stores cannot share the production transaction.
+        // Append after the durable listing checkpoint so a failed save cannot
+        // overcount the same remote delta on retry.
+        if (marketplace && analyticsEvents.length > 0) {
+          await this.deps.recordAnalyticsEvents?.({
+            workspaceId: marketplace.workspaceId,
+            events: analyticsEvents,
+          });
+        }
         if (marketplace && this.deps.recommendCategoryMismatch) {
           if (!reconciliationAccount) {
             throw new InvalidStateError(

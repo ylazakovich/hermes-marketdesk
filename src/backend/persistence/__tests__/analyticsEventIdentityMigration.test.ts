@@ -1,0 +1,30 @@
+import fs from 'fs';
+import path from 'path';
+import { concurrentIndexIdentity } from '../migrationSql';
+
+const migrationsDir = path.join(process.cwd(), 'src/backend/persistence/migrations');
+const read = (name: string) => fs.readFileSync(path.join(migrationsDir, name), 'utf8');
+
+describe('analytics event identity migrations', () => {
+  it('stages constraints, batched backfill, validation and online indexing', () => {
+    const prepare = read('033_analytics_event_identity.sql');
+    const procedure = read('034_prepare_analytics_event_backfill.sql');
+    const run = read('035_run_analytics_event_backfill.sql');
+    const validate = read('036_validate_analytics_event_identity.sql');
+    const index = read('037_index_analytics_event_identity.sql');
+
+    expect(prepare).toMatch(/FOREIGN KEY \(marketplace_id\)[\s\S]*NOT VALID/);
+    expect(prepare).toMatch(/CHECK \(quantity IS NOT NULL\)[\s\S]*NOT VALID/);
+    expect(prepare).not.toMatch(/SET NOT NULL/);
+    expect(procedure).toMatch(/LIMIT batch_size/);
+    expect(procedure).toMatch(/SKIP LOCKED/);
+    expect(procedure).toMatch(/COMMIT;/);
+    expect(run.trim()).toMatch(/^--[\s\S]*CALL marketdesk_backfill_analytics_event_identity\(1000\);$/);
+    expect(validate).toMatch(/VALIDATE CONSTRAINT analytics_events_marketplace_id_fkey/);
+    expect(validate).toMatch(/VALIDATE CONSTRAINT analytics_events_quantity_not_null/);
+    expect(validate).toMatch(/ALTER COLUMN quantity SET NOT NULL/);
+    expect(concurrentIndexIdentity(index)).toEqual({
+      name: 'idx_analytics_workspace_marketplace_date',
+    });
+  });
+});

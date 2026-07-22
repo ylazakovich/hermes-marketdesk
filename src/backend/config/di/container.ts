@@ -545,26 +545,6 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
   const syncHandler = new SyncMarketplaceHandler(adapterFactory, {
     listingStore: listingRepo,
     marketplaceStore: marketplaceRepo,
-    recordAnalyticsEvents: async ({ workspaceId, events }) => {
-      const records = await Promise.all(events.map(async (event) => {
-        const product = event.eventType === 'sale'
-          ? await productRepo.findByIdForWorkspace(event.listing.productId, workspaceId)
-          : null;
-        return {
-          idempotencyKey: `${workspaceId}:${event.idempotencyKey}`,
-          workspaceId,
-          listingId: event.listing.id,
-          marketplaceId: event.listing.marketplaceId,
-          eventType: event.eventType,
-          quantity: event.quantity,
-          amount: event.eventType === 'sale' ? event.listing.price.amount * event.quantity : null,
-          costAtSale: event.eventType === 'sale' && product?.costPrice ? product.costPrice.amount : null,
-          currency: event.eventType === 'sale' ? event.listing.price.currency : null,
-          occurredAt: event.occurredAt,
-        };
-      }));
-      await analyticsEventRepo.appendMany(records);
-    },
     accessTokens: env.marketplaces.olx.adapterMode === 'real' ? marketplaceOAuthService : undefined,
     authenticatedHttpClient:
       env.marketplaces.olx.adapterMode === 'real'
@@ -584,6 +564,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
       expectedUpdatedAt,
       mismatchCandidates,
       marketplaceAccount,
+      analyticsEvents,
       job,
     }) => {
       await withPoolTransaction(pool, async (client) => {
@@ -595,6 +576,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           eventRepo: new EventRepository(pool, client),
           correctionOperations: new CategoryCorrectionOperationRepository(pool, client),
           accountRepo: new MarketplaceAccountRepository(pool, client),
+          analyticsEvents: new AnalyticsEventRepository(pool, client),
         };
         const productIds = [...new Set(listings.map((listing) => listing.productId))].sort();
         for (const productId of productIds) {
@@ -610,6 +592,31 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
             'Marketplace account binding is required before category reconciliation'
           );
         }
+        const analyticsRecords = await Promise.all(analyticsEvents.map(async (event) => {
+          const product = event.eventType === 'sale'
+            ? await repositories.productRepo.findByIdForWorkspace(
+                event.listing.productId,
+                marketplace.workspaceId,
+              )
+            : null;
+          return {
+            idempotencyKey: `${marketplace.workspaceId}:${event.idempotencyKey}`,
+            workspaceId: marketplace.workspaceId,
+            listingId: event.listing.id,
+            marketplaceId: event.listing.marketplaceId,
+            eventType: event.eventType,
+            quantity: event.quantity,
+            amount: event.eventType === 'sale'
+              ? event.listing.price.amount * event.quantity
+              : null,
+            costAtSale: event.eventType === 'sale' && product?.costPrice
+              ? product.costPrice.amount
+              : null,
+            currency: event.eventType === 'sale' ? event.listing.price.currency : null,
+            occurredAt: event.occurredAt,
+          };
+        }));
+        await repositories.analyticsEvents.appendMany(analyticsRecords);
         for (const candidate of mismatchCandidates) {
           await marketplaceImportService.recommendSyncedCategoryMismatch(
             {
