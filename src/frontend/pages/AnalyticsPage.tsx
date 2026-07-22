@@ -139,7 +139,10 @@ const AnalyticsPage: React.FC = () => {
       <Stack direction={{ xs: 'column', lg: 'row' }} justifyContent="space-between" spacing={2} sx={{ mb: 2.5 }}>
         <Stack direction="row" spacing={1} alignItems="flex-start">
           <Button startIcon={<DownloadIcon />} variant="outlined" disabled={!rows.length} onClick={downloadCsv}>Export CSV</Button>
-          <Button startIcon={<ImageIcon />} variant="outlined" disabled title="PNG export is staged until chart canvas rendering is available">Export PNG</Button>
+          <span><Button startIcon={<ImageIcon />} variant="outlined" disabled aria-describedby="analytics-png-status">Export PNG</Button></span>
+          <Typography id="analytics-png-status" variant="caption" color="text.secondary" sx={{ maxWidth: 180 }}>
+            PNG export is staged until accessible chart rendering is available.
+          </Typography>
         </Stack>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           <FormControl size="small" sx={{ minWidth: 180 }}>

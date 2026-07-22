@@ -114,12 +114,16 @@ export class AnalyticsApplicationService {
   }
 
   async getDashboardMetrics(workspaceId: string, range?: AnalyticsRange): Promise<DashboardMetrics> {
-    const [products, allListings] = await Promise.all([
+    const [allProducts, allListings] = await Promise.all([
       this.productRepo.findByWorkspace(workspaceId), this.listingRepo.findByWorkspace(workspaceId),
     ]);
     const listings = range?.marketplaceId
       ? allListings.filter((listing) => listing.marketplaceId === range.marketplaceId)
       : allListings;
+    const filteredProductIds = new Set(listings.map((listing) => listing.productId));
+    const products = range?.marketplaceId
+      ? allProducts.filter((product) => filteredProductIds.has(product.id))
+      : allProducts;
     const productsByStatus: Record<ProductStatus, number> = { draft: 0, active: 0, attention: 0, sold: 0 };
     let inventoryValue = 0;
     for (const product of products) {
@@ -183,7 +187,10 @@ export class AnalyticsApplicationService {
       date, revenue: metrics.revenue, profit: metrics.profit,
       previous: index === 0 ? previousRevenue : null,
     }));
-    return { series, currency: current.some((event) => event.eventType === 'sale' && event.amount !== null) ? 'PLN' : null };
+    const saleCurrencies = new Set(current
+      .filter((event) => event.eventType === 'sale' && event.amount !== null && event.currency)
+      .map((event) => event.currency as string));
+    return { series, currency: saleCurrencies.size === 1 ? [...saleCurrencies][0] : null };
   }
 
   async getListingPerformance(workspaceId: string, range?: AnalyticsRange): Promise<ListingPerformance[]> {

@@ -14,6 +14,7 @@ interface AnalyticsEventRow {
   workspace_id: string;
   listing_id: string | null;
   marketplace_id: string | null;
+  currency: string | null;
   event_type: string;
   quantity: number | string | null;
   amount: number | string | null;
@@ -36,11 +37,12 @@ export class AnalyticsEventRepository implements IAnalyticsEventRepository {
   async findByRange(input: AnalyticsEventQuery): Promise<AnalyticsEventRecord[]> {
     const values: unknown[] = [input.workspaceId, input.from, input.to];
     const marketplaceClause = input.marketplaceId
-      ? ` AND l.marketplace_id = $${values.push(input.marketplaceId)}`
+      ? ` AND COALESCE(e.marketplace_id, l.marketplace_id) = $${values.push(input.marketplaceId)}`
       : '';
     const sql = `
-      SELECT e.id, e.workspace_id, e.listing_id, l.marketplace_id,
-             e.event_type, e.quantity, e.amount, e.cost_at_sale, e.occurred_at
+      SELECT e.id, e.workspace_id, e.listing_id,
+             COALESCE(e.marketplace_id, l.marketplace_id) AS marketplace_id,
+             e.event_type, e.quantity, e.amount, e.cost_at_sale, e.currency, e.occurred_at
       FROM analytics_events e
       LEFT JOIN listings l ON l.id = e.listing_id
       WHERE e.workspace_id = $1
@@ -57,6 +59,7 @@ export class AnalyticsEventRepository implements IAnalyticsEventRepository {
       workspaceId: row.workspace_id,
       listingId: row.listing_id,
       marketplaceId: row.marketplace_id,
+      currency: row.currency,
       eventType: row.event_type as AnalyticsEventType,
       quantity: Number(row.quantity ?? 1),
       amount: row.amount === null ? null : Number(row.amount),
@@ -72,11 +75,11 @@ export class AnalyticsEventRepository implements IAnalyticsEventRepository {
       const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
       await this.run(
         `INSERT INTO analytics_events
-          (id, workspace_id, listing_id, event_type, quantity, amount, cost_at_sale, occurred_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          (id, workspace_id, listing_id, marketplace_id, event_type, quantity, amount, cost_at_sale, currency, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (id) DO NOTHING`,
-        [id, event.workspaceId, event.listingId, event.eventType, event.quantity,
-          event.amount, event.costAtSale, event.occurredAt],
+        [id, event.workspaceId, event.listingId, event.marketplaceId, event.eventType, event.quantity,
+          event.amount, event.costAtSale, event.currency, event.occurredAt],
       );
     }
   }

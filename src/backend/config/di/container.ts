@@ -554,10 +554,12 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           idempotencyKey: `${workspaceId}:${event.idempotencyKey}`,
           workspaceId,
           listingId: event.listing.id,
+          marketplaceId: event.listing.marketplaceId,
           eventType: event.eventType,
           quantity: event.quantity,
           amount: event.eventType === 'sale' ? event.listing.price.amount * event.quantity : null,
           costAtSale: event.eventType === 'sale' && product?.costPrice ? product.costPrice.amount : null,
+          currency: event.eventType === 'sale' ? event.listing.price.currency : null,
           occurredAt: event.occurredAt,
         };
       }));

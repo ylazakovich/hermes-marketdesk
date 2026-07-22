@@ -5,6 +5,7 @@ export interface AnalyticsEventRecord {
   workspaceId: string;
   listingId: string | null;
   marketplaceId: string | null;
+  currency: string | null;
   eventType: AnalyticsEventType;
   quantity: number;
   amount: number | null;
@@ -23,10 +24,12 @@ export interface AppendAnalyticsEvent {
   idempotencyKey: string;
   workspaceId: string;
   listingId: string;
+  marketplaceId: string;
   eventType: AnalyticsEventType;
   quantity: number;
   amount: number | null;
   costAtSale: number | null;
+  currency: string | null;
   occurredAt: Date;
 }
 

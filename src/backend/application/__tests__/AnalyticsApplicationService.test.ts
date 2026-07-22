@@ -96,12 +96,29 @@ describe('AnalyticsApplicationService', () => {
     marketplaceRepo.items.set(marketplace.id, marketplace);
     listingRepo.items.set(listing.id, listing);
     listingRepo.listingWorkspaces.set(listing.id, 'ws-1');
+    const otherProduct = unwrap(Product.create({
+      id: 'product-2', workspaceId: 'ws-1', sku: 'SKU-2', name: 'Laptop',
+      description: 'Laptop with complete details and accessories', costPrice: money(500),
+      sellingPrice: money(800), condition: 'good', category: 'laptops',
+    }));
+    const otherMarketplace = unwrap(Marketplace.create({
+      id: 'marketplace-2', workspaceId: 'ws-1', key: 'ebay', name: 'eBay', connected: true,
+    }));
+    const otherListing = unwrap(Listing.create({
+      id: 'listing-2', productId: otherProduct.id, marketplaceId: otherMarketplace.id,
+      price: money(800), status: 'live',
+    }));
+    productRepo.items.set(otherProduct.id, otherProduct);
+    marketplaceRepo.items.set(otherMarketplace.id, otherMarketplace);
+    listingRepo.items.set(otherListing.id, otherListing);
+    listingRepo.listingWorkspaces.set(otherListing.id, 'ws-1');
     const event = (
       id: string, eventType: AnalyticsEventRecord['eventType'], occurredAt: string,
       quantity: number, amount: number | null = null, costAtSale: number | null = null,
       marketplaceId = marketplace.id,
     ): AnalyticsEventRecord => ({
       id, workspaceId: 'ws-1', listingId: listing.id, marketplaceId,
+      currency: eventType === 'sale' ? 'PLN' : null,
       eventType, occurredAt: new Date(occurredAt), quantity, amount, costAtSale,
     });
     const events = [
@@ -126,6 +143,7 @@ describe('AnalyticsApplicationService', () => {
 
     const overview = await service.getDashboardMetrics('ws-1', range);
     expect(overview).toMatchObject({
+      productCount: 1, listingCount: 1, inventoryValue: 120,
       revenue: 200, profit: 100, totalViews: 100, sales: 2, conversion: 2,
       previous: { revenue: 100, profit: 60, totalViews: 50, sales: 1, conversion: 2 },
     });
