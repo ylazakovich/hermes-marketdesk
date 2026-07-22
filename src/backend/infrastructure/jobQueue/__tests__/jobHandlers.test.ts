@@ -448,6 +448,95 @@ describe('SyncMarketplaceHandler', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  it('rechecks exact OLX account binding before mismatch recommendation', async () => {
+    const projectorCategory = {
+      providerCategoryId: '100',
+      source: 'provider_taxonomy',
+      name: 'Projectors',
+      path: ['Electronics', 'Video'],
+      confidence: 0.99,
+      isLeaf: true,
+      taxonomyVerifiedAt: '2026-07-21T00:00:00.000Z',
+      taxonomyStaleAt: '2026-07-22T00:00:00.000Z',
+    };
+    const headphonesCategory = {
+      providerCategoryId: '200',
+      source: 'provider_taxonomy',
+      name: 'Headphones',
+      path: ['Electronics', 'Audio'],
+      confidence: 0.99,
+      isLeaf: true,
+      taxonomyVerifiedAt: '2026-07-21T00:00:00.000Z',
+      taxonomyStaleAt: '2026-07-22T00:00:00.000Z',
+    };
+    const synced: SyncedListing[] = [{
+      externalListingId: 'ext-stale',
+      status: 'live',
+      remoteStatus: 'active',
+      marketplaceCategory: projectorCategory,
+      views: 10,
+      watchers: 0,
+      messages: 1,
+    }];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const { resolver } = resolverFor(adapter);
+    const marketplace = unwrap(
+      Marketplace.create({
+        id: 'm-stale',
+        workspaceId: 'w-stale',
+        key: 'olx',
+        name: 'OLX',
+      })
+    );
+    const listing = unwrap(
+      Listing.create({
+        id: 'l-stale',
+        productId: 'p-stale',
+        marketplaceId: 'm-stale',
+        price: money(50),
+        status: 'live',
+        marketplaceListingId: 'ext-stale',
+        marketplaceCategory: headphonesCategory,
+        publishedAt: new Date(),
+      })
+    );
+    const tokenProvider = {
+      getValidAccessTokenContext: jest
+        .fn()
+        .mockResolvedValueOnce({ accessToken: 'fresh-token', account: { id: 'acc-stale', revision: 1 } })
+        .mockRejectedValueOnce(new InvalidStateError('OLX account changed after the operation was reviewed')),
+    };
+    const recommend = jest.fn(async () => undefined);
+    const listingStore = {
+      findByMarketplace: jest.fn(async () => [listing]),
+      saveAll: jest.fn(async () => undefined),
+    };
+    const handler = new SyncMarketplaceHandler(
+      resolver,
+      {
+        listingStore,
+        marketplaceStore: {
+          findById: jest.fn(async () => marketplace),
+          save: jest.fn(async () => undefined),
+        },
+        accessTokens: tokenProvider,
+        authenticatedHttpClient: () => ({ request: jest.fn() }),
+        recommendCategoryMismatch: recommend,
+      },
+    );
+
+    await expect(handler.handle({
+      marketplaceKey: 'olx',
+      marketplaceId: 'm-stale',
+      externalListingIds: ['ext-stale'],
+    })).rejects.toThrow('OLX account changed after the operation was reviewed');
+
+    expect(tokenProvider.getValidAccessTokenContext).toHaveBeenCalledTimes(2);
+    expect(tokenProvider.getValidAccessTokenContext).toHaveBeenCalledWith('m-stale', { id: 'acc-stale', revision: 1 });
+    expect(recommend).not.toHaveBeenCalled();
+    expect(listingStore.saveAll).not.toHaveBeenCalled();
+  });
+
   it('fails closed when the job provider key differs from the persisted marketplace', async () => {
     const adapter = fakeAdapter();
     const { resolver } = resolverFor(adapter);

@@ -23,7 +23,10 @@ export interface MarketplaceAdapterResolver {
 }
 
 export interface SyncMarketplaceAccessTokenProvider {
-  getValidAccessTokenContext(marketplaceId: string): Promise<{
+  getValidAccessTokenContext(
+    marketplaceId: string,
+    expectedAccount?: { id: string; revision: number },
+  ): Promise<{
     accessToken: string;
     account: { id: string; revision: number };
   }>;
@@ -214,6 +217,15 @@ export class SyncMarketplaceHandler {
       updated.push(listing);
     }
 
+    let reconciliationAccount: { id: string; revision: number } | null = marketplaceAccount;
+    if (marketplace && mismatchCandidates.length > 0 && this.deps.accessTokens) {
+      const resolved = await this.deps.accessTokens.getValidAccessTokenContext(
+        marketplace.id,
+        marketplaceAccount ?? undefined,
+      );
+      reconciliationAccount = resolved.account;
+    }
+
     if (updated.length > 0) {
       if (marketplace && this.deps.persistAndReconcileProductCategories) {
         await this.deps.persistAndReconcileProductCategories({
@@ -221,13 +233,13 @@ export class SyncMarketplaceHandler {
           listings: updated,
           expectedUpdatedAt,
           mismatchCandidates,
-          marketplaceAccount,
+          marketplaceAccount: reconciliationAccount,
           job: data,
         });
       } else {
         await store.saveAll(updated);
         if (marketplace && this.deps.recommendCategoryMismatch) {
-          if (!marketplaceAccount) {
+          if (!reconciliationAccount) {
             throw new InvalidStateError(
               'Marketplace account binding is required before category reconciliation'
             );
@@ -236,7 +248,7 @@ export class SyncMarketplaceHandler {
             await this.deps.recommendCategoryMismatch({
               ...candidate,
               workspaceId: marketplace.workspaceId,
-              marketplaceAccount,
+              marketplaceAccount: reconciliationAccount,
             });
           }
         }

@@ -36,6 +36,7 @@ import {
   GuardrailViolationError,
   InvalidStateError,
   NotFoundError,
+  ReconciliationRequiredError,
   ValidationError,
 } from '../../domain/shared/DomainError';
 
@@ -96,6 +97,9 @@ export interface MarketplaceImportRepositories {
   activityLog?: IActivityLogRepository;
   eventRepo: IEventRepository;
   correctionOperations: ICategoryCorrectionOperationRepository;
+  accountRepo: MarketplaceAccountRepository & {
+    findByMarketplaceIdForUpdate(marketplaceId: string): Promise<MarketplaceAccountRecord | null>;
+  };
 }
 
 export type MarketplaceImportUnitOfWork = <T>(
@@ -181,9 +185,10 @@ export class MarketplaceImportService {
         input.listing.productId,
         input.workspaceId,
       );
-      const account = await this.requireExactAccountBinding(
+      const account = await this.requireExactAccountBindingForUpdate(
         input.listing.marketplaceId,
         input.marketplaceAccount,
+        repos.accountRepo,
       );
       await this.createCategoryMismatchRecommendation(
         input.listing,
@@ -247,10 +252,14 @@ export class MarketplaceImportService {
           item.externalListingId
         );
         const saved = await this.unitOfWork(async (repos) => {
-          await this.requireExactAccountBinding(context.value.marketplace.id, {
-            id: context.value.account.id,
-            revision: context.value.account.revision,
-          });
+          await this.requireExactAccountBindingForUpdate(
+            context.value.marketplace.id,
+            {
+              id: context.value.account.id,
+              revision: context.value.account.revision,
+            },
+            repos.accountRepo,
+          );
           if (existing) {
             await this.updateExistingListing(
               existing,
@@ -313,11 +322,16 @@ export class MarketplaceImportService {
           listingId: saved.listingId,
         });
       } catch (error) {
+        if (error instanceof ReconciliationRequiredError) return Err(error);
+        const reason = error instanceof Error ? error.message : 'unknown import error';
         results.push({
           externalListingId: item.externalListingId,
           status: 'failed',
-          reason: error instanceof Error ? error.message : 'unknown import error',
+          reason,
         });
+        if (reason.includes('reconciliation is required')) {
+          break;
+        }
       }
     }
 
@@ -354,6 +368,7 @@ export class MarketplaceImportService {
       resolvedToken = await this.accessTokens.getValidAccessTokenContext(marketplace.id);
       await this.requireExactAccountBinding(marketplace.id, resolvedToken.account);
     } catch (error) {
+      if (error instanceof ReconciliationRequiredError) return Err(error);
       return Err(
         new ValidationError(
           error instanceof Error ? error.message : 'Failed to prepare OLX access token'
@@ -365,6 +380,7 @@ export class MarketplaceImportService {
       this.authenticatedHttpClient(resolvedToken.accessToken)
     );
     let discoveredListings: ImportedMarketplaceListing[];
+    let account: MarketplaceAccountRecord;
     try {
       discoveredListings = await adapter.listOwnedListings({
         pageSize: input.pageSize,
@@ -373,15 +389,15 @@ export class MarketplaceImportService {
       // Bind the remote snapshot to the exact account revision whose token read it.
       // A reconnect, account switch, or second refresh after token resolution makes
       // the snapshot unsafe for persistence or destructive recommendations.
-      await this.requireExactAccountBinding(marketplace.id, resolvedToken.account);
+      account = await this.requireExactAccountBinding(marketplace.id, resolvedToken.account);
     } catch (error) {
+      if (error instanceof ReconciliationRequiredError) return Err(error);
       return Err(
         new ValidationError(
           error instanceof Error ? error.message : 'Failed to discover owned adverts'
         )
       );
     }
-    const account = await this.requireExactAccountBinding(marketplace.id, resolvedToken.account);
     const { remoteListings, failedItems } = this.normalizeDiscoveredListings(discoveredListings);
     const existingListings = await this.listingRepo.findByMarketplace(marketplace.id);
     const productsByListingId = await this.loadProductsByListingId(
@@ -791,9 +807,15 @@ export class MarketplaceImportService {
     transactionCorrectionOperations: ICategoryCorrectionOperationRepository,
   ): Promise<void> {
     if (!product || listing.status !== 'live' || !currentCategory) return;
+    const account = await this.requireExactAccountBinding(listing.marketplaceId, {
+      id: marketplaceAccountId,
+      revision: marketplaceAccountRevision,
+    });
     const currentDecision = evaluateOlxCategory(product, currentCategory);
     const proposedDecision = proposedCategory ? evaluateOlxCategory(product, proposedCategory) : null;
     if (currentDecision.reason !== 'semantic_mismatch') return;
+    const usableMarketplaceAccountId = account.id;
+    const usableMarketplaceAccountRevision = account.revision;
     const usableProposedCategory: NonNullable<ImportedMarketplaceListing['marketplaceCategory']> | null =
       proposedDecision?.allowed ? (proposedCategory ?? null) : null;
     const eventId = this.idGenerator();
@@ -844,8 +866,8 @@ export class MarketplaceImportService {
             externalListingId: listing.marketplaceListingId,
             externalUrl: listing.externalUrl,
             requestedListingUpdatedAt: listing.updatedAt.toISOString(),
-            marketplaceAccountId,
-            marketplaceAccountRevision,
+            marketplaceAccountId: usableMarketplaceAccountId,
+            marketplaceAccountRevision: usableMarketplaceAccountRevision,
           }, requestedAt,
           approvedAt: null, executedAt: null, failedAt: null, updatedAt: requestedAt,
         },
@@ -880,9 +902,25 @@ export class MarketplaceImportService {
     expected: Pick<MarketplaceAccountRecord, 'id' | 'revision'>,
   ): Promise<MarketplaceAccountRecord> {
     const account = await this.accountRepo.findByMarketplaceId(marketplaceId);
+    return this.assertExactAccountBinding(account, expected);
+  }
+
+  private async requireExactAccountBindingForUpdate(
+    marketplaceId: string,
+    expected: Pick<MarketplaceAccountRecord, 'id' | 'revision'>,
+    accountRepo: MarketplaceImportRepositories['accountRepo'],
+  ): Promise<MarketplaceAccountRecord> {
+    const account = await accountRepo.findByMarketplaceIdForUpdate(marketplaceId);
+    return this.assertExactAccountBinding(account, expected);
+  }
+
+  private assertExactAccountBinding(
+    account: MarketplaceAccountRecord | null,
+    expected: Pick<MarketplaceAccountRecord, 'id' | 'revision'>,
+  ): MarketplaceAccountRecord {
     if (!account || account.status !== 'connected'
       || account.id !== expected.id || account.revision !== expected.revision) {
-      throw new InvalidStateError(
+      throw new ReconciliationRequiredError(
         'OLX account changed after token resolution; reconciliation is required'
       );
     }

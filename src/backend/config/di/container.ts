@@ -489,6 +489,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           activityLog: new ActivityLogRepository(pool, client),
           eventRepo: new EventRepository(pool, client),
           correctionOperations: new CategoryCorrectionOperationRepository(pool, client),
+          accountRepo: new MarketplaceAccountRepository(pool, client),
         })
       ),
     eventRepo,
@@ -552,6 +553,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           activityLog: new ActivityLogRepository(pool, client),
           eventRepo: new EventRepository(pool, client),
           correctionOperations: new CategoryCorrectionOperationRepository(pool, client),
+          accountRepo: new MarketplaceAccountRepository(pool, client),
         };
         const productIds = [...new Set(listings.map((listing) => listing.productId))].sort();
         for (const productId of productIds) {

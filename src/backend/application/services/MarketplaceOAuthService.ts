@@ -4,6 +4,7 @@ import {
   ConfigurationError,
   InvalidStateError,
   NotFoundError,
+  ReconciliationRequiredError,
   ServiceUnavailableError,
   ValidationError,
 } from '../../domain/shared/DomainError';
@@ -36,6 +37,7 @@ export type MarketplaceAccountWrite = Omit<
 
 export interface MarketplaceAccountRepository {
   findByMarketplaceId(marketplaceId: string): Promise<MarketplaceAccountRecord | null>;
+  findByMarketplaceIdForUpdate?(marketplaceId: string): Promise<MarketplaceAccountRecord | null>;
   upsert(account: MarketplaceAccountWrite): Promise<MarketplaceAccountRecord>;
   updateConnectedIfUnchanged(
     account: MarketplaceAccountWrite,
@@ -437,7 +439,7 @@ export class MarketplaceOAuthService {
     }
     if (expectedAccount
       && (account.id !== expectedAccount.id || account.revision !== expectedAccount.revision)) {
-      throw new InvalidStateError('OLX account changed after the operation was reviewed');
+      throw new ReconciliationRequiredError('OLX account changed after the operation was reviewed');
     }
 
     const tokens = this.decryptTokens(account);
@@ -466,7 +468,7 @@ export class MarketplaceOAuthService {
     }
     if (expectedAccount
       && (account.id !== expectedAccount.id || account.revision !== expectedAccount.revision)) {
-      throw new InvalidStateError('OLX account changed after the operation was reviewed');
+      throw new ReconciliationRequiredError('OLX account changed after the operation was reviewed');
     }
 
     // Another worker may have refreshed while this worker waited for the lock.
@@ -507,7 +509,7 @@ export class MarketplaceOAuthService {
       account.revision
     );
     if (!saved) {
-      throw new InvalidStateError('OLX account changed while its access token was refreshing');
+      throw new ReconciliationRequiredError('OLX account changed while its access token was refreshing');
     }
     return {
       accessToken: refreshed.accessToken,

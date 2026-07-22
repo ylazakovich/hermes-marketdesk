@@ -100,8 +100,10 @@ function createService(
   } as unknown as IMarketplaceAdapter;
   const create = jest.fn(() => adapter);
   let currentMarketplaceAccount = marketplaceAccount;
+  const findMarketplaceAccount = jest.fn(async () => currentMarketplaceAccount);
   const accountRepo = {
-    findByMarketplaceId: jest.fn(async () => currentMarketplaceAccount),
+    findByMarketplaceId: findMarketplaceAccount,
+    findByMarketplaceIdForUpdate: findMarketplaceAccount,
   };
   const getValidAccessTokenContext = jest.fn(async () => {
     if (!currentMarketplaceAccount) throw new Error('OLX account is not connected');
@@ -118,7 +120,14 @@ function createService(
     work
   ) => {
     beforeUnitOfWork?.();
-    return work({ productRepo, listingRepo, activityLog, eventRepo, correctionOperations });
+    return work({
+      productRepo,
+      listingRepo,
+      activityLog,
+      eventRepo,
+      correctionOperations,
+      accountRepo,
+    });
   };
   const service = new MarketplaceImportService(
     marketplaceRepo,
@@ -211,6 +220,7 @@ describe('MarketplaceImportService', () => {
 
     expect(result.isErr()).toBe(true);
     if (result.isOk()) throw new Error('expected account fencing failure');
+    expect(result.error.code).toBe('RECONCILIATION_REQUIRED');
     expect(result.error.message).toContain('reconciliation is required');
     expect(context.adapter.listOwnedListings).not.toHaveBeenCalled();
   });
@@ -228,6 +238,7 @@ describe('MarketplaceImportService', () => {
 
     expect(result.isErr()).toBe(true);
     if (result.isOk()) throw new Error('expected account fencing failure');
+    expect(result.error.code).toBe('RECONCILIATION_REQUIRED');
     expect(result.error.message).toContain('reconciliation is required');
     expect(context.productRepo.items.size).toBe(0);
     expect(context.correctionOperations.createPair).not.toHaveBeenCalled();
@@ -235,23 +246,43 @@ describe('MarketplaceImportService', () => {
 
   it('fails an import item when the account changes at the transaction boundary', async () => {
     const context = createService([remoteListing()]);
-    for (let call = 0; call < 4; call += 1) {
-      context.accountRepo.findByMarketplaceId.mockResolvedValueOnce(connectedAccount);
-    }
-    context.accountRepo.findByMarketplaceId.mockResolvedValueOnce({
-      ...connectedAccount,
-      revision: 2,
-    });
+    context.accountRepo.findByMarketplaceId
+      .mockResolvedValueOnce(connectedAccount)
+      .mockResolvedValueOnce(connectedAccount)
+      .mockResolvedValueOnce({ ...connectedAccount, revision: 2 });
 
     const result = await context.service.import({
       workspaceId: 'workspace-1', marketplaceId: 'marketplace-1',
     });
 
-    if (result.isErr()) throw result.error;
-    expect(result.value).toMatchObject({ imported: 0, updated: 0, failed: 1 });
-    expect(result.value.results[0].reason).toContain('reconciliation is required');
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) throw new Error('expected reconciliation failure');
+    expect(result.error.code).toBe('RECONCILIATION_REQUIRED');
+    expect(result.error.message).toContain('reconciliation is required');
     expect(context.productRepo.items.size).toBe(0);
     expect(context.correctionOperations.createPair).not.toHaveBeenCalled();
+  });
+
+  it('aborts the entire import batch with a typed stale-binding error', async () => {
+    const context = createService([
+      remoteListing({ externalListingId: 'olx-1' }),
+      remoteListing({ externalListingId: 'olx-2', externalUrl: 'https://www.olx.pl/d/oferta/olx-2' }),
+    ]);
+    context.accountRepo.findByMarketplaceId
+      .mockResolvedValueOnce(connectedAccount)
+      .mockResolvedValueOnce(connectedAccount)
+      .mockResolvedValueOnce({ ...connectedAccount, revision: 2 });
+
+    const result = await context.service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) throw new Error('expected reconciliation failure');
+    expect(result.error.code).toBe('RECONCILIATION_REQUIRED');
+    expect(result.error.message).toContain('reconciliation is required');
+    expect(context.accountRepo.findByMarketplaceId).toHaveBeenCalledTimes(3);
   });
 
   it('creates an atomic durable pair for a new mismatched import before a target category is selected', async () => {
