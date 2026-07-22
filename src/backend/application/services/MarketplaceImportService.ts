@@ -587,6 +587,11 @@ export class MarketplaceImportService {
       changes.push('views');
     if (remote.metrics?.watchers !== undefined && listing.watchers !== remote.metrics.watchers)
       changes.push('watchers');
+    if (
+      remote.metrics?.conversations !== undefined &&
+      listing.conversations !== remote.metrics.conversations
+    )
+      changes.push('conversations');
     if (remote.metrics?.messages !== undefined && listing.messages !== remote.metrics.messages)
       changes.push('messages');
     if (product) {
@@ -680,6 +685,7 @@ export class MarketplaceImportService {
       marketplaceCategory: remote.marketplaceCategory ?? null,
       views: remote.metrics?.views ?? null,
       watchers: remote.metrics?.watchers ?? null,
+      conversations: remote.metrics?.conversations ?? null,
       messages: remote.metrics?.messages ?? null,
       publishedAt: remote.status === 'live' ? now : null,
       lastSyncAt: now,
@@ -758,6 +764,9 @@ export class MarketplaceImportService {
     }
     const statusRecorded = listing.recordImportedStatus(remote.status, product ?? null);
     if (statusRecorded.isErr()) throw statusRecorded.error;
+    if (remote.metrics?.conversations === null || remote.metrics?.messages === null) {
+      listing.recordMessagesUnavailable();
+    }
     listing.recordSyncStats(remote.metrics ?? {}, new Date());
     listing.recordSyncStatusNote(null);
     await repos.listingRepo.save(listing);

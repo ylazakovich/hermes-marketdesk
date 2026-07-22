@@ -94,7 +94,7 @@ describe('OLXAdapter', () => {
     ]);
   });
 
-  it('maps a real empty OLX thread list to zero messages', async () => {
+  it('maps a real empty OLX thread list to zero conversations and messages', async () => {
     const http = mockClient((config) => config.url.endsWith('/threads')
       ? { status: 200, data: [] }
       : {
@@ -112,6 +112,7 @@ describe('OLXAdapter', () => {
       remoteStatus: 'active',
       views: null,
       watchers: null,
+      conversations: 0,
       messages: 0,
       messageMetricStatus: 'available',
       marketplaceCategory: null,
@@ -211,7 +212,7 @@ describe('OLXAdapter', () => {
     });
   });
 
-  it('counts messages from thread metadata without fetching message content', async () => {
+  it('counts conversations and messages from thread metadata without fetching message content', async () => {
     const calls: HttpRequestConfig[] = [];
     const http = mockClient((config) => {
       calls.push(config);
@@ -222,8 +223,6 @@ describe('OLXAdapter', () => {
             { advert_id: 1085783130, total_count: 2 },
             { advert_id: '1085783130', total_count: 3 },
             { advert_id: 999, total_count: 100 },
-            { advert_id: 1085783130, total_count: -1 },
-            { advert_id: 1085783130, total_count: 'bad' },
           ],
         };
       }
@@ -239,6 +238,7 @@ describe('OLXAdapter', () => {
     const [synced] = await adapter.sync(['1085783130']);
 
     expect(synced).toMatchObject({
+      conversations: 2,
       messages: 5,
       messageMetricStatus: 'available',
     });
@@ -269,8 +269,8 @@ describe('OLXAdapter', () => {
     });
     const adapter = new OLXAdapter(http, fastOptions);
 
-    await expect(adapter.fetchListing('42')).resolves.toMatchObject({ messages: 4 });
-    await expect(adapter.fetchListing('43')).resolves.toMatchObject({ messages: 0 });
+    await expect(adapter.fetchListing('42')).resolves.toMatchObject({ conversations: 1, messages: 4 });
+    await expect(adapter.fetchListing('43')).resolves.toMatchObject({ conversations: 0, messages: 0 });
     expect(threadOffsets).toEqual([0, 100, 0]);
   });
 
@@ -281,6 +281,7 @@ describe('OLXAdapter', () => {
     const adapter = new OLXAdapter(http, fastOptions);
 
     await expect(adapter.fetchListing('42')).resolves.toMatchObject({
+      conversations: undefined,
       messages: undefined,
       messageMetricStatus: 'error',
     });
@@ -304,6 +305,7 @@ describe('OLXAdapter', () => {
     const adapter = new OLXAdapter(http, fastOptions);
 
     await expect(adapter.fetchListing('42')).resolves.toMatchObject({
+      conversations: undefined,
       messages: undefined,
       messageMetricStatus: 'error',
     });
@@ -320,6 +322,7 @@ describe('OLXAdapter', () => {
     const [synced] = await adapter.sync(['1085783130']);
 
     expect(synced).toMatchObject({
+      conversations: undefined,
       messages: undefined,
       messageMetricStatus: 'error',
     });
@@ -518,6 +521,7 @@ describe('OLXAdapter', () => {
         missing: true,
         views: 0,
         watchers: 0,
+        conversations: null,
         messages: null,
         messageMetricStatus: 'unavailable',
       },

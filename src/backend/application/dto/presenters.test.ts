@@ -44,15 +44,19 @@ describe('presentListing', () => {
     expect(view.externalUrl).toBeUndefined();
   });
 
-  it('distinguishes an unavailable message metric from a real zero', () => {
+  it('distinguishes unavailable conversation/message metrics from real zeroes', () => {
     const listing = listingWithExternalUrl('https://www.olx.pl/d/oferta/camera-123');
-    listing.recordSyncStats({ messages: 0 });
+    listing.recordSyncStats({ conversations: 0, messages: 0 });
     const zero = presentListing(listing);
     listing.recordMessagesUnavailable();
     const unavailable = presentListing(listing);
 
+    expect(zero.conversations).toBe(0);
+    expect(zero.metricsAvailability?.conversations).toBe(true);
     expect(zero.messages).toBe(0);
     expect(zero.metricsAvailability?.messages).toBe(true);
+    expect(unavailable.conversations).toBeNull();
+    expect(unavailable.metricsAvailability?.conversations).toBe(false);
     expect(unavailable.messages).toBeNull();
     expect(unavailable.metricsAvailability?.messages).toBe(false);
   });

@@ -129,10 +129,10 @@ type OlxAdvertStatisticsResult =
   | { status: 'unavailable'; data: null }
   | { status: 'error'; data: null };
 
-type OlxThreadMessageCountResult =
-  | { status: 'success'; count: number }
-  | { status: 'unavailable'; count: null }
-  | { status: 'error'; count: null };
+type OlxThreadMetricsResult =
+  | { status: 'success'; conversations: number; messages: number }
+  | { status: 'unavailable'; conversations: null; messages: null }
+  | { status: 'error'; conversations: null; messages: null };
 
 interface OlxResponseEnvelope<T> {
   data: T;
@@ -268,11 +268,11 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
           method: 'GET', url: `${this.baseUrl}/adverts/${id}`,
         });
         const advert = this.unwrapAdvert(res.data);
-        const [statistics, messageCount] = await Promise.all([
+        const [statistics, threadMetrics] = await Promise.all([
           this.fetchAdvertStatistics(id),
-          this.fetchThreadMessageCount(id),
+          this.fetchThreadMetrics(id),
         ]);
-        return this.toSyncedListing(this.withStatistics(advert, statistics.data), messageCount);
+        return this.toSyncedListing(this.withStatistics(advert, statistics.data), threadMetrics);
       } catch (error) {
         if (error instanceof HttpError && error.status === 404) {
           return this.missingSyncedListing(id);
@@ -291,11 +291,11 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       });
       if (!res.data) return null;
       const advert = this.unwrapAdvert(res.data);
-      const [statistics, messageCount] = await Promise.all([
+      const [statistics, threadMetrics] = await Promise.all([
         this.fetchAdvertStatistics(externalListingId),
-        this.fetchThreadMessageCount(externalListingId),
+        this.fetchThreadMetrics(externalListingId),
       ]);
-      return this.toSyncedListing(this.withStatistics(advert, statistics.data), messageCount);
+      return this.toSyncedListing(this.withStatistics(advert, statistics.data), threadMetrics);
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) return null;
       throw error;
@@ -310,6 +310,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       missing: true,
       views: 0,
       watchers: 0,
+      conversations: null,
       messages: null,
       messageMetricStatus: 'unavailable',
     };
@@ -331,11 +332,11 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       imported.push(
         ...(await this.mapWithConcurrency(res.data.data, 5, async (advert) => {
           const externalListingId = String(advert.id);
-          const [statistics, messageCount] = await Promise.all([
+          const [statistics, threadMetrics] = await Promise.all([
             this.fetchAdvertStatistics(externalListingId),
-            this.fetchThreadMessageCount(externalListingId),
+            this.fetchThreadMetrics(externalListingId),
           ]);
-          return this.toImportedListing(this.withStatistics(advert, statistics.data), messageCount);
+          return this.toImportedListing(this.withStatistics(advert, statistics.data), threadMetrics);
         }))
       );
       const lastPage = res.data.meta?.last_page;
@@ -374,11 +375,12 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
     }
   }
 
-  private async fetchThreadMessageCount(
+  private async fetchThreadMetrics(
     externalListingId: string,
-  ): Promise<OlxThreadMessageCountResult> {
+  ): Promise<OlxThreadMetricsResult> {
     let offset = 0;
-    let count = 0;
+    let conversations = 0;
+    let messages = 0;
     let pages = 0;
     try {
       for (;;) {
@@ -397,12 +399,13 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
 
         for (const thread of threads) {
           if (String(thread.advert_id) !== externalListingId) continue;
+          conversations += 1;
           const total = this.parseCounter(thread.total_count);
           if (total !== null) {
-            if (!Number.isSafeInteger(count + total)) {
+            if (!Number.isSafeInteger(messages + total)) {
               throw new Error('OLX thread message count exceeds the safe integer range');
             }
-            count += total;
+            messages += total;
           }
         }
 
@@ -414,7 +417,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
           : currentPage !== undefined && lastPage !== undefined
             ? currentPage < lastPage
             : threads.length === OLX_THREAD_PAGE_SIZE;
-        if (!hasNext) return { status: 'success', count };
+        if (!hasNext) return { status: 'success', conversations, messages };
         if (threads.length === 0) {
           throw new Error('OLX thread metadata pagination did not advance');
         }
@@ -422,9 +425,9 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       }
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) {
-        return { status: 'unavailable', count: null };
+        return { status: 'unavailable', conversations: null, messages: null };
       }
-      return { status: 'error', count: null };
+      return { status: 'error', conversations: null, messages: null };
     }
   }
 
@@ -439,7 +442,7 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
 
   private async toSyncedListing(
     data: OlxAdvertResponse,
-    messageCount: OlxThreadMessageCountResult,
+    threadMetrics: OlxThreadMetricsResult,
   ): Promise<SyncedListing> {
     const remoteStatus = String(data.status ?? 'unknown').toLowerCase();
     return {
@@ -449,17 +452,20 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       remoteStatus,
       views: this.extractViews(data),
       watchers: this.extractWatchers(data),
-      messages: messageCount.status === 'success'
-        ? messageCount.count
-        : messageCount.status === 'error' ? undefined : null,
-      messageMetricStatus: messageCount.status === 'success' ? 'available' : messageCount.status,
+      conversations: threadMetrics.status === 'success'
+        ? threadMetrics.conversations
+        : threadMetrics.status === 'error' ? undefined : null,
+      messages: threadMetrics.status === 'success'
+        ? threadMetrics.messages
+        : threadMetrics.status === 'error' ? undefined : null,
+      messageMetricStatus: threadMetrics.status === 'success' ? 'available' : threadMetrics.status,
       marketplaceCategory: await this.extractMarketplaceCategory(data),
     };
   }
 
   private async toImportedListing(
     data: OlxAdvertResponse,
-    messageCount: OlxThreadMessageCountResult,
+    threadMetrics: OlxThreadMetricsResult,
   ): Promise<ImportedMarketplaceListing> {
     const price = this.extractPrice(data.price);
     const views = this.extractViews(data);
@@ -481,7 +487,12 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       metrics: {
         views: views ?? undefined,
         watchers: watchers ?? undefined,
-        messages: messageCount.status === 'success' ? messageCount.count : undefined,
+        conversations: threadMetrics.status === 'success'
+          ? threadMetrics.conversations
+          : threadMetrics.status === 'error' ? undefined : null,
+        messages: threadMetrics.status === 'success'
+          ? threadMetrics.messages
+          : threadMetrics.status === 'error' ? undefined : null,
       },
     };
   }

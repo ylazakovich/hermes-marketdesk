@@ -48,6 +48,7 @@ export interface ListingRow {
   marketplace_category: MarketplaceCategoryMetadata | null;
   views: number | null;
   watchers: number | null;
+  conversations: number | null;
   messages: number | null;
   published_at: Date | string | null;
   expires_at: Date | string | null;

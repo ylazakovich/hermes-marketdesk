@@ -34,6 +34,7 @@ export interface SyncedListing {
   missing?: boolean;
   views?: number | null;
   watchers?: number | null;
+  conversations?: number | null;
   messages?: number | null;
   messageMetricStatus?: 'available' | 'unavailable' | 'error';
   marketplaceCategory?: MarketplaceCategoryMetadata | null;
@@ -52,7 +53,7 @@ export interface ImportedMarketplaceListing {
   marketplaceCategory?: MarketplaceCategoryMetadata | null;
   imageUrls: string[];
   remoteUpdatedAt?: Date | null;
-  metrics?: { views?: number; watchers?: number; messages?: number };
+  metrics?: { views?: number; watchers?: number; conversations?: number | null; messages?: number | null };
 }
 
 export interface ImportDiscoveryOptions {

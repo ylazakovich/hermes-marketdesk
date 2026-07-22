@@ -201,7 +201,7 @@ export const PricingSummaryCard: React.FC<{ product: Product; currency: string; 
   );
 };
 
-const metricValue = (listing: Listing, key: 'views' | 'watchers' | 'messages') => {
+const metricValue = (listing: Listing, key: 'views' | 'watchers' | 'conversations' | 'messages') => {
   const available = listing.metricsAvailability?.[key] ?? listing[key] != null;
   return available && listing[key] != null ? String(listing[key]) : 'Unknown';
 };
@@ -235,15 +235,15 @@ export const OlxInsightsCard: React.FC<{
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{statusExplanation}</Typography>
           {listing.lastSyncAt && <Typography variant="caption" color="text.secondary">Last checked {formatDateTime(listing.lastSyncAt)}</Typography>}
         </Box>
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 1 }}>
-          {(['views', 'watchers', 'messages'] as const).map((key) => (
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 1 }}>
+          {(['views', 'watchers', 'conversations', 'messages'] as const).map((key) => (
             <Box key={key} sx={{ p: 1.25, borderRadius: 2, bgcolor: 'action.hover', minWidth: 0 }}>
               <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'capitalize' }}>{key}</Typography>
               <Typography variant="h6" sx={{ overflowWrap: 'anywhere' }}>{metricValue(listing, key)}</Typography>
             </Box>
           ))}
         </Box>
-        <Typography variant="caption" color="text.secondary">Conversion is not shown because no provider conversion metric exists.</Typography>
+        <Typography variant="caption" color="text.secondary">Conversations are OLX chats; messages are total messages inside those chats. Conversion is not shown because no provider conversion metric exists.</Typography>
       </Stack>
     )}
   </Card>

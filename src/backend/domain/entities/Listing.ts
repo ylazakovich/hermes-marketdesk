@@ -23,6 +23,7 @@ export interface CreateListingProps {
   marketplaceCategory?: MarketplaceCategoryMetadata | null;
   views?: number | null;
   watchers?: number | null;
+  conversations?: number | null;
   messages?: number | null;
   publishedAt?: Date | null;
   expiresAt?: Date | null;
@@ -45,6 +46,7 @@ export class Listing {
     private _marketplaceCategory: MarketplaceCategoryMetadata | null,
     private _views: number | null,
     private _watchers: number | null,
+    private _conversations: number | null,
     private _messages: number | null,
     private _publishedAt: Date | null,
     private _expiresAt: Date | null,
@@ -82,6 +84,7 @@ export class Listing {
         props.marketplaceCategory ?? null,
         props.views ?? null,
         props.watchers ?? null,
+        props.conversations ?? null,
         props.messages ?? null,
         props.publishedAt ?? null,
         props.expiresAt ?? null,
@@ -106,6 +109,7 @@ export class Listing {
       props.marketplaceCategory,
       props.views,
       props.watchers,
+      props.conversations,
       props.messages,
       props.publishedAt,
       props.expiresAt,
@@ -140,6 +144,9 @@ export class Listing {
   }
   get watchers(): number | null {
     return this._watchers;
+  }
+  get conversations(): number | null {
+    return this._conversations;
   }
   get messages(): number | null {
     return this._messages;
@@ -267,11 +274,12 @@ export class Listing {
   }
 
   recordSyncStats(
-    stats: { views?: number | null; watchers?: number | null; messages?: number | null; remoteStatus?: string | null },
+    stats: { views?: number | null; watchers?: number | null; conversations?: number | null; messages?: number | null; remoteStatus?: string | null },
     at: Date = new Date()
   ): void {
     if (stats.views !== undefined && stats.views !== null) this._views = stats.views;
     if (stats.watchers !== undefined && stats.watchers !== null) this._watchers = stats.watchers;
+    if (stats.conversations !== undefined && stats.conversations !== null) this._conversations = stats.conversations;
     if (stats.messages !== undefined && stats.messages !== null) this._messages = stats.messages;
     if (stats.remoteStatus !== undefined) this._remoteStatus = stats.remoteStatus;
     this._lastSyncAt = at;
@@ -279,6 +287,7 @@ export class Listing {
   }
 
   recordMessagesUnavailable(at: Date = new Date()): void {
+    this._conversations = null;
     this._messages = null;
     this._lastSyncAt = at;
     this.touch();

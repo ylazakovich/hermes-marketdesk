@@ -57,7 +57,7 @@ function remoteListing(
     category: 'Electronics',
     imageUrls: ['https://img/1.jpg'],
     remoteUpdatedAt: new Date('2026-07-14T00:00:00.000Z'),
-    metrics: { views: 7, watchers: 2, messages: 1 },
+    metrics: { views: 7, watchers: 2, conversations: 1, messages: 1 },
     ...overrides,
   };
 }
@@ -355,6 +355,119 @@ describe('MarketplaceImportService', () => {
     );
   });
 
+  it('refreshes an existing advert when only the conversations metric changed', async () => {
+    const product = unwrap(
+      Product.create({
+        id: 'product-1',
+        workspaceId: 'workspace-1',
+        sku: 'SKU-1',
+        name: 'Remote camera',
+        description: 'Existing OLX advert with enough seller supplied detail.',
+        costPrice: money(10),
+        sellingPrice: money(100),
+        condition: 'good',
+        category: 'Electronics',
+        status: 'active',
+        images: ['https://img/1.jpg'],
+      })
+    );
+    const existing = unwrap(
+      Listing.create({
+        id: 'listing-1',
+        productId: product.id,
+        marketplaceId: 'marketplace-1',
+        marketplaceListingId: 'olx-1',
+        externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
+        price: money(100),
+        status: 'live',
+        views: 7,
+        watchers: 2,
+        conversations: 0,
+        messages: 1,
+      })
+    );
+    const { service, productRepo, listingRepo } = createService([remoteListing()], [existing]);
+    productRepo.items.set(product.id, product);
+
+    const preview = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+    if (preview.isErr()) throw preview.error;
+    expect(preview.value.totals).toMatchObject({ already_imported: 0, changed: 1 });
+    expect(preview.value.items[0]).toMatchObject({
+      status: 'changed',
+      proposedChanges: ['conversations'],
+    });
+
+    const result = await service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+      externalListingIds: ['olx-1'],
+    });
+    if (result.isErr()) throw result.error;
+    expect(result.value).toMatchObject({ imported: 0, updated: 1, skipped: 0, failed: 0 });
+    expect(listingRepo.items.get(existing.id)?.conversations).toBe(1);
+  });
+
+  it('clears existing conversation metrics when import reports them unavailable', async () => {
+    const product = unwrap(
+      Product.create({
+        id: 'product-1',
+        workspaceId: 'workspace-1',
+        sku: 'SKU-1',
+        name: 'Remote camera',
+        description: 'Existing OLX advert with enough seller supplied detail.',
+        costPrice: money(10),
+        sellingPrice: money(100),
+        condition: 'good',
+        category: 'Electronics',
+        status: 'active',
+        images: ['https://img/1.jpg'],
+      })
+    );
+    const existing = unwrap(
+      Listing.create({
+        id: 'listing-1',
+        productId: product.id,
+        marketplaceId: 'marketplace-1',
+        marketplaceListingId: 'olx-1',
+        externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
+        price: money(100),
+        status: 'live',
+        views: 7,
+        watchers: 2,
+        conversations: 3,
+        messages: 5,
+      })
+    );
+    const { service, productRepo, listingRepo } = createService([
+      remoteListing({ metrics: { views: 7, watchers: 2, conversations: null, messages: null } }),
+    ], [existing]);
+    productRepo.items.set(product.id, product);
+
+    const preview = await service.preview({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+    });
+    if (preview.isErr()) throw preview.error;
+    expect(preview.value.totals).toMatchObject({ already_imported: 0, changed: 1 });
+    expect(preview.value.items[0]).toMatchObject({
+      status: 'changed',
+      proposedChanges: ['conversations', 'messages'],
+    });
+
+    const result = await service.import({
+      workspaceId: 'workspace-1',
+      marketplaceId: 'marketplace-1',
+      externalListingIds: ['olx-1'],
+    });
+    if (result.isErr()) throw result.error;
+    expect(result.value).toMatchObject({ imported: 0, updated: 1, skipped: 0, failed: 0 });
+    expect(listingRepo.items.get(existing.id)?.conversations).toBeNull();
+    expect(listingRepo.items.get(existing.id)?.messages).toBeNull();
+  });
+
   it('imports eligible selected adverts locally without provider mutations and records provenance', async () => {
     const { service, productRepo, listingRepo, activityLog, adapter } = createService([
       remoteListing(),
@@ -542,7 +655,7 @@ describe('MarketplaceImportService', () => {
       id: 'listing-category-preserve', productId: 'product-1', marketplaceId: 'marketplace-1',
       marketplaceListingId: 'olx-1', externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
       price: money(100), status: 'live', remoteStatus: 'active',
-      marketplaceCategory: headphonesCategory, views: 7, watchers: 2, messages: 1,
+      marketplaceCategory: headphonesCategory, views: 7, watchers: 2, conversations: 1, messages: 1,
     }));
     const { service, listingRepo } = createService([
       remoteListing({ marketplaceCategory: null }),
@@ -588,7 +701,7 @@ describe('MarketplaceImportService', () => {
       id: 'listing-projector-import', productId: product.id, marketplaceId: 'marketplace-1',
       marketplaceListingId: 'olx-1', externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
       price: money(100), status: 'live', marketplaceCategory: projectorCategory,
-      views: 7, watchers: 2, messages: 1,
+      views: 7, watchers: 2, conversations: 1, messages: 1,
     }));
     const reconcileWithRepositories = jest.fn(async () => ({ outcome: 'synced', categoryChanged: true }));
     const created = createService(
