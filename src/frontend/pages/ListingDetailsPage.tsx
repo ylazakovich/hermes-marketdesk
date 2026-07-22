@@ -853,10 +853,12 @@ const ListingDetailsPage: React.FC = () => {
                     event={event}
                     onResolved={refreshAfterRecommendation}
                     approveLabel={
-                      event.proposedChange?.kind === 'category_recreation' ? undefined : 'Apply'
+                      event.proposedChange && event.proposedChange.kind !== 'category_recreation'
+                        ? 'Apply'
+                        : undefined
                     }
                     successMessage={
-                      event.proposedChange?.kind === 'category_recreation'
+                      !event.proposedChange || event.proposedChange.kind === 'category_recreation'
                         ? undefined
                         : primaryListing?.status === 'live' && primaryListing.marketplaceListingId
                           ? 'Suggestion applied locally. Connected live listing updates were queued.'

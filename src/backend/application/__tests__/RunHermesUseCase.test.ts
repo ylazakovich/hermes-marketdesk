@@ -23,8 +23,9 @@ import {
   RecordingJobQueue,
   idFactory,
 } from '../testkit/support';
+import type { IAIProvider } from '../../domain/ports/IAIProvider';
 
-function setup() {
+function setup(aiProvider: IAIProvider = new StubAIProvider()) {
   const productRepo = new InMemoryProductRepository();
   const listingRepo = new InMemoryListingRepository();
   const marketplaceRepo = new InMemoryMarketplaceRepository();
@@ -58,7 +59,7 @@ function setup() {
     listingRepo,
     eventRepo,
     publisher,
-    new StubAIProvider(),
+    aiProvider,
     sequentialIdFactory('evt')
   );
 
@@ -121,6 +122,49 @@ describe('RunHermesUseCase', () => {
       unwrap(await runHermes.execute({ workspaceId: 'ws-1', productId: 'prod-1' }))
     ).toHaveLength(0);
     expect(eventRepo.items.size).toBe(1);
+    expect([...eventRepo.agentRecommendations.values()]).toEqual([
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        eventId: events[0].id,
+        agentId: 'listing-seo',
+        agentVersion: '1.0.0',
+        creativityPreset: 'balanced',
+        outcome: 'suggested',
+      }),
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        eventId: null,
+        outcome: 'suppressed',
+      }),
+    ]);
+  });
+
+  it('records structured failed listing-seo provenance without sensitive payloads', async () => {
+    const failingProvider = {
+      ...new StubAIProvider(),
+      analyzeListingSeo: async () => {
+        throw new Error('Hermes unavailable');
+      },
+    } as IAIProvider;
+    const { runHermes, eventRepo } = setup(failingProvider);
+
+    const result = await runHermes.execute({ workspaceId: 'ws-1', productId: 'prod-1' });
+
+    expect(result.isErr()).toBe(true);
+    expect(eventRepo.items.size).toBe(0);
+    expect([...eventRepo.agentRecommendations.values()]).toEqual([
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        eventId: null,
+        agentId: 'listing-seo',
+        agentVersion: '1.0.0',
+        creativityPreset: 'balanced',
+        outcome: 'failed',
+      }),
+    ]);
   });
 
   it('rejects a product outside the authenticated workspace', async () => {

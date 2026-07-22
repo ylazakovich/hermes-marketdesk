@@ -17,6 +17,7 @@ import {
   selectPrimaryListing,
   selectProductRecommendations,
 } from './ListingDetailsPage';
+import { hermesEventDismissOnly } from '../components/hermes/HermesEventCard';
 import type { PublishListingPreview } from '../state/api/dto';
 import { formatDateTime } from '../utils/formatters';
 
@@ -350,6 +351,15 @@ describe('ListingDetailsPage presentation', () => {
     expect(selectProductRecommendations(events, 'product-1').map(({ id }) => id)).toEqual([
       'current',
     ]);
+  });
+
+  it('treats recommendations without proposed changes as dismiss-only, not Apply/applied', () => {
+    expect(hermesEventDismissOnly({
+      ...event('photos', 'product-1', 'pending_review'),
+      type: 'suggested_more_photos',
+      proposedChange: null,
+    })).toBe(true);
+    expect(hermesEventDismissOnly(event('title', 'product-1', 'pending_review'))).toBe(false);
   });
 
   it('uses English labels for the publication readiness recheck action', () => {

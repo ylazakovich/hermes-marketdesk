@@ -50,6 +50,11 @@ describe('persistent settings migration', () => {
     expect(agentsMigration).toContain('workspace_id UUID NOT NULL REFERENCES workspaces(id)');
     expect(agentsMigration).toContain('product_id UUID NOT NULL REFERENCES products(id)');
     expect(agentsMigration).toContain('recommendation_fingerprint CHAR(64) NOT NULL');
+    expect(agentsMigration).toContain('outcome VARCHAR(20) NOT NULL');
+    expect(agentsMigration).toContain('failed_at TIMESTAMPTZ');
+    expect(agentsMigration).toContain("CHECK (outcome IN ('suggested', 'suppressed', 'failed'))");
+    expect(agentsMigration).toContain('event_id UUID REFERENCES hermes_events(id) ON DELETE SET NULL');
+    expect(agentsMigration).toContain('uq_hermes_agent_recommendations_event');
     expect(agentsMigration).toContain('idx_hermes_agent_recommendation_dedup');
   });
 

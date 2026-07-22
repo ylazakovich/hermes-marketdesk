@@ -416,6 +416,44 @@ describe('ApproveHermesEventUseCase', () => {
     if (result.isErr()) expect(result.error.code).toBe('INVALID_STATE');
   });
 
+  it('rejects applying informational recommendations without a proposed change', async () => {
+    const { useCase, eventRepo, publishQueue } = setup();
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-photos',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_more_photos',
+        severity: 'info',
+        title: 'Add photos',
+        detail: 'Acknowledgement-only legacy recommendation.',
+        proposedChange: null,
+      })
+    );
+    await eventRepo.save(event);
+    await eventRepo.recordAgentRecommendationOutcome({
+      id: 'rec-photos',
+      workspaceId: 'ws-1',
+      productId: 'prod-1',
+      eventId: event.id,
+      agentId: 'listing-seo',
+      agentVersion: '1.0.0',
+      creativityPreset: 'balanced',
+      sourceFingerprint: '0'.repeat(64),
+      recommendationFingerprint: '1'.repeat(64),
+      outcome: 'suggested',
+      suggestedAt: new Date(),
+    });
+
+    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.code).toBe('INVALID_STATE');
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+    expect(publishQueue.jobs).toHaveLength(0);
+    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+  });
+
   it('returns NOT_FOUND for an unknown event', async () => {
     const { useCase } = setup();
     const result = await useCase.execute({ eventId: 'nope', workspaceId: 'ws-1' });

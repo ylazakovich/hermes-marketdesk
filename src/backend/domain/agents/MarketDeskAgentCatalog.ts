@@ -25,7 +25,7 @@ export const listingSeoInputSchema = z.object({
 
 export const listingSeoOutputSchema = z.object({
   recommendations: z.array(z.object({
-    field: z.enum(['title', 'description', 'tags', 'photos']),
+    field: z.enum(['title', 'description']),
     proposedValue: z.string().min(1).max(2000),
     rationale: z.string().min(1).max(500),
   }).strict()).max(10),
@@ -105,4 +105,24 @@ export interface AgentRecommendationProvenance {
     observedAt: string;
     freshThrough: string;
   };
+}
+
+export type AgentRecommendationOutcome = 'suggested' | 'suppressed' | 'failed';
+
+export interface AgentRecommendationRecord {
+  id: string;
+  workspaceId: string;
+  productId: string;
+  eventId?: string | null;
+  agentId: 'listing-seo';
+  agentVersion: string;
+  creativityPreset: CreativityPreset;
+  sourceFingerprint: string;
+  recommendationFingerprint: string;
+  outcome: AgentRecommendationOutcome;
+  suggestedAt: Date;
+  approvedAt?: Date;
+  dismissedAt?: Date;
+  appliedAt?: Date;
+  failedAt?: Date;
 }

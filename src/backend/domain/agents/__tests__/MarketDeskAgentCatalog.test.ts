@@ -28,6 +28,14 @@ describe('MarketDeskAgentCatalog', () => {
     expect(listingSeoInputSchema.safeParse({ ...input, apiToken: 'secret' }).success).toBe(false);
     expect(listingSeoInputSchema.safeParse({ ...input, product: { ...input.product, internalPath: '/srv/app' } }).success).toBe(false);
     expect(listingSeoOutputSchema.safeParse({ recommendations: [], disclaimer: 'Review only.', command: 'publish' }).success).toBe(false);
+    expect(listingSeoOutputSchema.safeParse({
+      recommendations: [{ field: 'photos', proposedValue: 'Add more photos', rationale: 'More images can help buyers.' }],
+      disclaimer: 'Review only.',
+    }).success).toBe(false);
+    expect(listingSeoOutputSchema.safeParse({
+      recommendations: [{ field: 'title', proposedValue: 'Searchable blue chair', rationale: 'Clearer title.' }],
+      disclaimer: 'Review only.',
+    }).success).toBe(true);
   });
 
   it('changes the safe instruction for each creativity preset without enabling tools', () => {

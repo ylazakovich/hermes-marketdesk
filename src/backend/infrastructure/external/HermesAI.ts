@@ -193,7 +193,7 @@ export class HermesAI implements IAIProvider {
               type: 'object',
               additionalProperties: false,
               properties: {
-                field: { type: 'string', enum: ['title', 'description', 'tags', 'photos'] },
+                field: { type: 'string', enum: ['title', 'description'] },
                 proposedValue: { type: 'string', minLength: 1, maxLength: 2000 },
                 rationale: { type: 'string', minLength: 1, maxLength: 500 },
               },

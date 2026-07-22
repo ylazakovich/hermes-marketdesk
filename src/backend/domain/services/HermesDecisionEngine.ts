@@ -30,9 +30,11 @@ import type { IEventRepository } from '../repositories/interfaces/IEventReposito
 import type { IEventPublisher, DomainEvent } from '../ports/IEventPublisher';
 import type { IAIProvider } from '../ports/IAIProvider';
 import {
+  listingSeoProfile,
   listingSeoInputSchema,
   recommendationFingerprint,
   seoSourceFingerprint,
+  type AgentRecommendationRecord,
 } from '../agents/MarketDeskAgentCatalog';
 
 interface Suggestion {
@@ -128,7 +130,7 @@ export class HermesDecisionEngine {
     return events;
   }
 
-  /** Product-scoped safe slice: title SEO only, always review-only and never auto-applied. */
+  /** Product-scoped safe slice: listing SEO only, always review-only and never auto-applied. */
   async runProductSeo(workspace: Workspace, productId: string): Promise<HermesEvent[]> {
     const product = await this.productRepo.findByIdForWorkspace(productId, workspace.id);
     if (!product) throw new NotFoundError(`Product not found: ${productId}`);
@@ -156,26 +158,62 @@ export class HermesDecisionEngine {
         : null,
     });
     const source = seoSourceFingerprint(input);
-    const output = await this.aiProvider.analyzeListingSeo(input, workspace.creativityPreset);
+    let output: Awaited<ReturnType<IAIProvider['analyzeListingSeo']>>;
+    try {
+      output = await this.aiProvider.analyzeListingSeo(input, workspace.creativityPreset);
+    } catch (error) {
+      await this.eventRepo.recordAgentRecommendationOutcome({
+        id: this.idFactory(),
+        workspaceId: workspace.id,
+        productId: product.id,
+        eventId: null,
+        agentId: listingSeoProfile.id,
+        agentVersion: listingSeoProfile.version,
+        creativityPreset: workspace.creativityPreset,
+        sourceFingerprint: source,
+        recommendationFingerprint: recommendationFingerprint(
+          listingSeoProfile.id,
+          listingSeoProfile.version,
+          source,
+          'analysis_failed',
+        ),
+        outcome: 'failed',
+        suggestedAt: new Date(),
+      });
+      throw error;
+    }
     const events: HermesEvent[] = [];
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const windowStart = Math.floor(Date.now() / (30 * 24 * 60 * 60 * 1000));
-    const recentEvents = await this.eventRepo.findByWorkspace(workspace.id);
 
     for (const recommendation of output.recommendations) {
       const fingerprint = recommendationFingerprint(
-        'listing-seo',
-        '1.0.0',
+        listingSeoProfile.id,
+        listingSeoProfile.version,
         source,
         recommendation.proposedValue
       );
-      const duplicate = recentEvents.some(
-        (event) =>
-          event.productId === product.id &&
-          event.createdAt.getTime() >= cutoff &&
-          event.detail?.includes(`recommendation:${fingerprint}`)
+      const duplicate = await this.eventRepo.hasRecentAgentRecommendation(
+        workspace.id,
+        product.id,
+        listingSeoProfile.id,
+        listingSeoProfile.version,
+        source,
+        fingerprint,
+        new Date(cutoff),
       );
-      if (duplicate) continue;
+      if (duplicate) {
+        await this.eventRepo.recordAgentRecommendationOutcome(this.agentRecommendationRecord({
+          id: this.idFactory(),
+          workspace,
+          productId: product.id,
+          eventId: null,
+          source,
+          fingerprint,
+          outcome: 'suppressed',
+        }));
+        continue;
+      }
       const proposedChange =
         recommendation.field === 'description'
           ? {
@@ -184,20 +222,16 @@ export class HermesDecisionEngine {
               from: product.description,
               to: recommendation.proposedValue,
             }
-          : recommendation.field === 'title'
-            ? {
-                kind: 'title' as const,
-                field: 'title' as const,
-                from: product.name,
-                to: recommendation.proposedValue,
-              }
-            : null;
+          : {
+              kind: 'title' as const,
+              field: 'title' as const,
+              from: product.name,
+              to: recommendation.proposedValue,
+            };
       const type: HermesEventType =
         recommendation.field === 'description'
           ? 'update_description'
-          : recommendation.field === 'title'
-            ? 'suggested_better_title'
-            : 'suggested_more_photos';
+          : 'suggested_better_title';
       const created = HermesEvent.create({
         id: this.idFactory(),
         workspaceId: workspace.id,
@@ -205,21 +239,67 @@ export class HermesDecisionEngine {
         type,
         severity: 'info',
         title: `Listing SEO suggestion: ${recommendation.field}`,
-        detail: `${recommendation.rationale} Review-only suggestion from listing-seo@1.0.0 (${workspace.creativityPreset}); recommendation:${fingerprint}; source:${source}; provenance workspace=${workspace.id} product=${product.id}. This may improve discoverability but does not guarantee a sale.`,
+        detail: `${recommendation.rationale} Review-only suggestion from listing-seo@${listingSeoProfile.version} (${workspace.creativityPreset}); recommendation:${fingerprint}; source:${source}; provenance workspace=${workspace.id} product=${product.id}. This may improve discoverability but does not guarantee a sale.`,
         proposedChange,
         status: 'pending_review',
         autonomyDecision: 'pending_review',
       });
       if (created.isErr()) continue;
-      const inserted = await this.eventRepo.saveRecommendationIfAbsent(
-        created.value,
-        `listing-seo:1.0.0:${product.id}:${source}:${fingerprint}:w${windowStart}`
+      const event = created.value;
+      const inserted = await this.eventRepo.saveAgentRecommendationIfAbsent(
+        event,
+        `listing-seo:${listingSeoProfile.version}:${product.id}:${source}:${fingerprint}:w${windowStart}`,
+        this.agentRecommendationRecord({
+          id: this.idFactory(),
+          workspace,
+          productId: product.id,
+          eventId: event.id,
+          source,
+          fingerprint,
+          outcome: 'suggested',
+        }),
       );
-      if (inserted) events.push(created.value);
+      if (inserted) {
+        events.push(event);
+      } else {
+        await this.eventRepo.recordAgentRecommendationOutcome(this.agentRecommendationRecord({
+          id: this.idFactory(),
+          workspace,
+          productId: product.id,
+          eventId: null,
+          source,
+          fingerprint,
+          outcome: 'suppressed',
+        }));
+      }
     }
 
     await this.eventPublisher.publish(this.runCompletedEvent(workspace.id, events.length));
     return events;
+  }
+
+  private agentRecommendationRecord(params: {
+    id: string;
+    workspace: Workspace;
+    productId: string;
+    eventId: string | null;
+    source: string;
+    fingerprint: string;
+    outcome: AgentRecommendationRecord['outcome'];
+  }): AgentRecommendationRecord {
+    return {
+      id: params.id,
+      workspaceId: params.workspace.id,
+      productId: params.productId,
+      eventId: params.eventId,
+      agentId: listingSeoProfile.id,
+      agentVersion: listingSeoProfile.version,
+      creativityPreset: params.workspace.creativityPreset,
+      sourceFingerprint: params.source,
+      recommendationFingerprint: params.fingerprint,
+      outcome: params.outcome,
+      suggestedAt: new Date(),
+    };
   }
 
   determineAutonomy(

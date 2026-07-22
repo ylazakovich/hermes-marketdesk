@@ -95,6 +95,10 @@ export function hermesLifecycleCopy(status: HermesEvent['status']): string {
   }
 }
 
+export function hermesEventDismissOnly(event: HermesEvent): boolean {
+  return !event.proposedChange || event.type === 'create_listing' || event.type === 'product_category_conflict';
+}
+
 export interface CategoryRecreationReviewProps {
   change: CategoryRecreationChangePayload;
   onAction?: (
@@ -319,7 +323,7 @@ export const HermesEventCard: React.FC<HermesEventCardProps> = ({
   } | null>(null);
   const isCategoryRecreation = event.proposedChange?.kind === 'category_recreation';
   const canReview = event.status === 'pending_review';
-  const dismissOnly = event.type === 'create_listing' || event.type === 'product_category_conflict';
+  const dismissOnly = hermesEventDismissOnly(event);
 
   const confirmOperation = async () => {
     if (!pendingOperation) return;
@@ -391,6 +395,12 @@ export const HermesEventCard: React.FC<HermesEventCardProps> = ({
               ? (_intentId, action, operation) => setPendingOperation({ action, operation })
               : undefined}
           />
+          {!event.proposedChange && event.status === 'pending_review' && (
+            <Alert severity="info" sx={{ mt: 1.5 }}>
+              This recommendation has no directly applicable product change. Dismiss it after review;
+              MarketDesk will not mark it as applied.
+            </Alert>
+          )}
 
           <Stack
             direction="row"

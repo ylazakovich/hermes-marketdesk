@@ -19,7 +19,7 @@ import type {
   PriceSuggestion,
   ListingAnalysis,
 } from '../ports/IAIProvider';
-import type { ListingSeoOutput } from '../agents/MarketDeskAgentCatalog';
+import type { AgentRecommendationRecord, ListingSeoOutput } from '../agents/MarketDeskAgentCatalog';
 
 export function unwrap<T>(r: Result<T>): T {
   if (r.isErr()) {
@@ -152,6 +152,7 @@ export class InMemoryEventRepository implements IEventRepository {
   readonly items = new Map<string, HermesEvent>();
   readonly savedBatches: HermesEvent[][] = [];
   readonly recommendationKeys = new Set<string>();
+  readonly agentRecommendations = new Map<string, AgentRecommendationRecord>();
 
   async findById(id: string): Promise<HermesEvent | null> {
     return this.items.get(id) ?? null;
@@ -184,12 +185,69 @@ export class InMemoryEventRepository implements IEventRepository {
     this.items.set(event.id, event);
     return true;
   }
+  async saveAgentRecommendationIfAbsent(
+    event: HermesEvent,
+    idempotencyKey: string,
+    recommendation: AgentRecommendationRecord,
+  ): Promise<boolean> {
+    const inserted = await this.saveRecommendationIfAbsent(event, idempotencyKey);
+    if (!inserted) return false;
+    this.agentRecommendations.set(recommendation.id, recommendation);
+    return true;
+  }
+  async hasRecentAgentRecommendation(
+    workspaceId: string,
+    productId: string,
+    agentId: 'listing-seo',
+    agentVersion: string,
+    sourceFingerprint: string,
+    recommendationFingerprint: string,
+    since: Date,
+  ): Promise<boolean> {
+    return [...this.agentRecommendations.values()].some((row) =>
+      row.workspaceId === workspaceId &&
+      row.productId === productId &&
+      row.agentId === agentId &&
+      row.agentVersion === agentVersion &&
+      row.sourceFingerprint === sourceFingerprint &&
+      row.recommendationFingerprint === recommendationFingerprint &&
+      row.outcome === 'suggested' &&
+      row.suggestedAt >= since
+    );
+  }
+  async recordAgentRecommendationOutcome(recommendation: AgentRecommendationRecord): Promise<void> {
+    this.agentRecommendations.set(recommendation.id, recommendation);
+  }
+  async markAgentRecommendationApproved(workspaceId: string, eventId: string, at: Date): Promise<void> {
+    this.updateAgentRecommendation(eventId, workspaceId, { approvedAt: at });
+  }
+  async markAgentRecommendationDismissed(workspaceId: string, eventId: string, at: Date): Promise<void> {
+    this.updateAgentRecommendation(eventId, workspaceId, { dismissedAt: at });
+  }
+  async markAgentRecommendationApplied(workspaceId: string, eventId: string, at: Date): Promise<void> {
+    this.updateAgentRecommendation(eventId, workspaceId, { appliedAt: at });
+  }
+  async markAgentRecommendationFailed(workspaceId: string, eventId: string, _at: Date): Promise<void> {
+    this.updateAgentRecommendation(eventId, workspaceId, { outcome: 'failed', failedAt: _at });
+  }
   async saveAll(events: HermesEvent[]): Promise<void> {
     this.savedBatches.push(events);
     for (const e of events) await this.save(e);
   }
   async deleteOlderThan(): Promise<void> {
     // no-op for tests
+  }
+
+  private updateAgentRecommendation(
+    eventId: string,
+    workspaceId: string,
+    patch: Partial<AgentRecommendationRecord>,
+  ): void {
+    for (const [id, row] of this.agentRecommendations) {
+      if (row.eventId === eventId && row.workspaceId === workspaceId) {
+        this.agentRecommendations.set(id, { ...row, ...patch });
+      }
+    }
   }
 }
 
@@ -209,6 +267,12 @@ export class StubAIProvider implements IAIProvider {
     },
     private readonly title = '',
     private readonly analysis: ListingAnalysis = { score: 100, suggestions: [] },
+    private readonly seoOutput: ListingSeoOutput = {
+      recommendations: [
+        { field: 'title', proposedValue: 'SEO title', rationale: 'More searchable wording for review.' },
+      ],
+      disclaimer: 'Review only; no marketplace changes were applied.',
+    },
   ) {}
 
   async suggestPrice(): Promise<PriceSuggestion> {
@@ -221,12 +285,7 @@ export class StubAIProvider implements IAIProvider {
     return this.analysis;
   }
   async analyzeListingSeo(): Promise<ListingSeoOutput> {
-    return {
-      recommendations: [
-        { field: 'title', proposedValue: 'SEO title', rationale: 'More searchable wording for review.' },
-      ],
-      disclaimer: 'Review only; no marketplace changes were applied.',
-    };
+    return this.seoOutput;
   }
 }
 

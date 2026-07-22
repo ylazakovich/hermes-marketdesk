@@ -40,6 +40,11 @@ export class DismissHermesEventUseCase {
     if (dismissed.isErr()) return dismissed;
 
     await this.eventRepo.save(event);
+    await this.eventRepo.markAgentRecommendationDismissed(
+      event.workspaceId,
+      event.id,
+      event.resolvedAt ?? new Date(),
+    );
 
     await this.activityLog.record({
       id: this.idGenerator(),
