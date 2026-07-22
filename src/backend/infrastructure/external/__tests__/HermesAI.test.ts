@@ -175,4 +175,29 @@ describe('HermesAI (IAIProvider)', () => {
     expect(calls[0].prompt).not.toMatch(/token|credential|\/srv\//i);
     expect(calls[0].jsonSchema).toMatchObject({ type: 'object', additionalProperties: false });
   });
+
+  it('fails closed when listing-seo returns invalid output instead of fabricating success', async () => {
+    const { client } = fakeClient(
+      JSON.stringify({ recommendations: [], disclaimer: '', marketplaceMutation: 'publish' })
+    );
+    const ai = new HermesAI(client);
+
+    await expect(
+      ai.analyzeListingSeo(
+        {
+          product: {
+            id: 'p1',
+            name: 'Retro Sneakers',
+            description: 'Classic lightly worn sneakers.',
+            category: 'clothing',
+            condition: 'good',
+            tags: ['retro'],
+            imageCount: 1,
+          },
+          listing: null,
+        },
+        'balanced'
+      )
+    ).rejects.toThrow('Hermes listing-seo output failed strict schema validation');
+  });
 });

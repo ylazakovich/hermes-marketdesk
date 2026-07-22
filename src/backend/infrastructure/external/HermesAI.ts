@@ -209,10 +209,7 @@ export class HermesAI implements IAIProvider {
     const parsed = this.parseJson(raw);
     const safeParsed = listingSeoOutputSchema.safeParse(parsed);
     if (safeParsed.success) return safeParsed.data;
-    return {
-      recommendations: [],
-      disclaimer: 'Hermes could not produce a valid review-only SEO recommendation.',
-    };
+    throw new Error('Hermes listing-seo output failed strict schema validation');
   }
 
   // --- helpers ---
