@@ -69,6 +69,12 @@ describe('ListingDetailsPage presentation', () => {
     expect(isProductRecheckStale(
       result, 'product-1', result.productUpdatedAt, 'listing-2', result.listingUpdatedAt,
     )).toBe(true);
+    expect(isProductRecheckStale(
+      result, 'product-2', result.productUpdatedAt, 'listing-1', result.listingUpdatedAt,
+    )).toBe(true);
+    expect(isProductRecheckStale(
+      result, 'product-1', result.productUpdatedAt, 'listing-1', '2026-07-22T07:00:00.000Z',
+    )).toBe(true);
   });
 
   it('renders the typed mismatch, exact provider id/path and stale replacement state', () => {
