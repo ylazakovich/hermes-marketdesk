@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { concurrentIndexIdentity } from '../migrationSql';
 
-const migrationsDir = path.join(process.cwd(), 'src/backend/persistence/migrations');
+const persistenceDir = path.join(process.cwd(), 'src/backend/persistence');
+const migrationsDir = path.join(persistenceDir, 'migrations');
 const read = (name: string) => fs.readFileSync(path.join(migrationsDir, name), 'utf8');
 
 describe('analytics event identity migrations', () => {
@@ -26,5 +27,7 @@ describe('analytics event identity migrations', () => {
     expect(concurrentIndexIdentity(index)).toEqual({
       name: 'idx_analytics_workspace_marketplace_date',
     });
+    const schema = fs.readFileSync(path.join(persistenceDir, 'schema.sql'), 'utf8');
+    expect(schema).toContain('idx_analytics_workspace_marketplace_date');
   });
 });

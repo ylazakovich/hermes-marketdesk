@@ -427,6 +427,8 @@ CREATE INDEX IF NOT EXISTS idx_analytics_workspace_type ON analytics_events(work
 CREATE INDEX IF NOT EXISTS idx_analytics_listing ON analytics_events(listing_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_occurred ON analytics_events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_analytics_workspace_date ON analytics_events(workspace_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_workspace_marketplace_date
+  ON analytics_events(workspace_id, marketplace_id, occurred_at DESC);
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
