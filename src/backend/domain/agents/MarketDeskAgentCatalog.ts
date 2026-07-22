@@ -74,6 +74,10 @@ export function seoSourceFingerprint(input: ListingSeoInput): string {
   return createHash('sha256').update(JSON.stringify(clean)).digest('hex');
 }
 
+export function rawSeoSourceFingerprint(input: unknown): string {
+  return createHash('sha256').update(JSON.stringify(input)).digest('hex');
+}
+
 export function normalizeRecommendation(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase('en-US').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }

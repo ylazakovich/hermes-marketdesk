@@ -30,14 +30,20 @@ export class HermesController {
     private readonly categoryCorrections?: CategoryCorrectionOperationService
   ) {}
 
+  private requireCategoryCorrections(next: NextFunction): CategoryCorrectionOperationService | null {
+    if (this.categoryCorrections) return this.categoryCorrections;
+    next(new NotFoundError('Category correction workflow is unavailable'));
+    return null;
+  }
+
   listCategoryCorrectionOperations = async (
     req: Request,
     res: Response,
     next: NextFunction
   ): Promise<void> => {
-    if (!this.categoryCorrections)
-      return next(new NotFoundError('Category correction workflow is unavailable'));
-    const operations = await this.categoryCorrections.list(
+    const categoryCorrections = this.requireCategoryCorrections(next);
+    if (!categoryCorrections) return;
+    const operations = await categoryCorrections.list(
       routeParam(req.params.id),
       req.user!.workspaceId!
     );
@@ -49,9 +55,9 @@ export class HermesController {
     res: Response,
     next: NextFunction
   ): Promise<void> => {
-    if (!this.categoryCorrections)
-      return next(new NotFoundError('Category correction workflow is unavailable'));
-    const operation = await this.categoryCorrections.approve({
+    const categoryCorrections = this.requireCategoryCorrections(next);
+    if (!categoryCorrections) return;
+    const operation = await categoryCorrections.approve({
       operationId: routeParam(req.params.operationId),
       workspaceId: req.user!.workspaceId!,
       actorId: req.user!.userId!,
@@ -65,9 +71,9 @@ export class HermesController {
     res: Response,
     next: NextFunction
   ): Promise<void> => {
-    if (!this.categoryCorrections)
-      return next(new NotFoundError('Category correction workflow is unavailable'));
-    const operation = await this.categoryCorrections.execute({
+    const categoryCorrections = this.requireCategoryCorrections(next);
+    if (!categoryCorrections) return;
+    const operation = await categoryCorrections.execute({
       operationId: routeParam(req.params.operationId),
       workspaceId: req.user!.workspaceId!,
       actorId: req.user!.userId!,

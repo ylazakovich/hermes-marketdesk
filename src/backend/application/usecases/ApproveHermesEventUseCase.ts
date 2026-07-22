@@ -94,15 +94,15 @@ export class ApproveHermesEventUseCase {
 
     const approved = event.approve();
     if (approved.isErr()) return approved;
-    await this.eventRepo.save(event);
-    await this.eventRepo.markAgentRecommendationApproved(
-      event.workspaceId,
-      event.id,
-      new Date(),
-    );
 
     let applied: Result<ApplyChangeOutcome>;
     try {
+      await this.eventRepo.save(event);
+      await this.eventRepo.markAgentRecommendationApproved(
+        event.workspaceId,
+        event.id,
+        new Date(),
+      );
       applied = await this.applyChange(event, input.actorId);
     } catch (error) {
       const failed = event.markFailed();

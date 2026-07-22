@@ -33,6 +33,7 @@ import {
   listingSeoProfile,
   listingSeoInputSchema,
   recommendationFingerprint,
+  rawSeoSourceFingerprint,
   seoSourceFingerprint,
   type AgentRecommendationRecord,
 } from '../agents/MarketDeskAgentCatalog';
@@ -138,7 +139,7 @@ export class HermesDecisionEngine {
 
     const listings = await this.listingRepo.findByProduct(product.id);
     const primary = listings[0];
-    const input = listingSeoInputSchema.parse({
+    const rawInput = {
       product: {
         id: product.id,
         name: product.name,
@@ -156,10 +157,13 @@ export class HermesDecisionEngine {
             marketplace: primary.marketplaceId,
           }
         : null,
-    });
-    const source = seoSourceFingerprint(input);
+    };
+    let source = rawSeoSourceFingerprint(rawInput);
+    let input: ReturnType<typeof listingSeoInputSchema.parse>;
     let output: Awaited<ReturnType<IAIProvider['analyzeListingSeo']>>;
     try {
+      input = listingSeoInputSchema.parse(rawInput);
+      source = seoSourceFingerprint(input);
       output = await this.aiProvider.analyzeListingSeo(input, workspace.creativityPreset);
     } catch (error) {
       await this.eventRepo.recordAgentRecommendationOutcome({

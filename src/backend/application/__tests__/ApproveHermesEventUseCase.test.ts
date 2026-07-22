@@ -483,6 +483,31 @@ describe('ApproveHermesEventUseCase', () => {
     expect((await eventRepo.findById(event.id))?.status).toBe('failed');
   });
 
+  it('persists failed when approval provenance timestamping throws before applying', async () => {
+    const { useCase, eventRepo, product } = setup();
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-approval-provenance',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_lower_price',
+        severity: 'warning',
+        title: 'Lower the price',
+        proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
+      }),
+    );
+    await eventRepo.save(event);
+    jest
+      .spyOn(eventRepo, 'markAgentRecommendationApproved')
+      .mockRejectedValueOnce(new Error('provenance write failed'));
+
+    await expect(
+      useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' }),
+    ).rejects.toThrow('provenance write failed');
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+    expect(product.sellingPrice.amount).toBe(100);
+  });
+
   it('does not enqueue a relist when the OAuth account is disconnected', async () => {
     const { useCase, eventRepo, publishQueue } = setup('missing');
     const event = unwrap(

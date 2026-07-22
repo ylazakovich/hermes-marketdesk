@@ -214,8 +214,8 @@ const HermesActivityPage: React.FC = () => {
         <LoadingSkeleton lines={4} height={120} />
       ) : visibleEvents.length === 0 ? (
         <EmptyState
-          title="No Hermes activity"
-          description="Run Hermes or change filters to see suggestions, alerts, and completed actions."
+          title="No product analysis activity"
+          description="Select a product and use Analyze with Hermes, or change filters to see recorded suggestions, alerts, and completed actions."
           icon={<AutoAwesomeIcon sx={{ fontSize: 48 }} />}
         />
       ) : (

@@ -3,6 +3,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { HermesEvent } from '@shared/types';
 import HermesActivityPage, { HERMES_SETTINGS_PATH, HermesHero, HermesMetrics } from './HermesActivityPage';
 
+const mockUseHermesEvents = jest.fn(() => ({
+  data: { items: [event], total: 7, limit: 50, offset: 0 },
+  isLoading: false,
+  isFetching: false,
+  isError: false,
+  error: undefined,
+  refetch: jest.fn(),
+}));
+
 const event: HermesEvent = {
   id: 'event-1',
   workspaceId: 'workspace-1',
@@ -26,20 +35,24 @@ jest.mock('../state/hooks.js', () => ({
 }));
 
 jest.mock('../services/hooks/index.js', () => ({
-  useHermesEvents: () => ({
-    data: { items: [event], total: 7, limit: 50, offset: 0 },
-    isLoading: false,
-    isFetching: false,
-    isError: false,
-    error: undefined,
-    refetch: jest.fn(),
-  }),
+  useHermesEvents: () => mockUseHermesEvents(),
   useApproveHermesEvent: () => [jest.fn(), { isLoading: false }],
   useDismissHermesEvent: () => [jest.fn(), { isLoading: false }],
   useExecuteCategoryRecreationOperation: () => [jest.fn(), { isLoading: false }],
 }));
 
 describe('HermesActivityPage dashboard', () => {
+  beforeEach(() => {
+    mockUseHermesEvents.mockImplementation(() => ({
+      data: { items: [event], total: 7, limit: 50, offset: 0 },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: undefined,
+      refetch: jest.fn(),
+    }));
+  });
+
   it('renders the hero, real Configure deep link contract, tabs, and compact filters', () => {
     const html = renderToStaticMarkup(<HermesActivityPage />);
 
@@ -76,5 +89,22 @@ describe('HermesActivityPage dashboard', () => {
     expect(html).toContain('>7<');
     expect(html.match(/Unavailable/g) ?? []).toHaveLength(3);
     expect(html).not.toContain('Estimated');
+  });
+
+  it('uses product-scoped analysis wording for the empty state', () => {
+    mockUseHermesEvents.mockImplementation(() => ({
+      data: { items: [], total: 0, limit: 50, offset: 0 },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: undefined,
+      refetch: jest.fn(),
+    }));
+
+    const html = renderToStaticMarkup(<HermesActivityPage />);
+
+    expect(html).toContain('No product analysis activity');
+    expect(html).toContain('Select a product and use Analyze with Hermes');
+    expect(html).not.toContain('Run Hermes or change filters');
   });
 });

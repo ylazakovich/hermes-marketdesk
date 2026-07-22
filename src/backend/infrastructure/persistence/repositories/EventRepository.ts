@@ -13,6 +13,12 @@ const EVENT_SELECT = `
   FROM hermes_events
 `;
 
+const AGENT_RECOMMENDATION_TIMESTAMP_COLUMNS = new Set([
+  'approved_at',
+  'dismissed_at',
+  'applied_at',
+] as const);
+
 export class EventRepository implements IEventRepository {
   private readonly pool?: Pool;
   private readonly client?: PoolClient;
@@ -266,6 +272,9 @@ export class EventRepository implements IEventRepository {
     column: 'approved_at' | 'dismissed_at' | 'applied_at',
     at: Date,
   ): Promise<void> {
+    if (!AGENT_RECOMMENDATION_TIMESTAMP_COLUMNS.has(column)) {
+      throw new Error(`Unsupported agent recommendation timestamp column: ${column}`);
+    }
     await query(
       `UPDATE hermes_agent_recommendations SET ${column} = $3 WHERE workspace_id = $1 AND event_id = $2`,
       [workspaceId, eventId, at],

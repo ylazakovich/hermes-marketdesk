@@ -167,6 +167,68 @@ describe('RunHermesUseCase', () => {
     ]);
   });
 
+  it('records failed provenance when listing-seo input schema validation fails', async () => {
+    const { runHermes, eventRepo, productRepo } = setup();
+    const invalidTagsProduct = unwrap(
+      Product.create({
+        id: 'prod-invalid-tags',
+        workspaceId: 'ws-1',
+        sku: 'SKU-TAGS',
+        name: 'Taggy lamp',
+        description: 'A product with too many tags for the agent input schema.',
+        costPrice: money(50),
+        sellingPrice: money(100),
+        condition: 'good',
+        category: 'home',
+        tags: Array.from({ length: 51 }, (_unused, index) => `tag-${index}`),
+      }),
+    );
+    productRepo.items.set(invalidTagsProduct.id, invalidTagsProduct);
+
+    const result = await runHermes.execute({ workspaceId: 'ws-1', productId: invalidTagsProduct.id });
+
+    expect(result.isErr()).toBe(true);
+    expect(eventRepo.items.size).toBe(0);
+    expect([...eventRepo.agentRecommendations.values()]).toEqual([
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        productId: invalidTagsProduct.id,
+        eventId: null,
+        outcome: 'failed',
+        sourceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        recommendationFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    ]);
+  });
+
+  it('accepts a long valid product name at the listing-seo schema boundary', async () => {
+    const { runHermes, eventRepo, productRepo } = setup();
+    const longNameProduct = unwrap(
+      Product.create({
+        id: 'prod-long-name',
+        workspaceId: 'ws-1',
+        sku: 'SKU-LONG',
+        name: 'L'.repeat(200),
+        description: 'A product with a long but schema-valid title for SEO analysis.',
+        costPrice: money(50),
+        sellingPrice: money(100),
+        condition: 'good',
+        category: 'home',
+      }),
+    );
+    productRepo.items.set(longNameProduct.id, longNameProduct);
+
+    const result = await runHermes.execute({ workspaceId: 'ws-1', productId: longNameProduct.id });
+
+    expect(result.isOk()).toBe(true);
+    expect(unwrap(result)).toHaveLength(1);
+    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({
+      productId: longNameProduct.id,
+      outcome: 'suggested',
+      sourceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+  });
+
   it('rejects a product outside the authenticated workspace', async () => {
     const { runHermes, productRepo } = setup();
     const foreign = unwrap(
