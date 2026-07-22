@@ -487,8 +487,12 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
       metrics: {
         views: views ?? undefined,
         watchers: watchers ?? undefined,
-        conversations: threadMetrics.status === 'success' ? threadMetrics.conversations : undefined,
-        messages: threadMetrics.status === 'success' ? threadMetrics.messages : undefined,
+        conversations: threadMetrics.status === 'success'
+          ? threadMetrics.conversations
+          : threadMetrics.status === 'error' ? undefined : null,
+        messages: threadMetrics.status === 'success'
+          ? threadMetrics.messages
+          : threadMetrics.status === 'error' ? undefined : null,
       },
     };
   }

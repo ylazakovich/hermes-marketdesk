@@ -53,7 +53,7 @@ export interface ImportedMarketplaceListing {
   marketplaceCategory?: MarketplaceCategoryMetadata | null;
   imageUrls: string[];
   remoteUpdatedAt?: Date | null;
-  metrics?: { views?: number; watchers?: number; conversations?: number; messages?: number };
+  metrics?: { views?: number; watchers?: number; conversations?: number | null; messages?: number | null };
 }
 
 export interface ImportDiscoveryOptions {
