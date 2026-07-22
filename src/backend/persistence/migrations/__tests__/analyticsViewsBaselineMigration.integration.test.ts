@@ -121,8 +121,11 @@ describeDb('analytics views baseline migration (PostgreSQL integration)', () => 
       { listing_id: listingIds[5], total: 7, events: 1 },
     ]);
 
-    const baselines = await client.query<{ listing_id: string; quantity: number; occurred_at: Date }>(`
-      SELECT listing_id::text, quantity, occurred_at
+    const baselines = await client.query<{ listing_id: string; quantity: number; occurred_at: string }>(`
+      SELECT
+        listing_id::text,
+        quantity,
+        to_char(occurred_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS') || 'Z' AS occurred_at
       FROM analytics_events
       WHERE (listing_id = $1 AND quantity = 10) OR (listing_id = $2 AND quantity = 7)
       ORDER BY listing_id
@@ -130,7 +133,7 @@ describeDb('analytics views baseline migration (PostgreSQL integration)', () => 
     expect(baselines.rows.map((row) => ({
       listingId: row.listing_id,
       quantity: row.quantity,
-      occurredAt: row.occurred_at.toISOString(),
+      occurredAt: row.occurred_at,
     }))).toEqual([
       { listingId: listingIds[0], quantity: 10, occurredAt: '2026-07-20T12:00:00.000Z' },
       { listingId: listingIds[1], quantity: 7, occurredAt: '2026-07-19T11:00:00.000Z' },

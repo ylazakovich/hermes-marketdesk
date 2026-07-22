@@ -8,6 +8,7 @@ import {
   isProductRecheckStale,
   PUBLICATION_READINESS_CHECKING_LABEL,
   PUBLICATION_READINESS_RECHECK_LABEL,
+  PublicationReadinessAction,
   ProductRecheckReview,
   PublishPreviewReview,
   remoteMarketplaceChipColor,
@@ -348,5 +349,16 @@ describe('ListingDetailsPage presentation', () => {
     expect(PUBLICATION_READINESS_CHECKING_LABEL).toBe('Checking…');
     expect(PUBLICATION_READINESS_RECHECK_LABEL).not.toMatch(/[А-Яа-я]/);
     expect(PUBLICATION_READINESS_CHECKING_LABEL).not.toMatch(/[А-Яа-я]/);
+
+    const idle = renderToStaticMarkup(
+      <PublicationReadinessAction rechecking={false} disabled={false} onClick={() => undefined} />,
+    );
+    const checking = renderToStaticMarkup(
+      <PublicationReadinessAction rechecking disabled={false} onClick={() => undefined} />,
+    );
+    expect(idle).toContain('>Check again<');
+    expect(idle).not.toMatch(/<button[^>]*\sdisabled(?:=|\s|>)/);
+    expect(checking).toContain('>Checking…<');
+    expect(checking).toMatch(/<button[^>]*\sdisabled(?:=|\s|>)/);
   });
 });

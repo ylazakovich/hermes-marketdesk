@@ -64,6 +64,16 @@ export const MAX_QUOTA_OVERRIDE_REASON_LENGTH = 500;
 export const PUBLICATION_READINESS_RECHECK_LABEL = 'Check again';
 export const PUBLICATION_READINESS_CHECKING_LABEL = 'Checking…';
 
+export const PublicationReadinessAction: React.FC<{
+  rechecking: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}> = ({ rechecking, disabled, onClick }) => (
+  <Button variant="contained" disabled={rechecking || disabled} onClick={onClick}>
+    {rechecking ? PUBLICATION_READINESS_CHECKING_LABEL : PUBLICATION_READINESS_RECHECK_LABEL}
+  </Button>
+);
+
 type CategoryConflictProvenance = Extract<ProductCategoryProvenance, { status: 'conflict' }>;
 
 export function categoryConflictEvidenceLines(provenance: CategoryConflictProvenance): string[] {
@@ -557,9 +567,11 @@ const ListingDetailsPage: React.FC = () => {
         subtitle="Checks the current saved product without publishing or applying suggestions"
         sx={{ my: 2 }}
         action={(
-          <Button variant="contained" disabled={rechecking || !recheckListing} onClick={() => void handleRecheck()}>
-            {rechecking ? PUBLICATION_READINESS_CHECKING_LABEL : PUBLICATION_READINESS_RECHECK_LABEL}
-          </Button>
+          <PublicationReadinessAction
+            rechecking={rechecking}
+            disabled={!recheckListing}
+            onClick={() => void handleRecheck()}
+          />
         )}
       >
         {!recheckResult ? (
