@@ -373,10 +373,12 @@ export interface Listing {
   isRemotePending?: boolean;
   views: number | null;
   watchers: number | null;
+  conversations: number | null;
   messages: number | null;
   metricsAvailability?: {
     views: boolean;
     watchers: boolean;
+    conversations: boolean;
     messages: boolean;
   };
   publishedAt?: string;

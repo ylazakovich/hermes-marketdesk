@@ -102,10 +102,12 @@ export function presentListing(listing: Listing, identity: ListingIdentity = {})
     isRemotePending: isPendingRemoteStatus(listing.remoteStatus),
     views: listing.views,
     watchers: listing.watchers,
+    conversations: listing.conversations,
     messages: listing.messages,
     metricsAvailability: {
       views: listing.views !== null,
       watchers: listing.watchers !== null,
+      conversations: listing.conversations !== null,
       messages: listing.messages !== null,
     },
     publishedAt: iso(listing.publishedAt),

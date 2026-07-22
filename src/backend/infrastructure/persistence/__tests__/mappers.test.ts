@@ -140,6 +140,7 @@ describe('ListingMapper', () => {
     status: 'live',
     views: 10,
     watchers: 3,
+    conversations: 2,
     messages: 1,
     published_at: new Date('2024-03-01T00:00:00Z'),
     expires_at: new Date('2024-04-01T00:00:00Z'),
@@ -162,6 +163,7 @@ describe('ListingMapper', () => {
     expect(listing.status).toBe('live');
     expect(listing.views).toBe(10);
     expect(listing.watchers).toBe(3);
+    expect(listing.conversations).toBe(2);
     expect(listing.messages).toBe(1);
     expect(listing.isLive()).toBe(true);
     expect(listing.publishedAt?.toISOString()).toBe('2024-03-01T00:00:00.000Z');

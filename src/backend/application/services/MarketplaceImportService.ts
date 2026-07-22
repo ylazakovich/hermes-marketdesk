@@ -680,6 +680,7 @@ export class MarketplaceImportService {
       marketplaceCategory: remote.marketplaceCategory ?? null,
       views: remote.metrics?.views ?? null,
       watchers: remote.metrics?.watchers ?? null,
+      conversations: remote.metrics?.conversations ?? null,
       messages: remote.metrics?.messages ?? null,
       publishedAt: remote.status === 'live' ? now : null,
       lastSyncAt: now,

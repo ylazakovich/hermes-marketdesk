@@ -47,8 +47,9 @@ const listing: Listing = {
   isRemotePending: false,
   views: 125,
   watchers: null,
+  conversations: 2,
   messages: 4,
-  metricsAvailability: { views: true, watchers: false, messages: true },
+  metricsAvailability: { views: true, watchers: false, conversations: true, messages: true },
   publishedAt: '2026-07-15T10:00:00.000Z',
   lastSyncAt: '2026-07-16T09:00:00.000Z',
   createdAt: '2026-07-15T09:00:00.000Z',
@@ -81,6 +82,8 @@ describe('product detail redesign sections', () => {
     expect(html).toContain('photo 1');
     expect(html).toContain('125');
     expect(html).toContain('Unknown');
+    expect(html).toContain('Conversations');
+    expect(html).toContain('OLX chats');
     expect(html).toContain('Conversion is not shown');
     expect(html).toContain('Recorded price history chart');
     expect(html).toContain('Approved recommendation');

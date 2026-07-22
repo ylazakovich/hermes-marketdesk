@@ -242,6 +242,7 @@ CREATE TABLE IF NOT EXISTS listings (
   marketplace_category JSONB,
   views INT DEFAULT 0,
   watchers INT DEFAULT 0,
+  conversations INT,
   messages INT DEFAULT 0,
   published_at TIMESTAMP,
   expires_at TIMESTAMP,

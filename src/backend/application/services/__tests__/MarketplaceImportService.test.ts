@@ -57,7 +57,7 @@ function remoteListing(
     category: 'Electronics',
     imageUrls: ['https://img/1.jpg'],
     remoteUpdatedAt: new Date('2026-07-14T00:00:00.000Z'),
-    metrics: { views: 7, watchers: 2, messages: 1 },
+    metrics: { views: 7, watchers: 2, conversations: 1, messages: 1 },
     ...overrides,
   };
 }
@@ -542,7 +542,7 @@ describe('MarketplaceImportService', () => {
       id: 'listing-category-preserve', productId: 'product-1', marketplaceId: 'marketplace-1',
       marketplaceListingId: 'olx-1', externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
       price: money(100), status: 'live', remoteStatus: 'active',
-      marketplaceCategory: headphonesCategory, views: 7, watchers: 2, messages: 1,
+      marketplaceCategory: headphonesCategory, views: 7, watchers: 2, conversations: 1, messages: 1,
     }));
     const { service, listingRepo } = createService([
       remoteListing({ marketplaceCategory: null }),
@@ -588,7 +588,7 @@ describe('MarketplaceImportService', () => {
       id: 'listing-projector-import', productId: product.id, marketplaceId: 'marketplace-1',
       marketplaceListingId: 'olx-1', externalUrl: 'https://www.olx.pl/d/oferta/olx-1',
       price: money(100), status: 'live', marketplaceCategory: projectorCategory,
-      views: 7, watchers: 2, messages: 1,
+      views: 7, watchers: 2, conversations: 1, messages: 1,
     }));
     const reconcileWithRepositories = jest.fn(async () => ({ outcome: 'synced', categoryChanged: true }));
     const created = createService(

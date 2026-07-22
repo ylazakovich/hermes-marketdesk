@@ -232,6 +232,7 @@ export class SyncMarketplaceHandler {
       listing.recordSyncStats({
         views: s.views,
         watchers: s.watchers,
+        conversations: s.conversations,
         messages: s.messages,
         remoteStatus: s.remoteStatus ?? null,
       });
@@ -249,7 +250,7 @@ export class SyncMarketplaceHandler {
       const statusEvent = this.reconcileStatus(listing, s);
       if (statusEvent) statusEvents.push(statusEvent);
       if (s.messageMetricStatus === 'error') {
-        const messageMetricNote = 'Message metric is stale: thread metadata could not be processed';
+        const messageMetricNote = 'Conversation/message metrics are stale: thread metadata could not be processed';
         listing.recordSyncStatusNote(
           listing.syncError ? `${listing.syncError}; ${messageMetricNote}` : messageMetricNote,
         );

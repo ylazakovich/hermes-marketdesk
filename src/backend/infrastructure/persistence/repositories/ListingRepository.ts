@@ -9,7 +9,7 @@ import { InvalidStateError } from '../../../domain/shared/DomainError';
 // listings carry no currency column; join products -> workspaces for Money.
 const LISTING_SELECT = `
   SELECT l.id, l.product_id, l.marketplace_id, l.marketplace_listing_id, l.external_url, l.price,
-         l.status, l.remote_status, l.marketplace_category, l.views, l.watchers, l.messages, l.published_at, l.expires_at,
+         l.status, l.remote_status, l.marketplace_category, l.views, l.watchers, l.conversations, l.messages, l.published_at, l.expires_at,
          l.sync_error, l.last_sync_at, l.created_at, l.updated_at, w.currency
   FROM listings l
   JOIN products p ON p.id = l.product_id
@@ -159,9 +159,9 @@ export class ListingRepository implements IListingRepository {
     await query(
       `INSERT INTO listings
          (id, product_id, marketplace_id, marketplace_listing_id, external_url, price, status, remote_status,
-          marketplace_category, views, watchers, messages, published_at, expires_at, sync_error,
+          marketplace_category, views, watchers, conversations, messages, published_at, expires_at, sync_error,
           last_sync_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
        ON CONFLICT (id) DO UPDATE SET
          marketplace_listing_id = EXCLUDED.marketplace_listing_id,
          external_url = EXCLUDED.external_url,
@@ -171,6 +171,7 @@ export class ListingRepository implements IListingRepository {
          marketplace_category = EXCLUDED.marketplace_category,
          views = EXCLUDED.views,
          watchers = EXCLUDED.watchers,
+         conversations = EXCLUDED.conversations,
          messages = EXCLUDED.messages,
          published_at = EXCLUDED.published_at,
          expires_at = EXCLUDED.expires_at,
@@ -189,6 +190,7 @@ export class ListingRepository implements IListingRepository {
         listing.marketplaceCategory ? JSON.stringify(listing.marketplaceCategory) : null,
         listing.views,
         listing.watchers,
+        listing.conversations,
         listing.messages,
         listing.publishedAt,
         listing.expiresAt,
@@ -210,15 +212,15 @@ export class ListingRepository implements IListingRepository {
       `UPDATE listings SET
          marketplace_listing_id = $2, external_url = $3, price = $4, status = $5,
          remote_status = $6, marketplace_category = $7, views = $8, watchers = $9,
-         messages = $10, published_at = $11, expires_at = $12, sync_error = $13,
-         last_sync_at = $14, updated_at = $15
-       WHERE id = $1 AND updated_at = $16
+         conversations = $10, messages = $11, published_at = $12, expires_at = $13, sync_error = $14,
+         last_sync_at = $15, updated_at = $16
+       WHERE id = $1 AND updated_at = $17
        RETURNING id`,
       [
         listing.id, listing.marketplaceListingId, listing.externalUrl, listing.price.amount,
         listing.status, listing.remoteStatus,
         listing.marketplaceCategory ? JSON.stringify(listing.marketplaceCategory) : null,
-        listing.views, listing.watchers, listing.messages, listing.publishedAt, listing.expiresAt,
+        listing.views, listing.watchers, listing.conversations, listing.messages, listing.publishedAt, listing.expiresAt,
         listing.syncError, listing.lastSyncAt, listing.updatedAt, expectedUpdatedAt,
       ],
       client,

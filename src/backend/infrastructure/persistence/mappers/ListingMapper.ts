@@ -21,6 +21,7 @@ export const ListingMapper = {
       marketplaceCategory: parseMarketplaceCategoryMetadata(row.marketplace_category),
       views: row.views,
       watchers: row.watchers,
+      conversations: row.conversations,
       messages: row.messages,
       publishedAt: toNullableDate(row.published_at),
       expiresAt: toNullableDate(row.expires_at),
