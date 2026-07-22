@@ -98,6 +98,8 @@ export interface WorkspaceRow {
   // JSONB column (migration 007). node-pg parses JSONB to an object; NULL when
   // unset, in which case the mapper falls back to DEFAULT_HERMES_GUARDRAILS.
   guardrails?: HermesGuardrails | null;
+  hermes_creativity_preset?: string;
+  listing_seo_enabled?: boolean;
   created_at: Date | string;
   updated_at: Date | string;
 }

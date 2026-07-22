@@ -21,9 +21,13 @@ CREATE TABLE IF NOT EXISTS workspaces (
   timezone VARCHAR(100) DEFAULT 'Europe/Warsaw',
   language VARCHAR(10) NOT NULL DEFAULT 'en',
   autonomy_level VARCHAR(50) DEFAULT 'suggest_only',
+  guardrails JSONB,
+  hermes_creativity_preset VARCHAR(20) NOT NULL DEFAULT 'balanced',
+  listing_seo_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT workspaces_language_valid CHECK (language IN ('en', 'pl'))
+  CONSTRAINT workspaces_language_valid CHECK (language IN ('en', 'pl')),
+  CONSTRAINT workspaces_hermes_creativity_preset_valid CHECK (hermes_creativity_preset IN ('precise', 'balanced', 'creative'))
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -348,6 +352,37 @@ CREATE INDEX IF NOT EXISTS idx_hermes_events_status ON hermes_events(status);
 CREATE INDEX IF NOT EXISTS idx_hermes_events_created ON hermes_events(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_hermes_events_workspace_idempotency
   ON hermes_events(workspace_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS hermes_agent_recommendations (
+  id UUID PRIMARY KEY,
+  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  event_id UUID REFERENCES hermes_events(id) ON DELETE SET NULL,
+  agent_id VARCHAR(80) NOT NULL,
+  agent_version VARCHAR(40) NOT NULL,
+  creativity_preset VARCHAR(20) NOT NULL,
+  source_fingerprint CHAR(64) NOT NULL,
+  recommendation_fingerprint CHAR(64) NOT NULL,
+  outcome VARCHAR(20) NOT NULL,
+  suggested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  approved_at TIMESTAMPTZ,
+  dismissed_at TIMESTAMPTZ,
+  applied_at TIMESTAMPTZ,
+  failed_at TIMESTAMPTZ,
+  metrics JSONB,
+  metrics_provider VARCHAR(40),
+  metrics_observed_at TIMESTAMPTZ,
+  metrics_fresh_through TIMESTAMPTZ,
+  CONSTRAINT hermes_agent_recommendations_creativity_valid CHECK (creativity_preset IN ('precise', 'balanced', 'creative')),
+  CONSTRAINT hermes_agent_recommendations_agent_valid CHECK (agent_id = 'listing-seo'),
+  CONSTRAINT hermes_agent_recommendations_outcome_valid CHECK (outcome IN ('suggested', 'suppressed', 'failed'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_hermes_agent_recommendations_event
+  ON hermes_agent_recommendations(workspace_id, event_id) WHERE event_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_hermes_agent_recommendation_dedup
+  ON hermes_agent_recommendations(workspace_id, product_id, agent_id, agent_version, source_fingerprint, recommendation_fingerprint, suggested_at DESC);
 
 CREATE TABLE IF NOT EXISTS category_correction_operations (
   id UUID PRIMARY KEY,

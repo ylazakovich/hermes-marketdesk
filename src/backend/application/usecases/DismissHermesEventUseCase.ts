@@ -40,6 +40,15 @@ export class DismissHermesEventUseCase {
     if (dismissed.isErr()) return dismissed;
 
     await this.eventRepo.save(event);
+    await this.eventRepo.markAgentRecommendationDismissed(
+      event.workspaceId,
+      event.id,
+      event.resolvedAt ?? new Date(),
+    ).catch(() => {
+      // The dismissal is authoritative once the event row is saved. Provenance
+      // timestamping is best-effort so a missing/failed agent row does not make
+      // the user retry an already-dismissed recommendation.
+    });
 
     await this.activityLog.record({
       id: this.idGenerator(),

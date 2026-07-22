@@ -94,25 +94,51 @@ export class ApproveHermesEventUseCase {
 
     const approved = event.approve();
     if (approved.isErr()) return approved;
-    await this.eventRepo.save(event);
 
     let applied: Result<ApplyChangeOutcome>;
     try {
-      applied = await this.applyChange(event, input.actorId);
+      await this.eventRepo.save(event);
+      await this.eventRepo.markAgentRecommendationApproved(
+        event.workspaceId,
+        event.id,
+        new Date(),
+      );
+      applied = await this.isListingSeoReviewOnlyApproval(event)
+        ? Ok({ marketplaceUpdates: [] })
+        : await this.applyChange(event, input.actorId);
     } catch (error) {
       const failed = event.markFailed();
-      if (failed.isOk()) await this.eventRepo.save(event);
+      if (failed.isOk()) {
+        await this.eventRepo.save(event);
+        await this.eventRepo.markAgentRecommendationFailed(
+          event.workspaceId,
+          event.id,
+          event.resolvedAt ?? new Date(),
+        );
+      }
       throw error;
     }
     if (applied.isErr()) {
       const failed = event.markFailed();
-      if (failed.isOk()) await this.eventRepo.save(event);
+      if (failed.isOk()) {
+        await this.eventRepo.save(event);
+        await this.eventRepo.markAgentRecommendationFailed(
+          event.workspaceId,
+          event.id,
+          event.resolvedAt ?? new Date(),
+        );
+      }
       return applied;
     }
 
     const completed = event.markApplied();
     if (completed.isErr()) return completed;
     await this.eventRepo.save(event);
+    await this.eventRepo.markAgentRecommendationApplied(
+      event.workspaceId,
+      event.id,
+      event.resolvedAt ?? new Date(),
+    );
 
     await this.activityLog.record({
       id: this.idGenerator(),
@@ -151,7 +177,9 @@ export class ApproveHermesEventUseCase {
     actorId?: string,
   ): Promise<Result<ApplyChangeOutcome>> {
     const change = event.proposedChange;
-    if (change === null) return Ok({ marketplaceUpdates: [] });
+    if (change === null) {
+      return Err(new InvalidStateError('Events without a proposed change cannot be applied'));
+    }
 
     switch (change.kind) {
       case 'price':
@@ -192,6 +220,20 @@ export class ApproveHermesEventUseCase {
       default:
         return Ok({ marketplaceUpdates: [] });
     }
+  }
+
+  private async isListingSeoReviewOnlyApproval(event: HermesEvent): Promise<boolean> {
+    if (
+      event.proposedChange?.kind !== 'title' &&
+      event.proposedChange?.kind !== 'description'
+    ) {
+      return false;
+    }
+    const recommendation = await this.eventRepo.findAgentRecommendationByEvent(
+      event.workspaceId,
+      event.id,
+    );
+    return recommendation?.agentId === 'listing-seo';
   }
 
   private async applyPriceChange(

@@ -216,6 +216,10 @@ export const updateNotificationPreferencesSchema = z
 export const updateHermesSettingsSchema = z
   .object({
     autonomyLevel: z.enum(AUTONOMY_LEVEL_LIST as [string, ...string[]]).optional(),
+    creativityPreset: z.enum(['precise', 'balanced', 'creative']).optional(),
+    agents: z.object({
+      listingSeo: z.object({ enabled: z.boolean() }).strict().optional(),
+    }).strict().refine(nonEmptyPatch, { message: 'At least one agent must be provided' }).optional(),
     guardrails: z
       .object({
         maxAutoPriceChangePct: z.number().min(0).max(100).optional(),
@@ -254,7 +258,12 @@ export const registerSchema = z.object({
 
 export const runHermesSchema = z.object({
   trigger: z.enum(['scheduled', 'manual', 'event']).optional(),
-});
+  productId: z.string().uuid().optional(),
+}).strict();
+
+export const runProductHermesSchema = z.object({
+  trigger: z.enum(['scheduled', 'manual', 'event']).optional(),
+}).strict();
 
 export const dismissEventSchema = z.object({
   actorId: z.string().optional(),

@@ -1,5 +1,5 @@
 import type { Workspace } from '../../entities/Workspace';
-import type { AutonomyLevel, HermesGuardrails, WorkspaceLanguage } from '../../../../shared/types';
+import type { AutonomyLevel, HermesCreativityPreset, HermesGuardrails, WorkspaceLanguage } from '../../../../shared/types';
 
 export interface WorkspaceProfilePatch {
   name?: string;
@@ -11,6 +11,8 @@ export interface WorkspaceProfilePatch {
 export interface WorkspaceHermesPatch {
   autonomyLevel?: AutonomyLevel;
   guardrails?: Partial<HermesGuardrails>;
+  creativityPreset?: HermesCreativityPreset;
+  listingSeoEnabled?: boolean;
 }
 
 export type WorkspacePartialPatch = WorkspaceProfilePatch & WorkspaceHermesPatch;

@@ -31,6 +31,7 @@ import TuneIcon from '@mui/icons-material/TuneOutlined';
 import InfoIcon from '@mui/icons-material/InfoOutlined';
 import type {
   AutonomyLevel,
+  HermesCreativityPreset,
   NotificationChannels,
   NotificationEventKey,
   WorkspaceLanguage,
@@ -47,6 +48,8 @@ import {
   useGetNotificationPreferencesQuery,
   useGetUserPreferencesQuery,
   useGetWorkspaceSettingsQuery,
+  hermesCreativityPatch,
+  hermesListingSeoEnabledPatch,
   hermesAutomationPatch,
   notificationChannelPatch,
   settingsPrincipalKey,
@@ -348,10 +351,17 @@ const SettingsPage: React.FC = () => {
     setBaseline(incoming);
     setInitializedPrincipal(principalCacheKey);
     setFieldErrors({});
-  }, [workspaceSettings.currentData, principalCacheKey, initializedPrincipal, baselineSnapshot, dirty]);
+  }, [
+    workspaceSettings.currentData,
+    principalCacheKey,
+    initializedPrincipal,
+    baselineSnapshot,
+    dirty,
+  ]);
 
   useEffect(() => {
-    if (preferences.currentData?.themeMode) dispatch(setThemeMode(preferences.currentData.themeMode));
+    if (preferences.currentData?.themeMode)
+      dispatch(setThemeMode(preferences.currentData.themeMode));
   }, [preferences.currentData?.themeMode, principalCacheKey, dispatch]);
 
   const clearFieldError = (field: GeneralField) =>
@@ -393,6 +403,26 @@ const SettingsPage: React.FC = () => {
       dispatch(
         enqueueToast({ message: `Autonomy set to ${AUTONOMY_LABELS[level]}.`, severity: 'success' })
       );
+    } catch (err) {
+      dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
+    }
+  };
+
+  const handleCreativity = async (creativityPreset: HermesCreativityPreset) => {
+    if (!principal) return;
+    try {
+      await updateHermes({ principal, patch: hermesCreativityPatch(creativityPreset) }).unwrap();
+      dispatch(enqueueToast({ message: 'Hermes creativity saved.', severity: 'success' }));
+    } catch (err) {
+      dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
+    }
+  };
+
+  const handleListingSeo = async (enabled: boolean) => {
+    if (!principal) return;
+    try {
+      await updateHermes({ principal, patch: hermesListingSeoEnabledPatch(enabled) }).unwrap();
+      dispatch(enqueueToast({ message: 'Listing SEO agent saved.', severity: 'success' }));
     } catch (err) {
       dispatch(enqueueToast({ message: errorMessage(err), severity: 'error' }));
     }
@@ -648,6 +678,28 @@ const SettingsPage: React.FC = () => {
                   </ButtonBase>
                 );
               })}
+              <Divider />
+              <Typography variant="subtitle2">Listing agent creativity</Typography>
+              <Select
+                value={hermesSettings.currentData?.creativityPreset ?? 'balanced'}
+                disabled={savingHermes || !hermesSettings.currentData}
+                onChange={(event) => handleCreativity(event.target.value as HermesCreativityPreset)}
+                aria-label="Listing agent creativity"
+              >
+                <MenuItem value="precise">Precise</MenuItem>
+                <MenuItem value="balanced">Balanced</MenuItem>
+                <MenuItem value="creative">Creative</MenuItem>
+              </Select>
+              <FormControlLabel
+                control={
+                  <Switch
+                    disabled={savingHermes || !hermesSettings.currentData}
+                    checked={hermesSettings.currentData?.agents.listingSeo.enabled ?? true}
+                    onChange={(event) => handleListingSeo(event.target.checked)}
+                  />
+                }
+                label="Enable listing SEO agent (review-only)"
+              />
               <Divider />
               <Typography variant="subtitle2">Automation controls</Typography>
               {(

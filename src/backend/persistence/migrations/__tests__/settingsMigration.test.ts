@@ -20,6 +20,10 @@ describe('persistent settings migration', () => {
     path.join(process.cwd(), 'src/backend/persistence/schema.sql'),
     'utf8'
   );
+  const agentsMigration = fs.readFileSync(
+    path.join(process.cwd(), 'src/backend/persistence/migrations/040_marketdesk_agents.sql'),
+    'utf8'
+  );
 
   it('backfills and constrains workspace language idempotently', () => {
     expect(migration).toContain('ADD COLUMN IF NOT EXISTS language');
@@ -35,6 +39,23 @@ describe('persistent settings migration', () => {
       'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_users_workspace_id'
     );
     expect(schema).toContain("language VARCHAR(10) NOT NULL DEFAULT 'en'");
+    expect(schema).toContain("hermes_creativity_preset VARCHAR(20) NOT NULL DEFAULT 'balanced'");
+    expect(schema).toContain('listing_seo_enabled BOOLEAN NOT NULL DEFAULT TRUE');
+  });
+
+  it('adds product-scoped Hermes agent provenance with tenant-safe deduplication', () => {
+    expect(agentsMigration).toContain('ADD COLUMN IF NOT EXISTS hermes_creativity_preset');
+    expect(agentsMigration).toContain('ADD COLUMN IF NOT EXISTS listing_seo_enabled');
+    expect(agentsMigration).toContain('CREATE TABLE IF NOT EXISTS hermes_agent_recommendations');
+    expect(agentsMigration).toContain('workspace_id UUID NOT NULL REFERENCES workspaces(id)');
+    expect(agentsMigration).toContain('product_id UUID NOT NULL REFERENCES products(id)');
+    expect(agentsMigration).toContain('recommendation_fingerprint CHAR(64) NOT NULL');
+    expect(agentsMigration).toContain('outcome VARCHAR(20) NOT NULL');
+    expect(agentsMigration).toContain('failed_at TIMESTAMPTZ');
+    expect(agentsMigration).toContain("CHECK (outcome IN ('suggested', 'suppressed', 'failed'))");
+    expect(agentsMigration).toContain('event_id UUID REFERENCES hermes_events(id) ON DELETE SET NULL');
+    expect(agentsMigration).toContain('uq_hermes_agent_recommendations_event');
+    expect(agentsMigration).toContain('idx_hermes_agent_recommendation_dedup');
   });
 
   it('uses normalized, tenant-and-user-scoped preference tables without JSONB', () => {

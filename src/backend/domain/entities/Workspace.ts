@@ -3,7 +3,7 @@
 
 import { Result, Ok, Err } from '../shared/Result';
 import { ValidationError } from '../shared/DomainError';
-import type { AutonomyLevel, HermesGuardrails, WorkspaceLanguage } from '../../../shared/types';
+import type { AutonomyLevel, HermesCreativityPreset, HermesGuardrails, WorkspaceLanguage } from '../../../shared/types';
 import {
   AUTONOMY_LEVEL_LIST,
   DEFAULT_CURRENCY,
@@ -19,6 +19,8 @@ export interface CreateWorkspaceProps {
   language?: WorkspaceLanguage;
   autonomyLevel?: AutonomyLevel;
   guardrails?: HermesGuardrails;
+  creativityPreset?: HermesCreativityPreset;
+  listingSeoEnabled?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -32,6 +34,8 @@ export class Workspace {
     public readonly language: WorkspaceLanguage,
     private _autonomyLevel: AutonomyLevel,
     private _guardrails: HermesGuardrails,
+    public readonly creativityPreset: HermesCreativityPreset,
+    public readonly listingSeoEnabled: boolean,
     public readonly createdAt: Date,
     private _updatedAt: Date
   ) {}
@@ -56,6 +60,10 @@ export class Workspace {
       return Err(new ValidationError(`Invalid autonomy level: ${autonomyLevel}`));
     }
 
+    const creativityPreset = props.creativityPreset ?? 'balanced';
+    if (!['precise', 'balanced', 'creative'].includes(creativityPreset)) {
+      return Err(new ValidationError(`Invalid Hermes creativity preset: ${creativityPreset}`));
+    }
     const now = new Date();
     return Ok(
       new Workspace(
@@ -66,6 +74,8 @@ export class Workspace {
         language,
         autonomyLevel,
         props.guardrails ?? { ...DEFAULT_HERMES_GUARDRAILS },
+        creativityPreset,
+        props.listingSeoEnabled ?? true,
         props.createdAt ?? now,
         props.updatedAt ?? now
       )

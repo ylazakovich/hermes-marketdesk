@@ -255,6 +255,80 @@ describe('ApproveHermesEventUseCase', () => {
     expect(activityLog.entries[0].metadata.marketplaceSync).toMatchObject({ status: 'queued' });
   });
 
+  it.each([
+    {
+      field: 'title' as const,
+      eventId: 'evt-listing-seo-title',
+      proposedChange: { kind: 'title' as const, field: 'title' as const, from: 'Lamp', to: 'Better Lamp' },
+      expectedProduct: { name: 'Lamp', description: 'A beautiful vintage brass lamp in excellent condition.' },
+    },
+    {
+      field: 'description' as const,
+      eventId: 'evt-listing-seo-description',
+      proposedChange: {
+        kind: 'description' as const,
+        field: 'description' as const,
+        from: 'A beautiful vintage brass lamp in excellent condition.',
+        to: 'A richer product description for buyers.',
+      },
+      expectedProduct: { name: 'Lamp', description: 'A beautiful vintage brass lamp in excellent condition.' },
+    },
+  ])('keeps listing-seo $field approvals feedback-only', async ({ eventId, proposedChange, expectedProduct }) => {
+    const { useCase, eventRepo, productRepo, product, listingRepo, publishQueue, activityLog } = setup();
+    const saveProduct = jest.spyOn(productRepo, 'save');
+    const liveListing = unwrap(
+      Listing.create({
+        id: `${eventId}-live`,
+        productId: 'prod-1',
+        marketplaceId: 'mp-1',
+        marketplaceListingId: `${eventId}-olx`,
+        price: money(100),
+        status: 'live',
+      })
+    );
+    listingRepo.items.set(liveListing.id, liveListing);
+    const event = unwrap(
+      HermesEvent.create({
+        id: eventId,
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: proposedChange.kind === 'description' ? 'update_description' : 'suggested_better_title',
+        severity: 'info',
+        title: `Listing SEO suggestion: ${proposedChange.field}`,
+        detail: 'Review-only suggestion from listing-seo@1.0.0.',
+        proposedChange,
+      })
+    );
+    await eventRepo.save(event);
+    await eventRepo.recordAgentRecommendationOutcome({
+      id: `${eventId}-recommendation`,
+      workspaceId: 'ws-1',
+      productId: 'prod-1',
+      eventId: event.id,
+      agentId: 'listing-seo',
+      agentVersion: '1.0.0',
+      creativityPreset: 'balanced',
+      sourceFingerprint: '2'.repeat(64),
+      recommendationFingerprint: '3'.repeat(64),
+      outcome: 'suggested',
+      suggestedAt: new Date(),
+    });
+
+    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+
+    expect(result.isOk()).toBe(true);
+    expect((await eventRepo.findById(event.id))?.status).toBe('applied');
+    expect(product.name).toBe(expectedProduct.name);
+    expect(product.description).toBe(expectedProduct.description);
+    expect(saveProduct).not.toHaveBeenCalled();
+    expect(publishQueue.jobs).toHaveLength(0);
+    expect(activityLog.entries[0].metadata.marketplaceSync).toEqual({ status: 'not_required' });
+    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({
+      approvedAt: expect.any(Date),
+      appliedAt: expect.any(Date),
+    });
+  });
+
   it('keeps draft listings local-only for approved description changes', async () => {
     const { useCase, eventRepo, publishQueue, activityLog } = setup();
     const event = unwrap(
@@ -416,6 +490,44 @@ describe('ApproveHermesEventUseCase', () => {
     if (result.isErr()) expect(result.error.code).toBe('INVALID_STATE');
   });
 
+  it('rejects applying informational recommendations without a proposed change', async () => {
+    const { useCase, eventRepo, publishQueue } = setup();
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-photos',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_more_photos',
+        severity: 'info',
+        title: 'Add photos',
+        detail: 'Acknowledgement-only legacy recommendation.',
+        proposedChange: null,
+      })
+    );
+    await eventRepo.save(event);
+    await eventRepo.recordAgentRecommendationOutcome({
+      id: 'rec-photos',
+      workspaceId: 'ws-1',
+      productId: 'prod-1',
+      eventId: event.id,
+      agentId: 'listing-seo',
+      agentVersion: '1.0.0',
+      creativityPreset: 'balanced',
+      sourceFingerprint: '0'.repeat(64),
+      recommendationFingerprint: '1'.repeat(64),
+      outcome: 'suggested',
+      suggestedAt: new Date(),
+    });
+
+    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.code).toBe('INVALID_STATE');
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+    expect(publishQueue.jobs).toHaveLength(0);
+    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+  });
+
   it('returns NOT_FOUND for an unknown event', async () => {
     const { useCase } = setup();
     const result = await useCase.execute({ eventId: 'nope', workspaceId: 'ws-1' });
@@ -443,6 +555,31 @@ describe('ApproveHermesEventUseCase', () => {
       useCase.execute({ eventId: event.id, workspaceId: 'ws-1' }),
     ).rejects.toThrow('database unavailable');
     expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+  });
+
+  it('persists failed when approval provenance timestamping throws before applying', async () => {
+    const { useCase, eventRepo, product } = setup();
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-approval-provenance',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_lower_price',
+        severity: 'warning',
+        title: 'Lower the price',
+        proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
+      }),
+    );
+    await eventRepo.save(event);
+    jest
+      .spyOn(eventRepo, 'markAgentRecommendationApproved')
+      .mockRejectedValueOnce(new Error('provenance write failed'));
+
+    await expect(
+      useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' }),
+    ).rejects.toThrow('provenance write failed');
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+    expect(product.sellingPrice.amount).toBe(100);
   });
 
   it('does not enqueue a relist when the OAuth account is disconnected', async () => {

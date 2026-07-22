@@ -87,15 +87,18 @@ export interface ListingDelistOperation {
   listingId: string;
   marketplaceId: string;
   state: 'requested' | 'approved' | 'executing' | 'executed' | 'failed';
-  result: ({
-    failureKind?: 'authentication' | 'validation' | 'provider_rejection' | 'ambiguous' | 'dependency';
-    errorCode?: string;
-    message?: string;
-    retrySafe?: boolean;
-    manualReconciliationRequired?: boolean;
-    externalListingId?: string;
-    externalUrl?: string | null;
-  } & Record<string, unknown>) | null;
+  result:
+    | ({
+        failureKind?:
+          'authentication' | 'validation' | 'provider_rejection' | 'ambiguous' | 'dependency';
+        errorCode?: string;
+        message?: string;
+        retrySafe?: boolean;
+        manualReconciliationRequired?: boolean;
+        externalListingId?: string;
+        externalUrl?: string | null;
+      } & Record<string, unknown>)
+    | null;
 }
 
 export interface PublishListingPreview {
@@ -268,12 +271,13 @@ export interface HermesEventListParams {
   offset?: number;
 }
 
-// POST /hermes/run body — workspace is derived from the authenticated session.
+// Product-scoped Hermes run body — workspace is derived from the authenticated session.
 export interface HermesRunInput {
   trigger?: 'scheduled' | 'manual' | 'event';
+  productId: string;
 }
 
-// POST /hermes/run responds with the array of generated events (HermesEventView[]).
+// POST /hermes/products/:productId/run responds with the array of generated events (HermesEventView[]).
 
 export type HermesEventResolution = HermesEvent;
 
@@ -323,7 +327,10 @@ export interface AnalyticsOverview {
   sales: number;
   conversion: number;
   currency: string | null;
-  previous: Pick<AnalyticsOverview, 'currency' | 'revenue' | 'profit' | 'totalViews' | 'sales' | 'conversion'> | null;
+  previous: Pick<
+    AnalyticsOverview,
+    'currency' | 'revenue' | 'profit' | 'totalViews' | 'sales' | 'conversion'
+  > | null;
 }
 
 export interface RevenuePoint {

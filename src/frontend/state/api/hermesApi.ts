@@ -11,12 +11,18 @@ import type {
   HermesRunInput,
 } from './dto.js';
 
+export function buildProductHermesRunRequest(input: HermesRunInput) {
+  const { productId, trigger = 'manual' } = input;
+  return {
+    url: `/hermes/products/${encodeURIComponent(productId)}/run`,
+    method: 'POST' as const,
+    body: { trigger },
+  };
+}
+
 export const hermesApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
-    getHermesEvents: builder.query<
-      PaginatedResponse<HermesEvent>,
-      HermesEventListParams | void
-    >({
+    getHermesEvents: builder.query<PaginatedResponse<HermesEvent>, HermesEventListParams | void>({
       query: (params) => `/hermes/events${buildQueryString({ ...(params ?? {}) })}`,
       transformResponse: (res: PaginatedApiResponse<HermesEvent>) => unwrapPaginated(res),
       providesTags: (result) =>
@@ -62,9 +68,7 @@ export const hermesApi = baseApi.injectEndpoints({
       query: ({ action, paidOverrideReason }) => ({
         url: action.href,
         method: action.method,
-        body: action.kind === 'approve' && paidOverrideReason
-          ? { paidOverrideReason }
-          : {},
+        body: action.kind === 'approve' && paidOverrideReason ? { paidOverrideReason } : {},
       }),
       transformResponse: (res: ApiResponse<CategoryRecreationOperationResolution>) => unwrap(res),
       invalidatesTags: (result) => [
@@ -74,10 +78,10 @@ export const hermesApi = baseApi.injectEndpoints({
       ],
     }),
 
-    // POST /hermes/run — trigger an analysis run; responds 202 with the array of
-    // generated events (HermesEventView[]).
-    runHermes: builder.mutation<HermesEvent[], HermesRunInput | void>({
-      query: (body) => ({ url: '/hermes/run', method: 'POST', body: body ?? {} }),
+    // Product-scoped analysis only. The legacy POST /hermes/run endpoint remains backend-compatible,
+    // but frontend callers must choose one explicit product.
+    runHermes: builder.mutation<HermesEvent[], HermesRunInput>({
+      query: buildProductHermesRunRequest,
       transformResponse: (res: ApiResponse<HermesEvent[]>) => unwrap(res),
       invalidatesTags: [{ type: 'HermesEvent', id: 'LIST' }],
     }),

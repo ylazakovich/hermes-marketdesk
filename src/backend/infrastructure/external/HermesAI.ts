@@ -13,6 +13,13 @@ import type {
 } from '../../domain/ports/IAIProvider';
 import type { Product } from '../../domain/entities/Product';
 import type { Marketplace } from '../../domain/entities/Marketplace';
+import {
+  getMarketDeskAgent,
+  listingSeoOutputSchema,
+  type CreativityPreset,
+  type ListingSeoInput,
+  type ListingSeoOutput,
+} from '../../domain/agents/MarketDeskAgentCatalog';
 
 export const DEFAULT_HERMES_MODEL = 'hermes-agent';
 export const DEFAULT_HERMES_API_URL = 'http://127.0.0.1:8642/v1';
@@ -104,7 +111,11 @@ export class HermesAI implements IAIProvider {
     return { suggestedPrice, reasoning, confidence };
   }
 
-  async generateTitle(product: Product, marketplace: Marketplace | null): Promise<string> {
+  async generateTitle(
+    product: Product,
+    marketplace: Marketplace | null,
+    creativityPreset?: 'precise' | 'balanced' | 'creative'
+  ): Promise<string> {
     const prompt = [
       'Write a single SEO-optimized marketplace listing title.',
       `Product: ${product.name}.`,
@@ -116,7 +127,9 @@ export class HermesAI implements IAIProvider {
       .join('\n');
 
     const raw = await this.client.complete({
-      system: 'You are an SEO copywriter. Output only the requested title.',
+      system: creativityPreset
+        ? getMarketDeskAgent('listing-seo').instruction(creativityPreset)
+        : 'You are an SEO copywriter. Output only the requested title.',
       prompt,
       maxTokens: this.maxTokens,
     });
@@ -157,6 +170,46 @@ export class HermesAI implements IAIProvider {
       : [];
 
     return { score, suggestions };
+  }
+
+  async analyzeListingSeo(
+    input: ListingSeoInput,
+    preset: CreativityPreset
+  ): Promise<ListingSeoOutput> {
+    const profile = getMarketDeskAgent('listing-seo');
+    const cleanInput = profile.inputSchema.parse(input);
+    const raw = await this.client.complete({
+      system: profile.instruction(preset),
+      prompt: JSON.stringify(cleanInput),
+      maxTokens: this.maxTokens,
+      jsonSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          recommendations: {
+            type: 'array',
+            maxItems: 10,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                field: { type: 'string', enum: ['title', 'description'] },
+                proposedValue: { type: 'string', minLength: 1, maxLength: 2000 },
+                rationale: { type: 'string', minLength: 1, maxLength: 500 },
+              },
+              required: ['field', 'proposedValue', 'rationale'],
+            },
+          },
+          disclaimer: { type: 'string', minLength: 1, maxLength: 300 },
+        },
+        required: ['recommendations', 'disclaimer'],
+      },
+      sessionKey: `marketdesk:listing-seo:${cleanInput.product.id}`,
+    });
+    const parsed = this.parseJson(raw);
+    const safeParsed = listingSeoOutputSchema.safeParse(parsed);
+    if (safeParsed.success) return safeParsed.data;
+    throw new Error('Hermes listing-seo output failed strict schema validation');
   }
 
   // --- helpers ---

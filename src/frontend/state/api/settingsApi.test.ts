@@ -1,6 +1,8 @@
 import { defaultSerializeQueryArgs } from '@reduxjs/toolkit/query';
 import {
   hermesAutomationPatch,
+  hermesCreativityPatch,
+  hermesListingSeoEnabledPatch,
   notificationChannelPatch,
   settingsPrincipalKey,
   settingsRequest,
@@ -41,6 +43,10 @@ describe('settings API contract', () => {
     });
     expect(hermesAutomationPatch('autoRelist', true)).toEqual({
       guardrails: { autoRelist: true },
+    });
+    expect(hermesCreativityPatch('creative')).toEqual({ creativityPreset: 'creative' });
+    expect(hermesListingSeoEnabledPatch(false)).toEqual({
+      agents: { listingSeo: { enabled: false } },
     });
   });
 });

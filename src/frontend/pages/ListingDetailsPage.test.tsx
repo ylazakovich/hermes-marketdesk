@@ -9,13 +9,17 @@ import {
   PUBLICATION_READINESS_CHECKING_LABEL,
   PUBLICATION_READINESS_RECHECK_LABEL,
   PublicationReadinessAction,
+  productHermesDisabledReason,
+  productHermesSuccessMessage,
   ProductRecheckReview,
   PublishPreviewReview,
+  productScopedHermesRunInput,
   remoteMarketplaceChipColor,
   remoteMarketplacePresentation,
   selectPrimaryListing,
   selectProductRecommendations,
 } from './ListingDetailsPage';
+import { hermesEventDismissOnly } from '../components/hermes/HermesEventCard';
 import type { PublishListingPreview } from '../state/api/dto';
 import { formatDateTime } from '../utils/formatters';
 
@@ -58,6 +62,46 @@ function event(
 }
 
 describe('ListingDetailsPage presentation', () => {
+  it('builds a product-scoped Hermes run input for the selected product only', () => {
+    expect(productScopedHermesRunInput('product-1')).toEqual({
+      trigger: 'manual',
+      productId: 'product-1',
+    });
+  });
+
+  it('keeps the product Hermes action disabled until settings allow listing SEO', () => {
+    expect(
+      productHermesDisabledReason({
+        productId: 'product-1',
+        settingsLoaded: false,
+        listingSeoEnabled: false,
+      })
+    ).toBe('Hermes settings are still loading.');
+    expect(
+      productHermesDisabledReason({
+        productId: 'product-1',
+        settingsLoaded: true,
+        listingSeoEnabled: false,
+      })
+    ).toBe('Enable the listing SEO agent in Hermes settings first.');
+    expect(
+      productHermesDisabledReason({
+        productId: 'product-1',
+        settingsLoaded: true,
+        listingSeoEnabled: true,
+      })
+    ).toBeNull();
+  });
+
+  it('uses review-only product-scoped success copy for analysis results', () => {
+    expect(productHermesSuccessMessage(1)).toBe(
+      'Hermes SEO suggestion is ready for human review.'
+    );
+    expect(productHermesSuccessMessage(0)).toBe(
+      'Hermes found no new SEO suggestion for this product.'
+    );
+  });
+
   it('marks a recheck stale immediately when the saved product version changes', () => {
     const result = {
       productId: 'product-1', listingId: 'listing-1',
@@ -342,6 +386,15 @@ describe('ListingDetailsPage presentation', () => {
     expect(selectProductRecommendations(events, 'product-1').map(({ id }) => id)).toEqual([
       'current',
     ]);
+  });
+
+  it('treats recommendations without proposed changes as dismiss-only, not Apply/applied', () => {
+    expect(hermesEventDismissOnly({
+      ...event('photos', 'product-1', 'pending_review'),
+      type: 'suggested_more_photos',
+      proposedChange: null,
+    })).toBe(true);
+    expect(hermesEventDismissOnly(event('title', 'product-1', 'pending_review'))).toBe(false);
   });
 
   it('uses English labels for the publication readiness recheck action', () => {
