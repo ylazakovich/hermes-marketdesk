@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.18.0...marketdesk-v0.19.0) (2026-07-23)
+
+
+### ✨ Features
+
+* **hermes:** compact SEO review UX ([#266](https://github.com/ylazakovich/marketdesk/issues/266)) ([e750531](https://github.com/ylazakovich/marketdesk/commit/e7505319a1869a4326cdb6f3e35578caa7fe5093))
+
 ## [0.18.0](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.17.3...marketdesk-v0.18.0) (2026-07-22)
 
 
