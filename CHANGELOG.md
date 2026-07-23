@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.1](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.19.0...marketdesk-v0.19.1) (2026-07-23)
+
+
+### 🐛 Bug Fixes
+
+* **hermes:** make listing SEO Apply update product and live listing ([#272](https://github.com/ylazakovich/marketdesk/issues/272)) ([5bbf9bc](https://github.com/ylazakovich/marketdesk/commit/5bbf9bcd8c8b0e771dff0a1a9d366adfb420010e))
+* **migrations:** tolerate replayed conversations column ([#273](https://github.com/ylazakovich/marketdesk/issues/273)) ([7f6b7c6](https://github.com/ylazakovich/marketdesk/commit/7f6b7c6f870d46ec0ce2fa861bf8e2871de34637))
+* **olx:** isolate per-listing sync failures ([#271](https://github.com/ylazakovich/marketdesk/issues/271)) ([6b4b599](https://github.com/ylazakovich/marketdesk/commit/6b4b59991155f7015b11084317b84d5dfd1b7f7a))
+
 ## [0.19.0](https://github.com/ylazakovich/marketdesk/compare/marketdesk-v0.18.0...marketdesk-v0.19.0) (2026-07-23)
 
 
