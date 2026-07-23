@@ -413,14 +413,27 @@ describe('ApproveHermesEventUseCase', () => {
     }
   );
 
-  it('does not mark a listing-seo Apply applied when queue acceptance fails', async () => {
+  it.each([
+    {
+      kind: 'title' as const,
+      from: 'Lamp',
+      to: 'Better Lamp',
+      eventType: 'suggested_better_title' as const,
+    },
+    {
+      kind: 'description' as const,
+      from: 'A beautiful vintage brass lamp in excellent condition.',
+      to: 'A richer product description for buyers.',
+      eventType: 'update_description' as const,
+    },
+  ])('does not mark a listing-seo $kind Apply applied when queue acceptance fails', async (change) => {
     const { useCase, eventRepo, product, listingRepo, publishQueue } = setup();
     const liveListing = unwrap(
       Listing.create({
-        id: 'lst-live-queue-fails',
+        id: `lst-live-${change.kind}-queue-fails`,
         productId: 'prod-1',
         marketplaceId: 'mp-1',
-        marketplaceListingId: 'olx-queue-fails',
+        marketplaceListingId: `olx-${change.kind}-queue-fails`,
         price: money(100),
         status: 'live',
       })
@@ -429,18 +442,18 @@ describe('ApproveHermesEventUseCase', () => {
     const source = listingSeoSourceFor(product, liveListing);
     const event = unwrap(
       HermesEvent.create({
-        id: 'evt-listing-seo-queue-fails',
+        id: `evt-listing-seo-${change.kind}-queue-fails`,
         workspaceId: 'ws-1',
         productId: 'prod-1',
-        type: 'suggested_better_title',
+        type: change.eventType,
         severity: 'info',
-        title: 'Listing SEO suggestion: title',
-        proposedChange: { kind: 'title', field: 'title', from: 'Lamp', to: 'Better Lamp' },
+        title: `Listing SEO suggestion: ${change.kind}`,
+        proposedChange: { kind: change.kind, field: change.kind, from: change.from, to: change.to },
       })
     );
     await eventRepo.save(event);
     await eventRepo.recordAgentRecommendationOutcome({
-      id: 'evt-listing-seo-queue-fails-recommendation',
+      id: `${event.id}-recommendation`,
       workspaceId: 'ws-1',
       productId: 'prod-1',
       eventId: event.id,
@@ -448,7 +461,7 @@ describe('ApproveHermesEventUseCase', () => {
       agentVersion: '1.0.0',
       creativityPreset: 'balanced',
       sourceFingerprint: source,
-      recommendationFingerprint: listingSeoRecommendationFingerprint(source, 'Better Lamp'),
+      recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
       outcome: 'suggested',
       suggestedAt: new Date(),
     });
@@ -457,6 +470,8 @@ describe('ApproveHermesEventUseCase', () => {
     await expect(
       useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' })
     ).rejects.toThrow('queue unavailable');
+    expect(product.name).toBe('Lamp');
+    expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
     expect((await eventRepo.findById(event.id))?.status).toBe('failed');
     expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
     expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
@@ -676,31 +691,58 @@ describe('ApproveHermesEventUseCase', () => {
     expect(activityLog.entries[0].metadata.marketplaceSync).toEqual({ status: 'not_required' });
   });
 
-  it('records retry-required sync state when a live listing account is disconnected', async () => {
-    const { useCase, eventRepo, listingRepo, publishQueue, activityLog } = setup('missing');
+  it.each([
+    {
+      kind: 'title' as const,
+      from: 'Lamp',
+      to: 'Better Lamp',
+      eventType: 'suggested_better_title' as const,
+    },
+    {
+      kind: 'description' as const,
+      from: 'A beautiful vintage brass lamp in excellent condition.',
+      to: 'A richer product description for buyers.',
+      eventType: 'update_description' as const,
+    },
+  ])('fails without mutating the product when a live $kind target is disconnected', async (change) => {
+    const { useCase, eventRepo, product, listingRepo, publishQueue, activityLog } = setup('missing');
     const liveListing = unwrap(
       Listing.create({
-        id: 'lst-live-disconnected',
+        id: `lst-live-${change.kind}-disconnected`,
         productId: 'prod-1',
         marketplaceId: 'mp-1',
-        marketplaceListingId: 'olx-missing-account',
+        marketplaceListingId: `olx-${change.kind}-missing-account`,
         price: money(100),
         status: 'live',
       })
     );
     listingRepo.items.set(liveListing.id, liveListing);
+    const source = listingSeoSourceFor(product, liveListing);
     const event = unwrap(
       HermesEvent.create({
-        id: 'evt-title-disconnected',
+        id: `evt-${change.kind}-disconnected`,
         workspaceId: 'ws-1',
         productId: 'prod-1',
-        type: 'listing_optimization',
+        type: change.eventType,
         severity: 'warning',
-        title: 'Improve title',
-        proposedChange: { kind: 'title', field: 'title', from: 'Lamp', to: 'Better Lamp' },
+        title: `Improve ${change.kind}`,
+        proposedChange: { kind: change.kind, field: change.kind, from: change.from, to: change.to },
       })
     );
     await eventRepo.save(event);
+    await eventRepo.recordAgentRecommendationOutcome({
+      id: `${event.id}-recommendation`,
+      workspaceId: 'ws-1',
+      productId: 'prod-1',
+      eventId: event.id,
+      agentId: 'listing-seo',
+      agentVersion: '1.0.0',
+      creativityPreset: 'balanced',
+      sourceFingerprint: source,
+      recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
+      outcome: 'suggested',
+      suggestedAt: new Date(),
+    });
 
     const result = await useCase.execute({
       eventId: event.id,
@@ -708,14 +750,14 @@ describe('ApproveHermesEventUseCase', () => {
       actorId: 'user-1',
     });
 
-    expect(result.isOk()).toBe(true);
+    expect(result.isErr()).toBe(true);
+    expect(product.name).toBe('Lamp');
+    expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+    expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
     expect(publishQueue.jobs).toHaveLength(0);
-    expect(activityLog.entries[0].metadata.marketplaceSync).toEqual({
-      status: 'retry_required',
-      skippedLiveListings: [
-        { listingId: 'lst-live-disconnected', reason: 'marketplace_account_not_connected' },
-      ],
-    });
+    expect(activityLog.entries).toHaveLength(0);
   });
 
   it('updates listing price locally and queues remote price update for live listings', async () => {

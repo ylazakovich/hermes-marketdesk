@@ -191,22 +191,9 @@ export class ApproveHermesEventUseCase {
     switch (change.kind) {
       case 'price':
         return this.applyPriceChange(event, change);
-      case 'title': {
-        const product = await this.requireProduct(event.productId);
-        if (product.isErr()) return product;
-        const renamed = product.value.rename(change.to);
-        if (renamed.isErr()) return renamed;
-        await this.productRepo.save(product.value);
-        return this.enqueueMarketplaceUpdates(product.value, { productName: change.to });
-      }
-      case 'description': {
-        const product = await this.requireProduct(event.productId);
-        if (product.isErr()) return product;
-        const updated = product.value.updateDescription(change.to);
-        if (updated.isErr()) return updated;
-        await this.productRepo.save(product.value);
-        return this.enqueueMarketplaceUpdates(product.value, { description: change.to });
-      }
+      case 'title':
+      case 'description':
+        return this.applyProductTextChange(event, change);
       case 'relist':
         // Enqueues an actual republish job per referenced listing (real action).
         return this.applyRelist(change.listingIds, actorId);
@@ -440,6 +427,48 @@ export class ApproveHermesEventUseCase {
     }
 
     return this.enqueueMarketplaceUpdates(product, { price: change.to });
+  }
+
+  private async applyProductTextChange(
+    event: HermesEvent,
+    change: Extract<ProposedChange, { kind: 'title' | 'description' }>
+  ): Promise<Result<ApplyChangeOutcome>> {
+    const loaded = await this.requireProduct(event.productId);
+    if (loaded.isErr()) return loaded;
+    const product = loaded.value;
+    const changed =
+      change.kind === 'title'
+        ? product.rename(change.to)
+        : product.updateDescription(change.to);
+    if (changed.isErr()) return changed;
+
+    await this.productRepo.save(product);
+    let queued: Result<ApplyChangeOutcome>;
+    try {
+      queued = await this.enqueueMarketplaceUpdates(
+        product,
+        change.kind === 'title'
+          ? { productName: change.to }
+          : { description: change.to }
+      );
+    } catch (error) {
+      await this.restoreListingSeoProductValue(product, change);
+      throw error;
+    }
+
+    if (queued.isErr()) {
+      await this.restoreListingSeoProductValue(product, change);
+      return queued;
+    }
+    if ((queued.value.skippedLiveListings?.length ?? 0) > 0) {
+      await this.restoreListingSeoProductValue(product, change);
+      return Err(
+        new InvalidStateError(
+          'Product text changes require connected marketplace updates for every live listing'
+        )
+      );
+    }
+    return queued;
   }
 
   private async applyRelist(
