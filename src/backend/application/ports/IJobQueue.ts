@@ -16,6 +16,11 @@ export interface JobEnqueueOptions {
 // Generic typed queue. One instance per logical queue/topic.
 export interface IJobQueue<TData = unknown> {
   enqueue(data: TData, options?: JobEnqueueOptions): Promise<void>;
+  // Atomically accept a bounded group of jobs for one logical operation. Every
+  // item must carry a unique jobId so concrete queues can reserve the full set
+  // before accepting any new job. Implementations must fail closed on duplicate
+  // ids and must not leave a prefix of newly accepted jobs when any item fails.
+  enqueueAll(items: Array<{ data: TData; options?: JobEnqueueOptions }>): Promise<void>;
 }
 
 // --- Job payload contracts (application-owned) ---

@@ -40,6 +40,7 @@ const validCredentialsKey = Buffer.alloc(32, 7).toString('base64');
 function makeQueue<T>(): ManagedQueue<T> {
   return {
     enqueue: jest.fn(async () => undefined),
+    enqueueAll: jest.fn(async () => undefined),
     scheduleRepeat: jest.fn(async () => undefined),
     removeRepeat: jest.fn(async () => undefined),
     registerHandler: jest.fn(),
@@ -130,6 +131,9 @@ describe('buildContainer (composition root)', () => {
     let hermesHandler: ((data: unknown) => Promise<unknown>) | undefined;
     const capturingQueue = <T>(name: string): ManagedQueue<T> => ({
       enqueue: jest.fn(async () => undefined),
+      enqueueAll: jest.fn(async () => undefined),
+      scheduleRepeat: jest.fn(async () => undefined),
+      removeRepeat: jest.fn(async () => undefined),
       registerHandler: jest.fn((h: (data: T) => Promise<unknown>) => {
         if (name === 'hermes-run') {
           hermesHandler = h as (data: unknown) => Promise<unknown>;
