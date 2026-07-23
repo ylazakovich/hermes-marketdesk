@@ -36,6 +36,7 @@ import {
 import {
   DASHBOARD_EVENT_LIMIT,
   DASHBOARD_QUICK_ACTIONS,
+  dashboardActivityEvents,
   dashboardRevenueRange,
   marketplaceOperationalSummary,
   marketplacePresentation,
@@ -235,7 +236,7 @@ const DashboardPage: React.FC = () => {
   const ov = overview.data;
   const marketplaceRows = marketplaces.data ?? [];
   const recentEvents = recent.data?.items ?? [];
-  const eventSections = splitDashboardEvents(recentEvents);
+  const eventSections = splitDashboardEvents(dashboardActivityEvents(recentEvents));
   const hermesActive = shouldShowHermesRunning(activeHermes.data?.items ?? [], {
     isLoading: activeHermes.isLoading,
     isError: activeHermes.isError,
@@ -382,62 +383,104 @@ const DashboardPage: React.FC = () => {
           alignItems: 'start',
         }}
       >
-        <Card
-          title={
-            <Stack direction="row" spacing={1} alignItems="center">
-              <Box
-                sx={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 2,
-                  display: 'grid',
-                  placeItems: 'center',
-                  color: 'common.white',
-                  background: (theme) =>
-                    `linear-gradient(135deg, ${theme.palette.primary.light}, ${theme.palette.secondary.main})`,
-                }}
-              >
-                <AutoAwesomeIcon sx={{ fontSize: 17 }} />
-              </Box>
-              <span>Hermes AI activity</span>
-              {hermesActive && <Chip size="small" color="success" label="Running" />}
-            </Stack>
-          }
-          subtitle="Latest autonomous work and reviewable suggestions"
-          action={
-            <Button size="small" onClick={() => navigate('/hermes')}>
-              View all
-            </Button>
-          }
-          contentSx={{ pt: 1 }}
-        >
-          {recent.isLoading ? (
-            <LoadingSkeleton lines={4} height={64} />
-          ) : recent.isError ? (
-            <InlineQueryError
-              title="Hermes activity failed to load"
-              error={recent.error}
-              onRetry={() => recent.refetch()}
-            />
-          ) : eventSections.latest.length === 0 ? (
-            <EmptyState
-              title="No Hermes activity yet"
-              description="Connect a marketplace, then run Hermes to start monitoring."
-              action={
-                <Button variant="outlined" onClick={() => navigate('/marketplaces')}>
-                  Connect marketplace
-                </Button>
-              }
-              compact
-            />
-          ) : (
-            <Stack>
-              {eventSections.latest.map((event) => (
-                <HermesEventRow key={event.id} event={event} onOpen={() => navigate('/hermes')} />
-              ))}
-            </Stack>
-          )}
-        </Card>
+        <Stack spacing={2.5}>
+          <Card
+            sx={{ height: 'auto' }}
+            title={
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Box
+                  sx={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 2,
+                    display: 'grid',
+                    placeItems: 'center',
+                    color: 'common.white',
+                    background: (theme) =>
+                      `linear-gradient(135deg, ${theme.palette.primary.light}, ${theme.palette.secondary.main})`,
+                  }}
+                >
+                  <AutoAwesomeIcon sx={{ fontSize: 17 }} />
+                </Box>
+                <span>Hermes AI activity</span>
+                {hermesActive && <Chip size="small" color="success" label="Running" />}
+              </Stack>
+            }
+            subtitle="Latest autonomous work and reviewable suggestions"
+            action={
+              <Button size="small" onClick={() => navigate('/hermes')}>
+                View all
+              </Button>
+            }
+            contentSx={{ pt: 1 }}
+          >
+            {recent.isLoading ? (
+              <LoadingSkeleton lines={4} height={64} />
+            ) : recent.isError ? (
+              <InlineQueryError
+                title="Hermes activity failed to load"
+                error={recent.error}
+                onRetry={() => recent.refetch()}
+              />
+            ) : eventSections.latest.length === 0 ? (
+              <EmptyState
+                title="No Hermes activity yet"
+                description="Connect a marketplace, then run Hermes to start monitoring."
+                action={
+                  <Button variant="outlined" onClick={() => navigate('/marketplaces')}>
+                    Connect marketplace
+                  </Button>
+                }
+                compact
+              />
+            ) : (
+              <Stack>
+                {eventSections.latest.map((event) => (
+                  <HermesEventRow key={event.id} event={event} onOpen={() => navigate('/hermes')} />
+                ))}
+              </Stack>
+            )}
+          </Card>
+
+          <Card
+            title="Recent workspace activity"
+            subtitle="Hermes events available from the current workspace feed"
+            action={
+              <Button size="small" onClick={() => navigate('/hermes')}>
+                Open activity
+              </Button>
+            }
+            contentSx={{ pt: 1 }}
+            sx={{ height: 'auto' }}
+          >
+            {recent.isLoading ? (
+              <LoadingSkeleton lines={4} height={48} />
+            ) : recent.isError ? (
+              <InlineQueryError
+                title="Recent activity failed to load"
+                error={recent.error}
+                onRetry={() => recent.refetch()}
+              />
+            ) : eventSections.timeline.length === 0 ? (
+              <EmptyState
+                title="No recent events"
+                description="Hermes workspace activity will appear here."
+                compact
+              />
+            ) : (
+              <Stack>
+                {eventSections.timeline.map((event) => (
+                  <HermesEventRow
+                    key={event.id}
+                    event={event}
+                    onOpen={() => navigate('/hermes')}
+                    compact
+                  />
+                ))}
+              </Stack>
+            )}
+          </Card>
+        </Stack>
 
         <Stack spacing={2.5}>
           <SeoReviewSummary
@@ -447,7 +490,9 @@ const DashboardPage: React.FC = () => {
             error={pending.isError ? pending.error : undefined}
             onRetry={() => pending.refetch()}
             onReview={(event) =>
-              navigate(event.productId ? `/products/${encodeURIComponent(event.productId)}` : '/hermes')
+              navigate(
+                event.productId ? `/products/${encodeURIComponent(event.productId)}` : '/hermes'
+              )
             }
             onViewAll={() => navigate('/hermes')}
           />
@@ -533,46 +578,6 @@ const DashboardPage: React.FC = () => {
             )}
           </Card>
         </Stack>
-      </Box>
-
-      <Box sx={{ mt: 2.5 }}>
-        <Card
-          title="Recent workspace activity"
-          subtitle="Hermes events available from the current workspace feed"
-          action={
-            <Button size="small" onClick={() => navigate('/hermes')}>
-              Open activity
-            </Button>
-          }
-          contentSx={{ pt: 1 }}
-        >
-          {recent.isLoading ? (
-            <LoadingSkeleton lines={4} height={48} />
-          ) : recent.isError ? (
-            <InlineQueryError
-              title="Recent activity failed to load"
-              error={recent.error}
-              onRetry={() => recent.refetch()}
-            />
-          ) : eventSections.timeline.length === 0 ? (
-            <EmptyState
-              title="No recent events"
-              description="Hermes workspace activity will appear here."
-              compact
-            />
-          ) : (
-            <Stack>
-              {eventSections.timeline.map((event) => (
-                <HermesEventRow
-                  key={event.id}
-                  event={event}
-                  onOpen={() => navigate('/hermes')}
-                  compact
-                />
-              ))}
-            </Stack>
-          )}
-        </Card>
       </Box>
     </Box>
   );
