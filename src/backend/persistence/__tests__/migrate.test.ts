@@ -106,13 +106,9 @@ describe('runMigrationFile', () => {
   });
 
   it('fails closed when duplicate-column replay cannot confirm the existing conversations column', async () => {
+    const originalError = duplicateColumnError();
     const query = jest
       .fn<Promise<{ rows: unknown[] }>, [string, unknown[]?]>()
-      .mockRejectedValueOnce(duplicateColumnError())
-      .mockResolvedValueOnce({ rows: [{ exists: false }] });
-
-    const originalError = duplicateColumnError();
-    query.mockReset()
       .mockRejectedValueOnce(originalError)
       .mockResolvedValueOnce({ rows: [{ exists: false }] });
 

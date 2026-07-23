@@ -54,9 +54,11 @@ async function shouldSkipAlreadyAppliedListingConversationsMigration(
   if (file !== LISTING_CONVERSATIONS_MIGRATION || !isDuplicateColumnError(error)) return false;
 
   if (normalizedSql(sql) !== normalizedSql(LISTING_CONVERSATIONS_SQL)) {
-    throw new Error(
+    const shapeError = new Error(
       `${LISTING_CONVERSATIONS_MIGRATION} has an unexpected shape; refusing duplicate-column replay skip`,
-    );
+    ) as Error & { cause?: unknown };
+    shapeError.cause = error;
+    throw shapeError;
   }
 
   const column = await client.query<{ exists: boolean }>(
