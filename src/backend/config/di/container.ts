@@ -170,6 +170,16 @@ class BullManagedQueue<T> implements ManagedQueue<T> {
     await this.queue.add(data, buildBullAddOptions(this.name, options));
   }
 
+  async enqueueAll(items: Array<{ data: T; options?: JobEnqueueOptions }>): Promise<void> {
+    if (items.length === 0) return;
+    await this.queue.addBulk(
+      items.map((item) => ({
+        data: item.data,
+        opts: buildBullAddOptions(this.name, item.options),
+      }))
+    );
+  }
+
   async scheduleRepeat(data: T, options: { jobId: string; everyMs: number }): Promise<void> {
     await this.queue.add(data, {
       ...buildBullAddOptions(this.name, { jobId: options.jobId }),
@@ -422,7 +432,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
       });
       return new OlxTaxonomyResolver(http, env.marketplaces.olx.apiBaseUrl);
     },
-    idGenerator,
+    idGenerator
   );
   const listingService = new ListingApplicationService(
     listingRepo,
@@ -441,7 +451,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
     productRepo,
     listingRepo,
     marketplaceRepo,
-    analyticsEventRepo,
+    analyticsEventRepo
   );
   const categoryCorrectionOperationService = new CategoryCorrectionOperationService(
     categoryCorrectionOperationRepo,
@@ -457,7 +467,7 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
           return adapterFactory.create(marketplace.key);
         const accessToken = await marketplaceOAuthService.getValidAccessToken(
           marketplace.id,
-          expectedAccount,
+          expectedAccount
         );
         return adapterFactory.create(
           marketplace.key,
@@ -592,30 +602,31 @@ export function buildContainer(overrides: ContainerOverrides = {}): AppContainer
             'Marketplace account binding is required before category reconciliation'
           );
         }
-        const analyticsRecords = await Promise.all(analyticsEvents.map(async (event) => {
-          const product = event.eventType === 'sale'
-            ? await repositories.productRepo.findByIdForWorkspace(
-                event.listing.productId,
-                marketplace.workspaceId,
-              )
-            : null;
-          return {
-            idempotencyKey: `${marketplace.workspaceId}:${event.idempotencyKey}`,
-            workspaceId: marketplace.workspaceId,
-            listingId: event.listing.id,
-            marketplaceId: event.listing.marketplaceId,
-            eventType: event.eventType,
-            quantity: event.quantity,
-            amount: event.eventType === 'sale'
-              ? event.listing.price.amount * event.quantity
-              : null,
-            costAtSale: event.eventType === 'sale' && product?.costPrice
-              ? product.costPrice.amount
-              : null,
-            currency: event.eventType === 'sale' ? event.listing.price.currency : null,
-            occurredAt: event.occurredAt,
-          };
-        }));
+        const analyticsRecords = await Promise.all(
+          analyticsEvents.map(async (event) => {
+            const product =
+              event.eventType === 'sale'
+                ? await repositories.productRepo.findByIdForWorkspace(
+                    event.listing.productId,
+                    marketplace.workspaceId
+                  )
+                : null;
+            return {
+              idempotencyKey: `${marketplace.workspaceId}:${event.idempotencyKey}`,
+              workspaceId: marketplace.workspaceId,
+              listingId: event.listing.id,
+              marketplaceId: event.listing.marketplaceId,
+              eventType: event.eventType,
+              quantity: event.quantity,
+              amount:
+                event.eventType === 'sale' ? event.listing.price.amount * event.quantity : null,
+              costAtSale:
+                event.eventType === 'sale' && product?.costPrice ? product.costPrice.amount : null,
+              currency: event.eventType === 'sale' ? event.listing.price.currency : null,
+              occurredAt: event.occurredAt,
+            };
+          })
+        );
         await repositories.analyticsEvents.appendMany(analyticsRecords);
         for (const candidate of mismatchCandidates) {
           await marketplaceImportService.recommendSyncedCategoryMismatch(

@@ -50,6 +50,10 @@ interface ApplyChangeOutcome {
 
 type MarketplaceUpdateChanges = ListingUpdateJobChanges;
 
+interface EnqueueMarketplaceUpdateOptions {
+  requireAllLiveTargets?: boolean;
+}
+
 export class ApproveHermesEventUseCase {
   constructor(
     private readonly eventRepo: IEventRepository,
@@ -437,9 +441,7 @@ export class ApproveHermesEventUseCase {
     if (loaded.isErr()) return loaded;
     const product = loaded.value;
     const changed =
-      change.kind === 'title'
-        ? product.rename(change.to)
-        : product.updateDescription(change.to);
+      change.kind === 'title' ? product.rename(change.to) : product.updateDescription(change.to);
     if (changed.isErr()) return changed;
 
     await this.productRepo.save(product);
@@ -447,9 +449,8 @@ export class ApproveHermesEventUseCase {
     try {
       queued = await this.enqueueMarketplaceUpdates(
         product,
-        change.kind === 'title'
-          ? { productName: change.to }
-          : { description: change.to }
+        change.kind === 'title' ? { productName: change.to } : { description: change.to },
+        { requireAllLiveTargets: true }
       );
     } catch (error) {
       await this.restoreListingSeoProductValue(product, change);
@@ -586,9 +587,14 @@ export class ApproveHermesEventUseCase {
 
   private async enqueueMarketplaceUpdates(
     product: Product,
-    changes: MarketplaceUpdateChanges
+    changes: MarketplaceUpdateChanges,
+    options: EnqueueMarketplaceUpdateOptions = {}
   ): Promise<Result<ApplyChangeOutcome>> {
-    const operations: MarketplaceUpdateOperation[] = [];
+    const queueItems: Array<{
+      operation: MarketplaceUpdateOperation;
+      data: PublishListingJob;
+      options: { jobId: string };
+    }> = [];
     const skippedLiveListings: Array<{ listingId: string; reason: string }> = [];
     const listings = await this.listingRepo.findByProduct(product.id);
     for (const listing of listings) {
@@ -611,8 +617,10 @@ export class ApproveHermesEventUseCase {
       }
 
       const operationId = this.idGenerator();
-      await this.publishQueue.enqueue(
-        {
+      queueItems.push({
+        operation: { operationId, listingId: listing.id, marketplaceId: marketplace.id },
+        options: { jobId: `update:${operationId}` },
+        data: {
           operationId,
           mode: 'update',
           listingUpdatedAt: listing.updatedAt.toISOString(),
@@ -632,11 +640,18 @@ export class ApproveHermesEventUseCase {
           },
           changes,
         },
-        { jobId: `update:${operationId}` }
-      );
-      operations.push({ operationId, listingId: listing.id, marketplaceId: marketplace.id });
+      });
     }
-    return Ok({ marketplaceUpdates: operations, skippedLiveListings });
+    if (options.requireAllLiveTargets && skippedLiveListings.length > 0) {
+      return Ok({ marketplaceUpdates: [], skippedLiveListings });
+    }
+    await this.publishQueue.enqueueAll(
+      queueItems.map((item) => ({ data: item.data, options: item.options }))
+    );
+    return Ok({
+      marketplaceUpdates: queueItems.map((item) => item.operation),
+      skippedLiveListings,
+    });
   }
 
   private async requireProduct(productId: string | null): Promise<Result<Product>> {

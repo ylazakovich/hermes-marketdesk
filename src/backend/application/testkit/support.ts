@@ -127,6 +127,10 @@ export class RecordingJobQueue<T = unknown> implements IJobQueue<T> {
   async enqueue(data: T, options?: JobEnqueueOptions): Promise<void> {
     this.jobs.push({ data, options });
   }
+
+  async enqueueAll(items: Array<{ data: T; options?: JobEnqueueOptions }>): Promise<void> {
+    this.jobs.push(...items);
+  }
 }
 
 export function idFactory(prefix = 'id'): IdGenerator {

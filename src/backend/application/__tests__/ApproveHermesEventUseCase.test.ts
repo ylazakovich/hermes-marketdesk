@@ -106,16 +106,20 @@ function setup(
   productRepo.items.set(product.id, product);
   listingRepo.items.set(listing.id, listing);
   marketplaceRepo.items.set(marketplace.id, marketplace);
+  const accountStatuses = new Map<string, 'connected' | 'missing'>([
+    [marketplace.id, accountStatus],
+  ]);
   const accountRepo = {
-    findByMarketplaceId: async () =>
-      accountStatus === 'connected'
+    findByMarketplaceId: async (marketplaceId: string) =>
+      accountStatuses.get(marketplaceId) === 'connected'
         ? {
             id: 'account-1',
-            marketplaceId: marketplace.id,
+            marketplaceId,
             handle: 'OLX account',
             credentials: {},
             status: 'connected' as const,
             scopes: ['basic'],
+            revision: 1,
             createdAt: new Date(),
             updatedAt: new Date(),
           }
@@ -151,6 +155,8 @@ function setup(
     publisher,
     product,
     listingRepo,
+    marketplaceRepo,
+    accountStatuses,
     publishQueue,
   };
 }
@@ -426,56 +432,64 @@ describe('ApproveHermesEventUseCase', () => {
       to: 'A richer product description for buyers.',
       eventType: 'update_description' as const,
     },
-  ])('does not mark a listing-seo $kind Apply applied when queue acceptance fails', async (change) => {
-    const { useCase, eventRepo, product, listingRepo, publishQueue } = setup();
-    const liveListing = unwrap(
-      Listing.create({
-        id: `lst-live-${change.kind}-queue-fails`,
-        productId: 'prod-1',
-        marketplaceId: 'mp-1',
-        marketplaceListingId: `olx-${change.kind}-queue-fails`,
-        price: money(100),
-        status: 'live',
-      })
-    );
-    listingRepo.items.set(liveListing.id, liveListing);
-    const source = listingSeoSourceFor(product, liveListing);
-    const event = unwrap(
-      HermesEvent.create({
-        id: `evt-listing-seo-${change.kind}-queue-fails`,
+  ])(
+    'does not mark a listing-seo $kind Apply applied when queue acceptance fails',
+    async (change) => {
+      const { useCase, eventRepo, product, listingRepo, publishQueue } = setup();
+      const liveListing = unwrap(
+        Listing.create({
+          id: `lst-live-${change.kind}-queue-fails`,
+          productId: 'prod-1',
+          marketplaceId: 'mp-1',
+          marketplaceListingId: `olx-${change.kind}-queue-fails`,
+          price: money(100),
+          status: 'live',
+        })
+      );
+      listingRepo.items.set(liveListing.id, liveListing);
+      const source = listingSeoSourceFor(product, liveListing);
+      const event = unwrap(
+        HermesEvent.create({
+          id: `evt-listing-seo-${change.kind}-queue-fails`,
+          workspaceId: 'ws-1',
+          productId: 'prod-1',
+          type: change.eventType,
+          severity: 'info',
+          title: `Listing SEO suggestion: ${change.kind}`,
+          proposedChange: {
+            kind: change.kind,
+            field: change.kind,
+            from: change.from,
+            to: change.to,
+          },
+        })
+      );
+      await eventRepo.save(event);
+      await eventRepo.recordAgentRecommendationOutcome({
+        id: `${event.id}-recommendation`,
         workspaceId: 'ws-1',
         productId: 'prod-1',
-        type: change.eventType,
-        severity: 'info',
-        title: `Listing SEO suggestion: ${change.kind}`,
-        proposedChange: { kind: change.kind, field: change.kind, from: change.from, to: change.to },
-      })
-    );
-    await eventRepo.save(event);
-    await eventRepo.recordAgentRecommendationOutcome({
-      id: `${event.id}-recommendation`,
-      workspaceId: 'ws-1',
-      productId: 'prod-1',
-      eventId: event.id,
-      agentId: 'listing-seo',
-      agentVersion: '1.0.0',
-      creativityPreset: 'balanced',
-      sourceFingerprint: source,
-      recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
-      outcome: 'suggested',
-      suggestedAt: new Date(),
-    });
-    jest.spyOn(publishQueue, 'enqueue').mockRejectedValueOnce(new Error('queue unavailable'));
+        eventId: event.id,
+        agentId: 'listing-seo',
+        agentVersion: '1.0.0',
+        creativityPreset: 'balanced',
+        sourceFingerprint: source,
+        recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
+        outcome: 'suggested',
+        suggestedAt: new Date(),
+      });
+      jest.spyOn(publishQueue, 'enqueueAll').mockRejectedValueOnce(new Error('queue unavailable'));
 
-    await expect(
-      useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' })
-    ).rejects.toThrow('queue unavailable');
-    expect(product.name).toBe('Lamp');
-    expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
-    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
-    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
-    expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
-  });
+      await expect(
+        useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' })
+      ).rejects.toThrow('queue unavailable');
+      expect(product.name).toBe('Lamp');
+      expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
+      expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+      expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+      expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
+    }
+  );
 
   it('safely reconciles old no-op applied listing-seo events only when source and from fences still match', async () => {
     const { useCase, eventRepo, product, listingRepo, publishQueue, activityLog } = setup();
@@ -646,7 +660,7 @@ describe('ApproveHermesEventUseCase', () => {
       approvedAt: new Date(),
       appliedAt: new Date(),
     });
-    jest.spyOn(publishQueue, 'enqueue').mockRejectedValueOnce(new Error('queue unavailable'));
+    jest.spyOn(publishQueue, 'enqueueAll').mockRejectedValueOnce(new Error('queue unavailable'));
 
     await expect(
       useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' })
@@ -704,61 +718,267 @@ describe('ApproveHermesEventUseCase', () => {
       to: 'A richer product description for buyers.',
       eventType: 'update_description' as const,
     },
-  ])('fails without mutating the product when a live $kind target is disconnected', async (change) => {
-    const { useCase, eventRepo, product, listingRepo, publishQueue, activityLog } = setup('missing');
-    const liveListing = unwrap(
-      Listing.create({
-        id: `lst-live-${change.kind}-disconnected`,
-        productId: 'prod-1',
-        marketplaceId: 'mp-1',
-        marketplaceListingId: `olx-${change.kind}-missing-account`,
-        price: money(100),
-        status: 'live',
-      })
-    );
-    listingRepo.items.set(liveListing.id, liveListing);
-    const source = listingSeoSourceFor(product, liveListing);
-    const event = unwrap(
-      HermesEvent.create({
-        id: `evt-${change.kind}-disconnected`,
+  ])(
+    'fails without mutating the product when a live $kind target is disconnected',
+    async (change) => {
+      const { useCase, eventRepo, product, listingRepo, publishQueue, activityLog } =
+        setup('missing');
+      const liveListing = unwrap(
+        Listing.create({
+          id: `lst-live-${change.kind}-disconnected`,
+          productId: 'prod-1',
+          marketplaceId: 'mp-1',
+          marketplaceListingId: `olx-${change.kind}-missing-account`,
+          price: money(100),
+          status: 'live',
+        })
+      );
+      listingRepo.items.set(liveListing.id, liveListing);
+      const source = listingSeoSourceFor(product, liveListing);
+      const event = unwrap(
+        HermesEvent.create({
+          id: `evt-${change.kind}-disconnected`,
+          workspaceId: 'ws-1',
+          productId: 'prod-1',
+          type: change.eventType,
+          severity: 'warning',
+          title: `Improve ${change.kind}`,
+          proposedChange: {
+            kind: change.kind,
+            field: change.kind,
+            from: change.from,
+            to: change.to,
+          },
+        })
+      );
+      await eventRepo.save(event);
+      await eventRepo.recordAgentRecommendationOutcome({
+        id: `${event.id}-recommendation`,
         workspaceId: 'ws-1',
         productId: 'prod-1',
-        type: change.eventType,
-        severity: 'warning',
-        title: `Improve ${change.kind}`,
-        proposedChange: { kind: change.kind, field: change.kind, from: change.from, to: change.to },
-      })
-    );
-    await eventRepo.save(event);
-    await eventRepo.recordAgentRecommendationOutcome({
-      id: `${event.id}-recommendation`,
-      workspaceId: 'ws-1',
-      productId: 'prod-1',
-      eventId: event.id,
-      agentId: 'listing-seo',
-      agentVersion: '1.0.0',
-      creativityPreset: 'balanced',
-      sourceFingerprint: source,
-      recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
-      outcome: 'suggested',
-      suggestedAt: new Date(),
-    });
+        eventId: event.id,
+        agentId: 'listing-seo',
+        agentVersion: '1.0.0',
+        creativityPreset: 'balanced',
+        sourceFingerprint: source,
+        recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
+        outcome: 'suggested',
+        suggestedAt: new Date(),
+      });
 
-    const result = await useCase.execute({
-      eventId: event.id,
-      workspaceId: 'ws-1',
-      actorId: 'user-1',
-    });
+      const result = await useCase.execute({
+        eventId: event.id,
+        workspaceId: 'ws-1',
+        actorId: 'user-1',
+      });
 
-    expect(result.isErr()).toBe(true);
-    expect(product.name).toBe('Lamp');
-    expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
-    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
-    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
-    expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
-    expect(publishQueue.jobs).toHaveLength(0);
-    expect(activityLog.entries).toHaveLength(0);
-  });
+      expect(result.isErr()).toBe(true);
+      expect(product.name).toBe('Lamp');
+      expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
+      expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+      expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+      expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
+      expect(publishQueue.jobs).toHaveLength(0);
+      expect(activityLog.entries).toHaveLength(0);
+    }
+  );
+
+  it.each([
+    {
+      kind: 'title' as const,
+      from: 'Lamp',
+      to: 'Better Lamp',
+      eventType: 'suggested_better_title' as const,
+    },
+    {
+      kind: 'description' as const,
+      from: 'A beautiful vintage brass lamp in excellent condition.',
+      to: 'A richer product description for buyers.',
+      eventType: 'update_description' as const,
+    },
+  ])(
+    'fails closed before queueing when multi-target listing-seo $kind Apply includes a disconnected target',
+    async (change) => {
+      const { useCase, eventRepo, product, listingRepo, marketplaceRepo, publishQueue } = setup();
+      const connectedListing = unwrap(
+        Listing.create({
+          id: `lst-live-${change.kind}-connected`,
+          productId: 'prod-1',
+          marketplaceId: 'mp-1',
+          marketplaceListingId: `olx-${change.kind}-connected`,
+          price: money(100),
+          status: 'live',
+        })
+      );
+      const disconnectedMarketplace = unwrap(
+        Marketplace.create({
+          id: `mp-${change.kind}-disconnected`,
+          workspaceId: 'ws-1',
+          key: 'ebay',
+          name: 'Disconnected marketplace',
+          connected: false,
+        })
+      );
+      const disconnectedListing = unwrap(
+        Listing.create({
+          id: `lst-live-${change.kind}-disconnected-multi`,
+          productId: 'prod-1',
+          marketplaceId: disconnectedMarketplace.id,
+          marketplaceListingId: `remote-${change.kind}-disconnected`,
+          price: money(100),
+          status: 'live',
+        })
+      );
+      listingRepo.items.set(connectedListing.id, connectedListing);
+      listingRepo.items.set(disconnectedListing.id, disconnectedListing);
+      marketplaceRepo.items.set(disconnectedMarketplace.id, disconnectedMarketplace);
+      const connectedUpdatedAt = connectedListing.updatedAt;
+      const disconnectedUpdatedAt = disconnectedListing.updatedAt;
+      const source = listingSeoSourceFor(product, connectedListing);
+      const event = unwrap(
+        HermesEvent.create({
+          id: `evt-${change.kind}-multi-disconnected`,
+          workspaceId: 'ws-1',
+          productId: 'prod-1',
+          type: change.eventType,
+          severity: 'warning',
+          title: `Improve ${change.kind}`,
+          proposedChange: {
+            kind: change.kind,
+            field: change.kind,
+            from: change.from,
+            to: change.to,
+          },
+        })
+      );
+      await eventRepo.save(event);
+      await eventRepo.recordAgentRecommendationOutcome({
+        id: `${event.id}-recommendation`,
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        eventId: event.id,
+        agentId: 'listing-seo',
+        agentVersion: '1.0.0',
+        creativityPreset: 'balanced',
+        sourceFingerprint: source,
+        recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
+        outcome: 'suggested',
+        suggestedAt: new Date(),
+      });
+
+      const result = await useCase.execute({
+        eventId: event.id,
+        workspaceId: 'ws-1',
+        actorId: 'user-1',
+      });
+
+      expect(result.isErr()).toBe(true);
+      expect(product.name).toBe('Lamp');
+      expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
+      expect((await listingRepo.findById(connectedListing.id))?.updatedAt).toBe(connectedUpdatedAt);
+      expect((await listingRepo.findById(disconnectedListing.id))?.updatedAt).toBe(
+        disconnectedUpdatedAt
+      );
+      expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+      expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+      expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
+      expect(publishQueue.jobs).toHaveLength(0);
+    }
+  );
+
+  it.each([
+    {
+      kind: 'title' as const,
+      from: 'Lamp',
+      to: 'Better Lamp',
+      eventType: 'suggested_better_title' as const,
+    },
+    {
+      kind: 'description' as const,
+      from: 'A beautiful vintage brass lamp in excellent condition.',
+      to: 'A richer product description for buyers.',
+      eventType: 'update_description' as const,
+    },
+  ])(
+    'fails closed without partial queue acceptance when multi-target listing-seo $kind Apply batch enqueue throws',
+    async (change) => {
+      const { useCase, eventRepo, product, listingRepo, publishQueue } = setup();
+      const firstListing = unwrap(
+        Listing.create({
+          id: `lst-live-${change.kind}-batch-1`,
+          productId: 'prod-1',
+          marketplaceId: 'mp-1',
+          marketplaceListingId: `olx-${change.kind}-batch-1`,
+          price: money(100),
+          status: 'live',
+        })
+      );
+      const secondListing = unwrap(
+        Listing.create({
+          id: `lst-live-${change.kind}-batch-2`,
+          productId: 'prod-1',
+          marketplaceId: 'mp-1',
+          marketplaceListingId: `olx-${change.kind}-batch-2`,
+          price: money(100),
+          status: 'live',
+        })
+      );
+      listingRepo.items.set(firstListing.id, firstListing);
+      listingRepo.items.set(secondListing.id, secondListing);
+      const firstUpdatedAt = firstListing.updatedAt;
+      const secondUpdatedAt = secondListing.updatedAt;
+      const source = listingSeoSourceFor(product, firstListing);
+      const event = unwrap(
+        HermesEvent.create({
+          id: `evt-${change.kind}-multi-batch-throws`,
+          workspaceId: 'ws-1',
+          productId: 'prod-1',
+          type: change.eventType,
+          severity: 'warning',
+          title: `Improve ${change.kind}`,
+          proposedChange: {
+            kind: change.kind,
+            field: change.kind,
+            from: change.from,
+            to: change.to,
+          },
+        })
+      );
+      await eventRepo.save(event);
+      await eventRepo.recordAgentRecommendationOutcome({
+        id: `${event.id}-recommendation`,
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        eventId: event.id,
+        agentId: 'listing-seo',
+        agentVersion: '1.0.0',
+        creativityPreset: 'balanced',
+        sourceFingerprint: source,
+        recommendationFingerprint: listingSeoRecommendationFingerprint(source, change.to),
+        outcome: 'suggested',
+        suggestedAt: new Date(),
+      });
+      const enqueueAll = jest
+        .spyOn(publishQueue, 'enqueueAll')
+        .mockRejectedValueOnce(new Error('second queue item rejected'));
+
+      await expect(
+        useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' })
+      ).rejects.toThrow('second queue item rejected');
+      expect(enqueueAll).toHaveBeenCalledWith([
+        expect.objectContaining({ data: expect.objectContaining({ listingId: firstListing.id }) }),
+        expect.objectContaining({ data: expect.objectContaining({ listingId: secondListing.id }) }),
+      ]);
+      expect(product.name).toBe('Lamp');
+      expect(product.description).toBe('A beautiful vintage brass lamp in excellent condition.');
+      expect((await listingRepo.findById(firstListing.id))?.updatedAt).toBe(firstUpdatedAt);
+      expect((await listingRepo.findById(secondListing.id))?.updatedAt).toBe(secondUpdatedAt);
+      expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+      expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+      expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
+      expect(publishQueue.jobs).toHaveLength(0);
+    }
+  );
 
   it('updates listing price locally and queues remote price update for live listings', async () => {
     const { useCase, eventRepo, listingRepo, publishQueue } = setup();

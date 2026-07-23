@@ -34,6 +34,12 @@ export class BullJobQueue<T = unknown> {
     return this.queue.add(data, opts);
   }
 
+  // Enqueue a bounded group in one Bull script so callers do not observe a
+  // partially accepted fan-out when one logical operation targets many jobs.
+  addBulk(items: Array<{ data: T; opts?: Bull.JobOptions }>): Promise<Array<Bull.Job<T>>> {
+    return this.queue.addBulk(items);
+  }
+
   // Register the processor. Concrete handlers are adapted to this callback shape
   // by the wiring layer.
   process(handler: Bull.ProcessCallbackFunction<T>): void {

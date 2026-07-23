@@ -117,6 +117,9 @@ class SyncPublishQueue implements IJobQueue<PublishListingJob> {
   async enqueue(data: PublishListingJob): Promise<void> {
     await this.handler.handle(data);
   }
+  async enqueueAll(items: Array<{ data: PublishListingJob }>): Promise<void> {
+    for (const item of items) await this.enqueue(item.data);
+  }
 }
 
 interface E2EContext {
