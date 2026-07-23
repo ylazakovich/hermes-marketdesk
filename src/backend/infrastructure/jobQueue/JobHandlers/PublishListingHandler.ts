@@ -320,7 +320,11 @@ export class PublishListingHandler {
         await adapter.updateListing(state.externalListingId, changes, state.currentInput);
       } catch (error) {
         if (shouldAbandonUpdateCheckpoint(error)) {
-          await retryTransientPhase(() => this.publishAttempts!.markAbandoned(operationId));
+          try {
+            await retryTransientPhase(() => this.publishAttempts!.markAbandoned(operationId));
+          } catch {
+            // Preserve the original marketplace update failure for retry/error handling.
+          }
         }
         throw error;
       }

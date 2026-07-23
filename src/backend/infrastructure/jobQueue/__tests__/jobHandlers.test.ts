@@ -1383,6 +1383,47 @@ describe('PublishListingHandler', () => {
     );
   });
 
+  it('preserves the original update error when checkpoint abandonment fails', async () => {
+    const updateError = new Error('provider rejected full update payload');
+    const updateListing = jest.fn(async () => {
+      throw updateError;
+    });
+    const adapter = fakeAdapter({ updateListing });
+    const attempts = memoryPublishAttempts();
+    jest.spyOn(attempts, 'markAbandoned').mockRejectedValue(new Error('checkpoint already changed'));
+    const handler = makePublishHandler(
+      { create: jest.fn(() => adapter) },
+      undefined,
+      {
+        publishListing: jest.fn(),
+        getPublishState: jest.fn(async () => ({
+          isPublished: true,
+          externalListingId: 'olx-123',
+          externalUrl: null,
+          publishedAt: new Date('2026-07-10T00:00:00.000Z'),
+          productUpdatedAt: new Date('2026-07-15T12:00:00.000Z'),
+          currentInput: { ...input, productName: 'Better Widget' },
+        })),
+      },
+      { getValidAccessToken: jest.fn(async () => 'token') },
+      () => ({ request: jest.fn() }),
+      attempts,
+    );
+
+    await expect(
+      handler.handle({
+        operationId: 'op-abandon-fails',
+        mode: 'update',
+        listingUpdatedAt: '2026-07-15T11:00:00.000Z',
+        marketplaceKey: 'olx',
+        marketplaceId: 'm-1',
+        listingId: 'l-abandon-fails',
+        input,
+        changes: { productName: 'Better Widget' },
+      }),
+    ).rejects.toBe(updateError);
+  });
+
   it('rejects a stale update snapshot instead of overwriting newer product data', async () => {
     const updateListing = jest.fn(async () => undefined);
     const adapter = fakeAdapter({ updateListing });
