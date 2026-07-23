@@ -21,6 +21,10 @@ import {
 import type { PublishListingJob } from '../ports/IJobQueue';
 import type { OlxPublicationQuotaService } from '../services/OlxPublicationQuotaService';
 import { GuardrailViolationError } from '../../domain/shared/DomainError';
+import {
+  recommendationFingerprint,
+  seoSourceFingerprint,
+} from '../../domain/agents/MarketDeskAgentCatalog';
 
 function makeProduct() {
   return unwrap(
@@ -49,9 +53,35 @@ function makeListing() {
   );
 }
 
+function listingSeoSourceFor(product: Product, listing: Listing | null = null): string {
+  return seoSourceFingerprint({
+    product: {
+      id: product.id,
+      name: product.name,
+      description: product.description,
+      category: product.category,
+      condition: product.condition,
+      tags: [...product.tags],
+      imageCount: product.imageCount,
+    },
+    listing: listing
+      ? {
+          id: listing.id,
+          title: product.name,
+          description: product.description,
+          marketplace: listing.marketplaceId,
+        }
+      : null,
+  });
+}
+
+function listingSeoRecommendationFingerprint(source: string, value: string): string {
+  return recommendationFingerprint('listing-seo', '1.0.0', source, value);
+}
+
 function setup(
   accountStatus: 'connected' | 'missing' = 'connected',
-  olxQuota?: OlxPublicationQuotaService,
+  olxQuota?: OlxPublicationQuotaService
 ) {
   const productRepo = new InMemoryProductRepository();
   const listingRepo = new InMemoryListingRepository();
@@ -109,7 +139,7 @@ function setup(
     publisher,
     idFactory('rec'),
     accountRepo,
-    olxQuota,
+    olxQuota
   );
 
   return {
@@ -191,7 +221,11 @@ describe('ApproveHermesEventUseCase', () => {
     );
     await eventRepo.save(event);
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
 
     expect(result.isOk()).toBe(true);
     expect(publishQueue.jobs).toHaveLength(1);
@@ -244,7 +278,11 @@ describe('ApproveHermesEventUseCase', () => {
     );
     await eventRepo.save(event);
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
 
     expect(result.isOk()).toBe(true);
     expect(publishQueue.jobs[0].data).toMatchObject({
@@ -259,8 +297,12 @@ describe('ApproveHermesEventUseCase', () => {
     {
       field: 'title' as const,
       eventId: 'evt-listing-seo-title',
-      proposedChange: { kind: 'title' as const, field: 'title' as const, from: 'Lamp', to: 'Better Lamp' },
-      expectedProduct: { name: 'Lamp', description: 'A beautiful vintage brass lamp in excellent condition.' },
+      proposedChange: {
+        kind: 'title' as const,
+        field: 'title' as const,
+        from: 'Lamp',
+        to: 'Better Lamp',
+      },
     },
     {
       field: 'description' as const,
@@ -271,62 +313,256 @@ describe('ApproveHermesEventUseCase', () => {
         from: 'A beautiful vintage brass lamp in excellent condition.',
         to: 'A richer product description for buyers.',
       },
-      expectedProduct: { name: 'Lamp', description: 'A beautiful vintage brass lamp in excellent condition.' },
     },
-  ])('keeps listing-seo $field approvals feedback-only', async ({ eventId, proposedChange, expectedProduct }) => {
-    const { useCase, eventRepo, productRepo, product, listingRepo, publishQueue, activityLog } = setup();
-    const saveProduct = jest.spyOn(productRepo, 'save');
-    const liveListing = unwrap(
-      Listing.create({
-        id: `${eventId}-live`,
-        productId: 'prod-1',
-        marketplaceId: 'mp-1',
-        marketplaceListingId: `${eventId}-olx`,
-        price: money(100),
-        status: 'live',
-      })
-    );
-    listingRepo.items.set(liveListing.id, liveListing);
-    const event = unwrap(
-      HermesEvent.create({
-        id: eventId,
+  ])(
+    'applies listing-seo $field approvals to product and live listing',
+    async ({ eventId, proposedChange }) => {
+      const { useCase, eventRepo, productRepo, product, listingRepo, publishQueue, activityLog } =
+        setup();
+      const saveProduct = jest.spyOn(productRepo, 'save');
+      const liveListing = unwrap(
+        Listing.create({
+          id: `${eventId}-live`,
+          productId: 'prod-1',
+          marketplaceId: 'mp-1',
+          marketplaceListingId: `${eventId}-olx`,
+          price: money(100),
+          status: 'live',
+        })
+      );
+      listingRepo.items.set(liveListing.id, liveListing);
+      const source = listingSeoSourceFor(product, liveListing);
+      const event = unwrap(
+        HermesEvent.create({
+          id: eventId,
+          workspaceId: 'ws-1',
+          productId: 'prod-1',
+          type:
+            proposedChange.kind === 'description' ? 'update_description' : 'suggested_better_title',
+          severity: 'info',
+          title: `Listing SEO suggestion: ${proposedChange.field}`,
+          detail: 'Review-only suggestion from listing-seo@1.0.0.',
+          proposedChange,
+        })
+      );
+      await eventRepo.save(event);
+      await eventRepo.recordAgentRecommendationOutcome({
+        id: `${eventId}-recommendation`,
         workspaceId: 'ws-1',
         productId: 'prod-1',
-        type: proposedChange.kind === 'description' ? 'update_description' : 'suggested_better_title',
+        eventId: event.id,
+        agentId: 'listing-seo',
+        agentVersion: '1.0.0',
+        creativityPreset: 'balanced',
+        sourceFingerprint: source,
+        recommendationFingerprint: listingSeoRecommendationFingerprint(source, proposedChange.to),
+        outcome: 'suggested',
+        suggestedAt: new Date(),
+      });
+
+      const result = await useCase.execute({
+        eventId: event.id,
+        workspaceId: 'ws-1',
+        actorId: 'user-1',
+      });
+
+      expect(result.isOk()).toBe(true);
+      expect((await eventRepo.findById(event.id))?.status).toBe('applied');
+      expect(product.name).toBe(proposedChange.kind === 'title' ? proposedChange.to : 'Lamp');
+      expect(product.description).toBe(
+        proposedChange.kind === 'description'
+          ? proposedChange.to
+          : 'A beautiful vintage brass lamp in excellent condition.'
+      );
+      expect(saveProduct).toHaveBeenCalledWith(product);
+      expect(publishQueue.jobs).toHaveLength(1);
+      expect(publishQueue.jobs[0]).toMatchObject({
+        options: { jobId: 'update:rec-1' },
+        data: {
+          operationId: 'rec-1',
+          mode: 'update',
+          listingId: liveListing.id,
+          marketplaceId: 'mp-1',
+          changes:
+            proposedChange.kind === 'title'
+              ? { productName: proposedChange.to }
+              : { description: proposedChange.to },
+          input: expect.objectContaining({
+            productName: proposedChange.kind === 'title' ? proposedChange.to : 'Lamp',
+            description:
+              proposedChange.kind === 'description'
+                ? proposedChange.to
+                : 'A beautiful vintage brass lamp in excellent condition.',
+            price: 100,
+            category: 'home',
+            condition: 'good',
+            imageUrls: [],
+          }),
+          productUpdatedAt: product.updatedAt.toISOString(),
+          listingUpdatedAt: liveListing.updatedAt.toISOString(),
+        },
+      });
+      expect(activityLog.entries[0].metadata.marketplaceSync).toMatchObject({
+        status: 'queued',
+        operations: [expect.objectContaining({ operationId: 'rec-1', listingId: liveListing.id })],
+      });
+      expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({
+        approvedAt: expect.any(Date),
+        appliedAt: expect.any(Date),
+      });
+    }
+  );
+
+  it('keeps listing-seo generation recommendation-only with no product or queue side effects', async () => {
+    const { eventRepo, productRepo, product, listingRepo, publishQueue } = setup();
+    const saveProduct = jest.spyOn(productRepo, 'save');
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-generation-only',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_better_title',
         severity: 'info',
-        title: `Listing SEO suggestion: ${proposedChange.field}`,
-        detail: 'Review-only suggestion from listing-seo@1.0.0.',
-        proposedChange,
+        title: 'Generated listing-seo suggestion',
+        proposedChange: {
+          kind: 'title',
+          field: 'title',
+          from: 'Lamp',
+          to: 'Generated Better Lamp',
+        },
       })
     );
     await eventRepo.save(event);
     await eventRepo.recordAgentRecommendationOutcome({
-      id: `${eventId}-recommendation`,
+      id: 'evt-generation-only-recommendation',
       workspaceId: 'ws-1',
       productId: 'prod-1',
       eventId: event.id,
       agentId: 'listing-seo',
       agentVersion: '1.0.0',
       creativityPreset: 'balanced',
-      sourceFingerprint: '2'.repeat(64),
-      recommendationFingerprint: '3'.repeat(64),
+      sourceFingerprint: listingSeoSourceFor(product, listingRepo.items.get('lst-1') ?? null),
+      recommendationFingerprint: '4'.repeat(64),
       outcome: 'suggested',
       suggestedAt: new Date(),
     });
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
-
-    expect(result.isOk()).toBe(true);
-    expect((await eventRepo.findById(event.id))?.status).toBe('applied');
-    expect(product.name).toBe(expectedProduct.name);
-    expect(product.description).toBe(expectedProduct.description);
+    expect(product.name).toBe('Lamp');
     expect(saveProduct).not.toHaveBeenCalled();
     expect(publishQueue.jobs).toHaveLength(0);
-    expect(activityLog.entries[0].metadata.marketplaceSync).toEqual({ status: 'not_required' });
-    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({
-      approvedAt: expect.any(Date),
-      appliedAt: expect.any(Date),
+  });
+
+  it('does not mark a listing-seo Apply applied when queue acceptance fails', async () => {
+    const { useCase, eventRepo, product, listingRepo, publishQueue } = setup();
+    const liveListing = unwrap(
+      Listing.create({
+        id: 'lst-live-queue-fails',
+        productId: 'prod-1',
+        marketplaceId: 'mp-1',
+        marketplaceListingId: 'olx-queue-fails',
+        price: money(100),
+        status: 'live',
+      })
+    );
+    listingRepo.items.set(liveListing.id, liveListing);
+    const source = listingSeoSourceFor(product, liveListing);
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-listing-seo-queue-fails',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_better_title',
+        severity: 'info',
+        title: 'Listing SEO suggestion: title',
+        proposedChange: { kind: 'title', field: 'title', from: 'Lamp', to: 'Better Lamp' },
+      })
+    );
+    await eventRepo.save(event);
+    await eventRepo.recordAgentRecommendationOutcome({
+      id: 'evt-listing-seo-queue-fails-recommendation',
+      workspaceId: 'ws-1',
+      productId: 'prod-1',
+      eventId: event.id,
+      agentId: 'listing-seo',
+      agentVersion: '1.0.0',
+      creativityPreset: 'balanced',
+      sourceFingerprint: source,
+      recommendationFingerprint: listingSeoRecommendationFingerprint(source, 'Better Lamp'),
+      outcome: 'suggested',
+      suggestedAt: new Date(),
     });
+    jest.spyOn(publishQueue, 'enqueue').mockRejectedValueOnce(new Error('queue unavailable'));
+
+    await expect(
+      useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' })
+    ).rejects.toThrow('queue unavailable');
+    expect((await eventRepo.findById(event.id))?.status).toBe('failed');
+    expect([...eventRepo.agentRecommendations.values()][0]).toMatchObject({ outcome: 'failed' });
+    expect([...eventRepo.agentRecommendations.values()][0].appliedAt).toBeUndefined();
+  });
+
+  it('safely reconciles old no-op applied listing-seo events only when source and from fences still match', async () => {
+    const { useCase, eventRepo, product, listingRepo, publishQueue, activityLog } = setup();
+    const liveListing = unwrap(
+      Listing.create({
+        id: 'lst-live-reconcile',
+        productId: 'prod-1',
+        marketplaceId: 'mp-1',
+        marketplaceListingId: 'olx-reconcile',
+        price: money(100),
+        status: 'live',
+      })
+    );
+    listingRepo.items.set(liveListing.id, liveListing);
+    const source = listingSeoSourceFor(product, liveListing);
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-listing-seo-reconcile',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'suggested_better_title',
+        severity: 'info',
+        title: 'Listing SEO suggestion: title',
+        proposedChange: { kind: 'title', field: 'title', from: 'Lamp', to: 'Reconciled Lamp' },
+      })
+    );
+    unwrap(event.approve());
+    unwrap(event.markApplied());
+    await eventRepo.save(event);
+    await eventRepo.recordAgentRecommendationOutcome({
+      id: 'evt-listing-seo-reconcile-recommendation',
+      workspaceId: 'ws-1',
+      productId: 'prod-1',
+      eventId: event.id,
+      agentId: 'listing-seo',
+      agentVersion: '1.0.0',
+      creativityPreset: 'balanced',
+      sourceFingerprint: source,
+      recommendationFingerprint: listingSeoRecommendationFingerprint(source, 'Reconciled Lamp'),
+      outcome: 'suggested',
+      suggestedAt: new Date(),
+      approvedAt: new Date(),
+      appliedAt: new Date(),
+    });
+
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(product.name).toBe('Reconciled Lamp');
+    expect(publishQueue.jobs).toHaveLength(1);
+    expect(activityLog.entries[0]).toMatchObject({ action: 'hermes_event.reconciled' });
+
+    const staleReplay = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
+    expect(staleReplay.isErr()).toBe(true);
+    expect(publishQueue.jobs).toHaveLength(1);
   });
 
   it('keeps draft listings local-only for approved description changes', async () => {
@@ -349,7 +585,11 @@ describe('ApproveHermesEventUseCase', () => {
     );
     await eventRepo.save(event);
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
 
     expect(result.isOk()).toBe(true);
     expect(publishQueue.jobs).toHaveLength(0);
@@ -382,7 +622,11 @@ describe('ApproveHermesEventUseCase', () => {
     );
     await eventRepo.save(event);
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
 
     expect(result.isOk()).toBe(true);
     expect(publishQueue.jobs).toHaveLength(0);
@@ -420,7 +664,11 @@ describe('ApproveHermesEventUseCase', () => {
     );
     await eventRepo.save(event);
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
 
     expect(result.isOk()).toBe(true);
     expect((await listingRepo.findById('lst-live-price'))?.price.amount).toBe(90);
@@ -436,27 +684,59 @@ describe('ApproveHermesEventUseCase', () => {
   it('refuses silent combined category correction and leaves both intents pending without queueing', async () => {
     const { useCase, eventRepo, publishQueue, activityLog } = setup();
     const category = {
-      providerCategoryId: 'projectors', name: 'Projectors', path: ['Electronics', 'Projectors'],
-      source: 'provider_taxonomy' as const, confidence: 0.98, isLeaf: true,
+      providerCategoryId: 'projectors',
+      name: 'Projectors',
+      path: ['Electronics', 'Projectors'],
+      source: 'provider_taxonomy' as const,
+      confidence: 0.98,
+      isLeaf: true,
       taxonomyVerifiedAt: new Date(Date.now() - 60_000).toISOString(),
       taxonomyStaleAt: new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString(),
     };
-    const event = unwrap(HermesEvent.create({
-      id: 'evt-category', workspaceId: 'ws-1', productId: 'prod-1',
-      type: 'olx_category_mismatch', severity: 'critical', title: 'Category mismatch',
-      proposedChange: {
-        kind: 'category_recreation', listingId: 'lst-1',
-        currentCategory: { ...category, providerCategoryId: 'headphones', name: 'Headphones', path: ['Electronics', 'Headphones'] },
-        proposedCategory: category,
-        operations: [
-          { kind: 'delist', intentId: 'delist-1', status: 'pending_review', providerSideEffectAllowed: false, quotaUnitsRestored: 0 },
-          { kind: 'recreate', intentId: 'recreate-1', status: 'blocked_pending_quota_review', providerSideEffectAllowed: false, quotaGuardRequired: true },
-        ],
-      },
-    }));
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-category',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'olx_category_mismatch',
+        severity: 'critical',
+        title: 'Category mismatch',
+        proposedChange: {
+          kind: 'category_recreation',
+          listingId: 'lst-1',
+          currentCategory: {
+            ...category,
+            providerCategoryId: 'headphones',
+            name: 'Headphones',
+            path: ['Electronics', 'Headphones'],
+          },
+          proposedCategory: category,
+          operations: [
+            {
+              kind: 'delist',
+              intentId: 'delist-1',
+              status: 'pending_review',
+              providerSideEffectAllowed: false,
+              quotaUnitsRestored: 0,
+            },
+            {
+              kind: 'recreate',
+              intentId: 'recreate-1',
+              status: 'blocked_pending_quota_review',
+              providerSideEffectAllowed: false,
+              quotaGuardRequired: true,
+            },
+          ],
+        },
+      })
+    );
     await eventRepo.save(event);
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
 
     expect(result.isErr()).toBe(true);
     expect((await eventRepo.findById(event.id))?.status).toBe('pending_review');
@@ -519,7 +799,11 @@ describe('ApproveHermesEventUseCase', () => {
       suggestedAt: new Date(),
     });
 
-    const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' });
+    const result = await useCase.execute({
+      eventId: event.id,
+      workspaceId: 'ws-1',
+      actorId: 'user-1',
+    });
 
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.code).toBe('INVALID_STATE');
@@ -546,14 +830,14 @@ describe('ApproveHermesEventUseCase', () => {
         severity: 'warning',
         title: 'Lower the price',
         proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
-      }),
+      })
     );
     await eventRepo.save(event);
     jest.spyOn(productRepo, 'save').mockRejectedValueOnce(new Error('database unavailable'));
 
-    await expect(
-      useCase.execute({ eventId: event.id, workspaceId: 'ws-1' }),
-    ).rejects.toThrow('database unavailable');
+    await expect(useCase.execute({ eventId: event.id, workspaceId: 'ws-1' })).rejects.toThrow(
+      'database unavailable'
+    );
     expect((await eventRepo.findById(event.id))?.status).toBe('failed');
   });
 
@@ -568,7 +852,7 @@ describe('ApproveHermesEventUseCase', () => {
         severity: 'warning',
         title: 'Lower the price',
         proposedChange: { kind: 'price', field: 'price', from: 100, to: 90 },
-      }),
+      })
     );
     await eventRepo.save(event);
     jest
@@ -576,7 +860,7 @@ describe('ApproveHermesEventUseCase', () => {
       .mockRejectedValueOnce(new Error('provenance write failed'));
 
     await expect(
-      useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' }),
+      useCase.execute({ eventId: event.id, workspaceId: 'ws-1', actorId: 'user-1' })
     ).rejects.toThrow('provenance write failed');
     expect((await eventRepo.findById(event.id))?.status).toBe('failed');
     expect(product.sellingPrice.amount).toBe(100);
@@ -607,11 +891,17 @@ describe('ApproveHermesEventUseCase', () => {
 
   it('returns a structured guard error when the OLX quota guard is unavailable', async () => {
     const { useCase, eventRepo, publishQueue } = setup();
-    const event = unwrap(HermesEvent.create({
-      id: 'evt-relist-no-guard', workspaceId: 'ws-1', productId: 'prod-1',
-      type: 'needs_relisting', severity: 'warning', title: 'Relist product',
-      proposedChange: { kind: 'relist', listingIds: ['lst-1'] },
-    }));
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-relist-no-guard',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'needs_relisting',
+        severity: 'warning',
+        title: 'Relist product',
+        proposedChange: { kind: 'relist', listingIds: ['lst-1'] },
+      })
+    );
     await eventRepo.save(event);
 
     const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1' });
@@ -621,8 +911,12 @@ describe('ApproveHermesEventUseCase', () => {
       expect(result.error).toBeInstanceOf(GuardrailViolationError);
       expect(result.error.details).toEqual({
         quotaDecision: {
-          applicable: true, marketplaceKey: 'olx', status: 'unknown', decision: 'block',
-          reason: 'quota_guard_unavailable', requiresOverride: true,
+          applicable: true,
+          marketplaceKey: 'olx',
+          status: 'unknown',
+          decision: 'block',
+          reason: 'quota_guard_unavailable',
+          requiresOverride: true,
         },
       });
     }
@@ -630,7 +924,8 @@ describe('ApproveHermesEventUseCase', () => {
   });
 
   it('does not retry already-authorized relists when a later quota decision blocks', async () => {
-    const authorize = jest.fn()
+    const authorize = jest
+      .fn()
       .mockResolvedValueOnce({ decision: 'allow' })
       .mockResolvedValueOnce({ decision: 'block' });
     const quotaService = {
@@ -638,15 +933,26 @@ describe('ApproveHermesEventUseCase', () => {
       guardError: () => new GuardrailViolationError('quota blocked'),
     } as unknown as OlxPublicationQuotaService;
     const { useCase, eventRepo, listingRepo, publishQueue } = setup('connected', quotaService);
-    const secondListing = unwrap(Listing.create({
-      id: 'lst-2', productId: 'prod-1', marketplaceId: 'mp-1', price: money(100),
-    }));
+    const secondListing = unwrap(
+      Listing.create({
+        id: 'lst-2',
+        productId: 'prod-1',
+        marketplaceId: 'mp-1',
+        price: money(100),
+      })
+    );
     listingRepo.items.set(secondListing.id, secondListing);
-    const event = unwrap(HermesEvent.create({
-      id: 'evt-relist-preflight', workspaceId: 'ws-1', productId: 'prod-1',
-      type: 'needs_relisting', severity: 'warning', title: 'Relist product',
-      proposedChange: { kind: 'relist', listingIds: ['lst-1', 'lst-2'] },
-    }));
+    const event = unwrap(
+      HermesEvent.create({
+        id: 'evt-relist-preflight',
+        workspaceId: 'ws-1',
+        productId: 'prod-1',
+        type: 'needs_relisting',
+        severity: 'warning',
+        title: 'Relist product',
+        proposedChange: { kind: 'relist', listingIds: ['lst-1', 'lst-2'] },
+      })
+    );
     await eventRepo.save(event);
 
     const result = await useCase.execute({ eventId: event.id, workspaceId: 'ws-1' });

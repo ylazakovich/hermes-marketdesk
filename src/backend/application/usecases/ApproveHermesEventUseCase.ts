@@ -8,7 +8,11 @@
 //     emits a domain event.
 
 import { Result, Ok, Err } from '../../domain/shared/Result';
-import { GuardrailViolationError, NotFoundError, InvalidStateError } from '../../domain/shared/DomainError';
+import {
+  GuardrailViolationError,
+  NotFoundError,
+  InvalidStateError,
+} from '../../domain/shared/DomainError';
 import { Money } from '../../domain/valueObjects/Money';
 import type { HermesEvent } from '../../domain/entities/HermesEvent';
 import type { Listing } from '../../domain/entities/Listing';
@@ -27,6 +31,11 @@ import type { IdGenerator } from '../ports/IdGenerator';
 import type { ApproveEventDTO } from '../dto/ApproveEventDTO';
 import type { MarketplaceAccountRepository } from '../services/MarketplaceOAuthService';
 import type { OlxPublicationQuotaService } from '../services/OlxPublicationQuotaService';
+import {
+  listingSeoProfile,
+  seoSourceFingerprint,
+  type AgentRecommendationRecord,
+} from '../../domain/agents/MarketDeskAgentCatalog';
 
 interface MarketplaceUpdateOperation {
   operationId: string;
@@ -53,7 +62,7 @@ export class ApproveHermesEventUseCase {
     private readonly eventPublisher: IEventPublisher,
     private readonly idGenerator: IdGenerator,
     private readonly marketplaceAccountRepo?: MarketplaceAccountRepository,
-    private readonly olxQuota?: OlxPublicationQuotaService,
+    private readonly olxQuota?: OlxPublicationQuotaService
   ) {}
 
   async execute(input: ApproveEventDTO): Promise<Result<HermesEvent>> {
@@ -64,6 +73,8 @@ export class ApproveHermesEventUseCase {
     }
 
     if (event.status !== 'pending_review') {
+      const reconciled = await this.reconcileAppliedListingSeoNoop(event, input.actorId);
+      if (reconciled) return reconciled;
       return Err(
         new InvalidStateError(
           `Cannot approve event in ${event.status} state (must be pending_review)`
@@ -87,9 +98,11 @@ export class ApproveHermesEventUseCase {
         },
         createdAt: new Date(),
       });
-      return Err(new InvalidStateError(
-        'Category correction cannot be approved as one operation; delist and quota-guarded recreate remain separate pending-review intents',
-      ));
+      return Err(
+        new InvalidStateError(
+          'Category correction cannot be approved as one operation; delist and quota-guarded recreate remain separate pending-review intents'
+        )
+      );
     }
 
     const approved = event.approve();
@@ -98,14 +111,8 @@ export class ApproveHermesEventUseCase {
     let applied: Result<ApplyChangeOutcome>;
     try {
       await this.eventRepo.save(event);
-      await this.eventRepo.markAgentRecommendationApproved(
-        event.workspaceId,
-        event.id,
-        new Date(),
-      );
-      applied = await this.isListingSeoReviewOnlyApproval(event)
-        ? Ok({ marketplaceUpdates: [] })
-        : await this.applyChange(event, input.actorId);
+      await this.eventRepo.markAgentRecommendationApproved(event.workspaceId, event.id, new Date());
+      applied = await this.applyChange(event, input.actorId);
     } catch (error) {
       const failed = event.markFailed();
       if (failed.isOk()) {
@@ -113,7 +120,7 @@ export class ApproveHermesEventUseCase {
         await this.eventRepo.markAgentRecommendationFailed(
           event.workspaceId,
           event.id,
-          event.resolvedAt ?? new Date(),
+          event.resolvedAt ?? new Date()
         );
       }
       throw error;
@@ -125,7 +132,7 @@ export class ApproveHermesEventUseCase {
         await this.eventRepo.markAgentRecommendationFailed(
           event.workspaceId,
           event.id,
-          event.resolvedAt ?? new Date(),
+          event.resolvedAt ?? new Date()
         );
       }
       return applied;
@@ -137,7 +144,7 @@ export class ApproveHermesEventUseCase {
     await this.eventRepo.markAgentRecommendationApplied(
       event.workspaceId,
       event.id,
-      event.resolvedAt ?? new Date(),
+      event.resolvedAt ?? new Date()
     );
 
     await this.activityLog.record({
@@ -174,7 +181,7 @@ export class ApproveHermesEventUseCase {
 
   private async applyChange(
     event: HermesEvent,
-    actorId?: string,
+    actorId?: string
   ): Promise<Result<ApplyChangeOutcome>> {
     const change = event.proposedChange;
     if (change === null) {
@@ -214,26 +221,106 @@ export class ApproveHermesEventUseCase {
           )
         );
       case 'category_recreation':
-        return Err(new InvalidStateError(
-          'Category correction cannot be applied as one operation; review and execute the audited delist and quota-guarded recreate intents separately',
-        ));
+        return Err(
+          new InvalidStateError(
+            'Category correction cannot be applied as one operation; review and execute the audited delist and quota-guarded recreate intents separately'
+          )
+        );
       default:
         return Ok({ marketplaceUpdates: [] });
     }
   }
 
-  private async isListingSeoReviewOnlyApproval(event: HermesEvent): Promise<boolean> {
-    if (
-      event.proposedChange?.kind !== 'title' &&
-      event.proposedChange?.kind !== 'description'
-    ) {
-      return false;
+  private async findListingSeoRecommendation(
+    event: HermesEvent
+  ): Promise<AgentRecommendationRecord | null> {
+    if (event.proposedChange?.kind !== 'title' && event.proposedChange?.kind !== 'description') {
+      return null;
     }
     const recommendation = await this.eventRepo.findAgentRecommendationByEvent(
       event.workspaceId,
-      event.id,
+      event.id
     );
-    return recommendation?.agentId === 'listing-seo';
+    return recommendation?.agentId === listingSeoProfile.id ? recommendation : null;
+  }
+
+  private async reconcileAppliedListingSeoNoop(
+    event: HermesEvent,
+    actorId?: string
+  ): Promise<Result<HermesEvent> | null> {
+    if (event.status !== 'applied') return null;
+    const change = event.proposedChange;
+    if (change?.kind !== 'title' && change?.kind !== 'description') return null;
+    const recommendation = await this.findListingSeoRecommendation(event);
+    if (!recommendation?.appliedAt) return null;
+
+    const product = await this.requireProduct(event.productId);
+    if (product.isErr()) return product;
+    const currentValue = change.kind === 'title' ? product.value.name : product.value.description;
+    if (currentValue !== change.from) return null;
+
+    const listings = await this.listingRepo.findByProduct(product.value.id);
+    const sourceStillMatches = [null, ...listings].some(
+      (listing) =>
+        this.listingSeoSourceFor(product.value, listing) === recommendation.sourceFingerprint
+    );
+    if (!sourceStillMatches) return null;
+
+    const applied = await this.applyChange(event, actorId);
+    if (applied.isErr()) return applied;
+    if (
+      applied.value.marketplaceUpdates.length === 0 &&
+      listings.some((listing) => listing.isLive())
+    ) {
+      return Err(
+        new InvalidStateError(
+          'Listing SEO reconciliation requires a queued marketplace update for live listings'
+        )
+      );
+    }
+
+    await this.activityLog.record({
+      id: this.idGenerator(),
+      workspaceId: event.workspaceId,
+      entityType: 'hermes_event',
+      entityId: event.id,
+      actorType: 'user',
+      actorId,
+      action: 'hermes_event.reconciled',
+      metadata: {
+        eventType: event.type,
+        proposedChange: event.proposedChange as unknown as Record<string, unknown> | null,
+        marketplaceSync:
+          applied.value.marketplaceUpdates.length > 0
+            ? { status: 'queued', operations: applied.value.marketplaceUpdates }
+            : { status: 'not_required' },
+        reason: 'legacy_listing_seo_noop_applied_replay',
+      },
+      createdAt: new Date(),
+    });
+    return Ok(event);
+  }
+
+  private listingSeoSourceFor(product: Product, listing: Listing | null): string {
+    return seoSourceFingerprint({
+      product: {
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        category: product.category,
+        condition: product.condition,
+        tags: [...product.tags],
+        imageCount: product.imageCount,
+      },
+      listing: listing
+        ? {
+            id: listing.id,
+            title: product.name,
+            description: product.description,
+            marketplace: listing.marketplaceId,
+          }
+        : null,
+    });
   }
 
   private async applyPriceChange(
@@ -277,7 +364,7 @@ export class ApproveHermesEventUseCase {
 
   private async applyRelist(
     listingIds: string[],
-    actorId?: string,
+    actorId?: string
   ): Promise<Result<ApplyChangeOutcome>> {
     const candidates: Array<{
       operation: MarketplaceUpdateOperation;
@@ -343,8 +430,8 @@ export class ApproveHermesEventUseCase {
               reason: 'quota_guard_unavailable',
               requiresOverride: true,
             },
-          },
-        ),
+          }
+        )
       );
     }
 
