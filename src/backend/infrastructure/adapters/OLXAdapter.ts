@@ -277,9 +277,33 @@ export class OLXAdapter extends BaseMarketplaceAdapter {
         if (error instanceof HttpError && error.status === 404) {
           return this.missingSyncedListing(id);
         }
+        if (this.isIsolatedAdvertDetailFailure(error)) {
+          return this.failedSyncedListing(id, error);
+        }
         throw error;
       }
     });
+  }
+
+  private isIsolatedAdvertDetailFailure(error: unknown): error is HttpError {
+    if (!(error instanceof HttpError)) return false;
+    if (error.status === 401 || error.status === 403 || error.status === 408 || error.status === 429) {
+      return false;
+    }
+    if (error.status >= 500) return false;
+    return error.status !== 404;
+  }
+
+  private failedSyncedListing(externalListingId: string, error: HttpError): SyncedListing {
+    return {
+      externalListingId,
+      status: 'live',
+      syncFailure: {
+        kind: 'isolated_listing_failure',
+        reason: 'provider_rejection',
+        note: `OLX advert detail sync failed: HTTP ${error.status}; local listing state was preserved`,
+      },
+    };
   }
 
   protected async doFetchListing(

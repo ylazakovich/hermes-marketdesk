@@ -531,6 +531,58 @@ describe('OLXAdapter', () => {
     );
   });
 
+  it('continues sibling and later bounded sync batches after one isolated advert rejection', async () => {
+    const calls: string[] = [];
+    const http = mockClient((config) => {
+      calls.push(config.url);
+      if (config.url.endsWith('/adverts/bad-advert')) {
+        throw new HttpError(410, 'gone', {
+          message: 'Seller private description should not be persisted',
+          phone: '+48123456789',
+        });
+      }
+      if (config.url.endsWith('/threads')) return { status: 200, data: [] };
+      return {
+        status: 200,
+        data: { data: { id: config.url.split('/').pop(), status: 'active' } },
+      };
+    });
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    const synced = await adapter.sync(['a', 'b', 'bad-advert', 'c', 'd', 'later']);
+
+    expect(synced).toHaveLength(6);
+    expect(synced.map((listing) => listing.externalListingId)).toEqual([
+      'a', 'b', 'bad-advert', 'c', 'd', 'later',
+    ]);
+    expect(synced[2]).toMatchObject({
+      externalListingId: 'bad-advert',
+      syncFailure: {
+        kind: 'isolated_listing_failure',
+        reason: 'provider_rejection',
+      },
+    });
+    expect(synced[2].syncFailure?.note).toContain('OLX advert detail sync failed');
+    expect(synced[2].syncFailure?.note).toContain('HTTP 410');
+    expect(synced[2].syncFailure?.note).not.toContain('Seller private description');
+    expect(synced[2].syncFailure?.note).not.toContain('+48123456789');
+    expect(calls).toContain('https://www.olx.pl/api/partner/adverts/later');
+  });
+
+  it.each([
+    ['auth', new HttpError(401, 'unauthorized'), MarketplaceAuthenticationError],
+    ['rate-limit', new HttpError(429, 'slow down'), MarketplaceRateLimitError],
+    ['systemic transport', new HttpError(503, 'unavailable'), MarketplaceTransientError],
+  ])('keeps %s sync failures as job-level errors', async (_label, thrown, expected) => {
+    const http = mockClient((config) => {
+      if (config.url.endsWith('/adverts/fail')) throw thrown;
+      return { status: 200, data: { data: { id: 'ok', status: 'active' } } };
+    });
+    const adapter = new OLXAdapter(http, fastOptions);
+
+    await expect(adapter.sync(['ok', 'fail', 'later'])).rejects.toBeInstanceOf(expected);
+  });
+
   it('uses the first safe OLX URL candidate when earlier candidates are invalid', async () => {
     const http = mockClient(() => ({
       status: 200,
