@@ -938,6 +938,63 @@ describe('SyncMarketplaceHandler', () => {
     expect(listing.lastSyncAt).not.toBeNull();
   });
 
+  it('persists isolated sync failures as notes without destructive listing transitions', async () => {
+    const synced: SyncedListing[] = [{
+      externalListingId: 'ext-isolated',
+      status: 'live',
+      syncFailure: {
+        kind: 'isolated_listing_failure',
+        reason: 'provider_rejection',
+        note: 'OLX advert detail sync failed: HTTP 410',
+      },
+    }];
+    const adapter = fakeAdapter({ sync: jest.fn(async () => synced) });
+    const { resolver } = resolverFor(adapter);
+    const listing = unwrap(Listing.create({
+      id: 'l-isolated',
+      productId: 'p-1',
+      marketplaceId: 'm-1',
+      price: money(50),
+      status: 'live',
+      marketplaceListingId: 'ext-isolated',
+      publishedAt: new Date(),
+    }));
+    listing.recordSyncStats({ views: 12, watchers: 3, messages: 2, conversations: 1 });
+    const previousLastSyncAt = listing.lastSyncAt;
+    const saved: Listing[] = [];
+    const marketplace = unwrap(Marketplace.create({
+      id: 'm-1', workspaceId: 'w-1', key: 'olx', name: 'OLX',
+    }));
+    marketplace.recordSyncError();
+    const handler = new SyncMarketplaceHandler(resolver, {
+      listingStore: {
+        findByMarketplace: jest.fn(async () => [listing]),
+        saveAll: jest.fn(async (listings) => { saved.push(...listings); }),
+      },
+      marketplaceStore: {
+        findById: jest.fn(async () => marketplace),
+        save: jest.fn(async () => undefined),
+      },
+      eventPublisher: { publish: jest.fn(async () => undefined) },
+      recordAnalyticsEvents: jest.fn(async () => undefined),
+    });
+
+    const result = await handler.handle({
+      marketplaceKey: 'olx', marketplaceId: 'm-1', externalListingIds: ['ext-isolated'],
+    });
+
+    expect(result.persisted).toBe(1);
+    expect(saved).toEqual([listing]);
+    expect(listing.status).toBe('live');
+    expect(listing.views).toBe(12);
+    expect(listing.watchers).toBe(3);
+    expect(listing.conversations).toBe(1);
+    expect(listing.messages).toBe(2);
+    expect(listing.lastSyncAt).toBe(previousLastSyncAt);
+    expect(listing.syncError).toBe('OLX advert detail sync failed: HTTP 410');
+    expect(marketplace.errorCount).toBe(0);
+  });
+
   it('records a marketplace sync error and rethrows when the adapter fails (C5)', async () => {
     const adapter = fakeAdapter({
       sync: jest.fn(async () => {

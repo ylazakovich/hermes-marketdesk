@@ -210,6 +210,11 @@ export class SyncMarketplaceHandler {
     for (const s of synced) {
       const listing = byExternalId.get(s.externalListingId);
       if (!listing) continue;
+      if (s.syncFailure) {
+        listing.recordSyncStatusNote(s.syncFailure.note);
+        updated.push(listing);
+        continue;
+      }
       const nextViews = Number(s.views ?? listing.views ?? 0);
       const nextMessages = Number(s.messages ?? listing.messages ?? 0);
       const viewDelta = Math.max(0, nextViews - Number(listing.views ?? 0));

@@ -32,6 +32,11 @@ export interface SyncedListing {
   status: ListingStatus;
   remoteStatus?: string;
   missing?: boolean;
+  syncFailure?: {
+    kind: 'isolated_listing_failure';
+    reason: 'provider_rejection';
+    note: string;
+  };
   views?: number | null;
   watchers?: number | null;
   conversations?: number | null;
